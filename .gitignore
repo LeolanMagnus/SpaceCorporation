@@ -1,0 +1,11 @@
+# Godot 4 (C# / .NET)
+.godot/
+.mono/
+bin/
+obj/
+*.translation
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
