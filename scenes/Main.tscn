@@ -1,64 +1,26 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=5 format=3]
 
-[ext_resource type="PackedScene" path="res://scenes/DebugLayer.tscn" id="1_dbg"]
-[ext_resource type="Script" path="res://scripts/core/ShipStub.cs" id="2_ship"]
+[ext_resource type="PackedScene" path="res://scenes/Environment.tscn" id="1_env"]
+[ext_resource type="PackedScene" path="res://scenes/TestStand.tscn" id="2_stand"]
+[ext_resource type="PackedScene" path="res://scenes/Ship.tscn" id="3_ship"]
+[ext_resource type="PackedScene" path="res://scenes/Player.tscn" id="4_player"]
+[ext_resource type="PackedScene" path="res://scenes/DebugLayer.tscn" id="5_debug"]
 
-[sub_resource type="BoxMesh" id="BoxMesh_stand"]
-
-[sub_resource type="BoxShape3D" id="BoxShape_stand"]
-
-[sub_resource type="BoxMesh" id="BoxMesh_ship"]
-size = Vector3(1.6, 0.8, 3)
-
-[sub_resource type="BoxShape3D" id="BoxShape_ship"]
-size = Vector3(1.6, 0.8, 3)
-
-[sub_resource type="Environment" id="Environment_main"]
-background_mode = 1
-background_color = Color(0.02, 0.03, 0.06, 1)
-ambient_light_source = 1
-ambient_light_color = Color(0.25, 0.28, 0.35, 1)
-ambient_light_energy = 0.4
-
+; Главная сцена: только инстансы отдельных сцен, никакой геометрии/узлов вручную.
+;
+; Сам факт «игрок в кабине» — это крепление в рантайме (Player.AttachTo к точке
+; AttachPoints/Seat с IsDefaultForPlayer = true), а не вложенность узлов в сцене:
+; так игрок сможет открепиться (Detach) и пристегнуться к точке станции (этап 6).
+; Порядок инстансов не важен — Player ищет точку на первом физическом шаге, когда
+; всё дерево уже достроено.
 [node name="Main" type="Node3D"]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_main")
+[node name="Environment" parent="." instance=ExtResource("1_env")]
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 10, 0)
+[node name="TestStand" parent="." instance=ExtResource("2_stand")]
 
-[node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4)
-current = true
+[node name="Ship" parent="." instance=ExtResource("3_ship")]
 
-[node name="TestStand" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3, -6)
-collision_layer = 2
-collision_mask = 0
+[node name="Player" parent="." instance=ExtResource("4_player")]
 
-[node name="TestStandMesh" type="MeshInstance3D" parent="TestStand"]
-mesh = SubResource("BoxMesh_stand")
-
-[node name="TestStandShape" type="CollisionShape3D" parent="TestStand"]
-shape = SubResource("BoxShape_stand")
-
-[node name="PlayerShip" type="RigidBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
-collision_layer = 1
-collision_mask = 10
-gravity_scale = 0.0
-linear_damp = 0.0
-angular_damp = 1.5
-script = ExtResource("2_ship")
-
-[node name="ShipMesh" type="MeshInstance3D" parent="PlayerShip"]
-mesh = SubResource("BoxMesh_ship")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="PlayerShip"]
-shape = SubResource("BoxShape_ship")
-
-[node name="Muzzle" type="Node3D" parent="PlayerShip"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1.5)
-
-[node name="DebugLayer" parent="." instance=ExtResource("1_dbg")]
+[node name="DebugLayer" parent="." instance=ExtResource("5_debug")]

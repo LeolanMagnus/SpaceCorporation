@@ -1,0 +1,29 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/core/AttachPoint.cs" id="1_attach"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_stand"]
+size = Vector3(2, 2, 2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_stand"]
+size = Vector3(2, 2, 2)
+
+; Стенд для проверки физики: стоит на слое Station, ни на что не реагирует.
+; StandPoint — точка крепления игрока «как к станции»: ровно тот сценарий,
+; который понадобится на этапе 6 (переход корабль → станция).
+[node name="TestStand" type="StaticBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -12)
+collision_layer = 2
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_stand")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_stand")
+
+[node name="StandPoint" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+script = ExtResource("1_attach")
+Kind = 1
+PlayerOffset = Vector3(0, 0.9, 0)

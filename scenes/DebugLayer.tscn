@@ -6,3 +6,66 @@
 layer = 10
 process_mode = 3
 script = ExtResource("1_dbg")
+
+[node name="DebugRoot" type="Control" parent="."]
+process_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="BtnDebugMode" type="Button" parent="DebugRoot"]
+visible = false
+process_mode = 3
+offset_left = 8.0
+offset_top = 8.0
+offset_right = 148.0
+offset_bottom = 44.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 0
+theme_override_colors/font_color = Color(0.2, 1, 0.35, 1)
+theme_override_colors/font_hover_color = Color(0.5, 1, 0.6, 1)
+theme_override_colors/font_pressed_color = Color(0.1, 0.8, 0.25, 1)
+text = "Debug Mode"
+
+[node name="DebugPanel" type="PanelContainer" parent="DebugRoot"]
+visible = false
+process_mode = 3
+offset_left = 8.0
+offset_top = 44.0
+offset_right = 328.0
+offset_bottom = 300.0
+custom_minimum_size = Vector2(320, 0)
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 0
+
+[node name="VBox" type="VBoxContainer" parent="DebugRoot/DebugPanel"]
+process_mode = 3
+layout_mode = 2
+
+[node name="LblDebugInfo" type="Label" parent="DebugRoot/DebugPanel/VBox"]
+process_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.9, 0.95, 1)
+
+[node name="Separator" type="HSeparator" parent="DebugRoot/DebugPanel/VBox"]
+layout_mode = 2
+
+[node name="ChkPauseWorld" type="CheckButton" parent="DebugRoot/DebugPanel/VBox"]
+process_mode = 3
+layout_mode = 2
+mouse_filter = 0
+toggle_mode = true
+button_pressed = true
+text = "Pause world"
+
+[node name="Buttons" type="VBoxContainer" parent="DebugRoot/DebugPanel/VBox"]
+process_mode = 3
+layout_mode = 2
+
+[connection signal="pressed" from="DebugRoot/BtnDebugMode" to="." method="TogglePanel"]
+[connection signal="toggled" from="DebugRoot/DebugPanel/VBox/ChkPauseWorld" to="." method="SetPauseWorld"]

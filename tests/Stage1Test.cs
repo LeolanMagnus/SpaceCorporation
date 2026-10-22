@@ -15,8 +15,12 @@ public partial class Stage1Test : Node
     private DebugLayer _layer = null!;
     private RigidBody3D _probe = null!;
     private RigidBody3D? _ship;
+    private Player? _player;
+    private Node? _main;
+    private CheckButton _chkPause = null!;
     private int _frame;
     private int _nudgeFrame;
+    private Vector3 _shipFrozenPos;
 
     public override void _Ready()
     {
@@ -24,6 +28,7 @@ public partial class Stage1Test : Node
         ProcessMode = ProcessModeEnum.Always;
 
         var main = GetNodeOrNull<Node>("Main");
+        _main = main;
         if (main == null)
         {
             GD.PrintErr("FAIL: сцена Main не найдена");
@@ -59,22 +64,56 @@ public partial class Stage1Test : Node
         var stand = main.GetNodeOrNull<StaticBody3D>("TestStand");
         Check(stand != null && stand.CollisionLayer == CollisionLayers.Station,
               "TestStand — StaticBody3D на слое Station");
+        Check(stand != null && stand.SceneFilePath == "res://scenes/TestStand.tscn",
+              $"TestStand — инстан сцены TestStand.tscn (получено {stand?.SceneFilePath})");
 
-        // --- шаг 1.5: корабль-заглушка в Main.tscn
-        _ship = main.GetNodeOrNull<RigidBody3D>("PlayerShip");
-        Check(_ship != null, "PlayerShip (RigidBody3D) присутствует в Main");
+        // --- шаг 1.6: Main.tscn собрана только из импортированных сцен
+        Check(main.GetNodeOrNull<Node>("Environment")?.SceneFilePath == "res://scenes/Environment.tscn",
+              "Environment — инстан сцены Environment.tscn");
+        Check(main.GetNodeOrNull<Node>("DebugLayer")?.SceneFilePath == "res://scenes/DebugLayer.tscn",
+              "DebugLayer — инстан сцены DebugLayer.tscn");
+        Check(main.GetNodeOrNull<Camera3D>("Camera3D") == null &&
+              main.GetNodeOrNull<DirectionalLight3D>("DirectionalLight3D") == null,
+              "в корне Main нет самодельных узлов камеры/света — всё вынесено в сцены");
+
+        _player = main.GetNodeOrNull<Player>("Player");
+        Check(_player != null, "Player присутствует в Main");
+        if (_player != null)
+        {
+            Check(_player.SceneFilePath == "res://scenes/Player.tscn",
+                  $"Player — инстан сцены Player.tscn (получено {_player.SceneFilePath})");
+            Check(_player is CharacterBody3D, "Player — CharacterBody3D (капсула)");
+            var cam = _player.GetActiveCamera();
+            Check(cam != null, "в сцене Player есть Camera3D");
+            Check(cam != null && cam.Current, "камера игрока — активная (Current)");
+            Check(cam != null && cam.GetParent() == _player.GetNodeOrNull<Node3D>("CameraRig") &&
+                  _player.GetNodeOrNull<Node3D>("CameraRig")?.GetParent() == _player,
+                  "камера — потомок капсулы игрока (привязана к игроку)");
+            Check(_player.CollisionLayer == CollisionLayers.Character,
+                  $"Player: слой Character (получено {_player.CollisionLayer})");
+            Check(_player.CollisionMask == (CollisionLayers.Station | CollisionLayers.Target),
+                  $"Player: маска Station|Target без Ship (получено {_player.CollisionMask})");
+        }
+
+        // --- шаг 1.5: корабль в Main.tscn (инстан отдельной сцены scenes/Ship.tscn)
+        _ship = main.GetNodeOrNull<RigidBody3D>("Ship");
+        Check(_ship != null, "Ship (RigidBody3D) присутствует в Main");
         if (_ship != null)
         {
-            Check(Mathf.IsZeroApprox(_ship.GravityScale), "PlayerShip: gravity_scale = 0");
-            Check(Mathf.IsZeroApprox(_ship.LinearDamp), "PlayerShip: linear_damp = 0");
+            Check(_ship.SceneFilePath == "res://scenes/Ship.tscn",
+                  $"Ship — инстан сцены Ship.tscn (получено {_ship.SceneFilePath})");
+            Check(Mathf.IsZeroApprox(_ship.GravityScale), "Ship: gravity_scale = 0");
+            Check(Mathf.IsZeroApprox(_ship.LinearDamp), "Ship: linear_damp = 0");
             Check(Mathf.IsEqualApprox(_ship.AngularDamp, 1.5f),
-                  $"PlayerShip: angular_damp = 1.5 (получено {_ship.AngularDamp})");
+                  $"Ship: angular_damp = 1.5 (получено {_ship.AngularDamp})");
             Check(_ship.CollisionLayer == CollisionLayers.Ship,
-                  $"PlayerShip: слой Ship (получено {_ship.CollisionLayer})");
+                  $"Ship: слой Ship (получено {_ship.CollisionLayer})");
             Check(_ship.CollisionMask == (CollisionLayers.Station | CollisionLayers.Target),
-                  $"PlayerShip: маска Station|Target (получено {_ship.CollisionMask})");
+                  $"Ship: маска Station|Target (получено {_ship.CollisionMask})");
             Check(_ship.GetNodeOrNull<Node3D>("Muzzle") != null,
                   "у корабля есть нос Muzzle (пригодится на этапе 3)");
+            Check(_ship.GetNodeOrNull<AttachPoint>("AttachPoints/Seat") != null,
+                  "у корабля есть точка крепления AttachPoints/Seat");
         }
 
         // --- заглушка корабля (шаг 1.5): в невесомости не двигается
@@ -107,12 +146,54 @@ public partial class Stage1Test : Node
         Check(btn != null, "узел DebugRoot/BtnDebugMode существует");
         Check(btn != null && btn.Text == "Debug Mode", "подпись кнопки = «Debug Mode»");
         Check(btn != null && btn.Visible == false, "кнопка изначально Visible = false");
-        Check(btn != null && btn.GetPosition() == new Vector2(8, 8), "кнопка в левом верхнем углу");
+        Check(btn != null && btn.Position.X < 32f && btn.Position.Y < 32f,
+              $"кнопка в левом верхнем углу (позиция {btn?.Position})");
 
         var panel = _layer.GetNodeOrNull<PanelContainer>("DebugRoot/DebugPanel");
         Check(panel != null, "PanelContainer «DebugPanel» существует");
         Check(_layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons") != null,
               "в панели есть VBoxContainer с кнопками");
+
+        // UI описан в сцене: VBox содержит ровно четыре узла из .tscn, код к структуре не прикладывается
+        var vbox = _layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox");
+        Check(vbox != null && vbox.GetChildCount() == 4,
+              $"структура панели из сцены: VBox детей = {vbox?.GetChildCount()} (ожидается 4)");
+        Check(_layer.GetNodeOrNull<HSeparator>("DebugRoot/DebugPanel/VBox/Separator") != null,
+              "разделитель LblDebugInfo / кнопок задан в сцене");
+
+        // Опция паузы мира — тоже узел сцены, а не созданный кодом чекбокс
+        _chkPause = _layer.GetNodeOrNull<CheckButton>("DebugRoot/DebugPanel/VBox/ChkPauseWorld")!;
+        Check(_chkPause != null, "в панели есть CheckButton «Pause world» из сцены");
+        Check(_chkPause != null && _chkPause.ToggleMode && _chkPause.ButtonPressed,
+              "чекбокс «Pause world» по умолчанию включён (паузить мир при открытой панели)");
+        Check(_layer.PauseWorldEnabled, "PauseWorldEnabled == true по умолчанию");
+        bool pauseToggleConnected = false;
+        if (_chkPause != null)
+        {
+            foreach (var conn in _chkPause.GetSignalConnectionList(BaseButton.SignalName.Toggled))
+            {
+                if (conn.TryGetValue("callable", out Variant v) &&
+                    v.As<Callable>().Method == "SetPauseWorld")
+                    pauseToggleConnected = true;
+            }
+        }
+        Check(pauseToggleConnected, "сигнал toggled чекбокса подключён к SetPauseWorld в сцене");
+
+        // Клик обрабатывается не подпиской в коде, а связью сигнала в сцене
+        bool sceneConnection = false;
+        if (btn != null)
+        {
+            foreach (var conn in btn.GetSignalConnectionList(BaseButton.SignalName.Pressed))
+            {
+                // В Godot 4 словарь связи содержит ключи signal/callable/flags (method был в Godot 3)
+                if (conn.TryGetValue("callable", out Variant v) &&
+                    v.As<Callable>().Method == "TogglePanel")
+                    sceneConnection = true;
+            }
+            Check(btn.IsConnected(BaseButton.SignalName.Pressed, new Callable(_layer, "TogglePanel")),
+                  "сигнал pressed кнопки подключён к методу TogglePanel дебаг-слоя");
+        }
+        Check(sceneConnection, "pressed кнопки «Debug Mode» подключён к TogglePanel в сцене");
         Check(_layer.GetNodeOrNull<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo") != null,
               "в панели есть Label «LblDebugInfo»");
 
@@ -169,7 +250,9 @@ public partial class Stage1Test : Node
                 break;
             case 7:
                 Check(_layer.PanelOpen, "клик по «Debug Mode» открывает панель");
-                Check(GetTree().Paused, "открытая панель ставит дерево на паузу");
+                Check(GetTree().Paused, "открытая панель ставит дерево на паузу (опция включена по умолчанию)");
+                Check(_layer.GetNode<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo").Text
+                      .Contains("world: PAUSED"), "в DebugInfo видно, что мир на паузе");
                 break;
             case 8:
                 // клик по тестовой кнопке → печать в консоль (см. вывод «debug button pressed»)
@@ -195,13 +278,16 @@ public partial class Stage1Test : Node
                       "DebugInfo содержит блок корабля (ship: |v| ...)");
                 break;
             case 11:
-                // F3 при открытой панели → закрыть панель, снять паузу, скрыть кнопку
-                SendF3();
+                // выключаем опцию паузы галочкой в панели (смена ButtonPressed эмитирует toggled)
+                if (_chkPause != null) _chkPause.ButtonPressed = false;
                 break;
             case 13:
-                Check(!_layer.DebugModeVisible, "повторный F3 выключает дебаг-режим");
-                Check(!_layer.PanelOpen, "панель закрылась");
-                Check(!GetTree().Paused, "пауза снята");
+                // опция выключена: панель открыта, но мир живёт
+                Check(!_layer.PauseWorldEnabled, "PauseWorldEnabled == false после снятия галочки");
+                Check(_layer.PanelOpen, "панель при этом осталась открытой");
+                Check(!GetTree().Paused, "выключенная опция: мир НЕ на паузе при открытой панели");
+                Check(_layer.GetNode<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo").Text
+                      .Contains("world: running"), "в DebugInfo видно, что мир работает");
                 break;
             case 14:
                 // гравитация не тянет тело: за ~10 кадров скорость осталась нулевой
@@ -209,13 +295,48 @@ public partial class Stage1Test : Node
                       $"проба не упала: |velocity| = {_probe.LinearVelocity.Length():F4}");
                 break;
             case 15:
-                // кнопка корабля-заглушки: импульс → дальше инерция без гравитации.
-                // Физика уже не на паузе, поэтому тело реально полетит.
+                // кнопка корабля: импульс → дальше инерция без гравитации.
+                // Мир живёт (опция паузы выключена), поэтому тело реально полетит.
                 var shipButtons = _layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons");
                 var nudge = FindButton(shipButtons, "Nudge Ship");
-                Check(nudge != null, "ShipStub зарегистрировал кнопку «Nudge Ship» через шину");
+                Check(nudge != null, "Ship зарегистрировал кнопку «Nudge Ship» через шину");
                 nudge?.EmitSignal(BaseButton.SignalName.Pressed);
                 _nudgeFrame = _frame;
+                break;
+
+            // --- шаг 1.6: крепление игрока к сценам (задел на этап 6)
+            case 16:
+                Check(_player != null && _player.IsAttached,
+                      "Player авто-пристёгнут к точке по умолчанию");
+                Check(_player?.AttachedTo?.Name == "Seat",
+                      $"точка по умолчанию — кресло корабля Seat (получено {_player?.AttachedTo?.Name})");
+                Check(_player != null && _player.GetParent() == _ship?.GetNodeOrNull<Node>("AttachPoints/Seat"),
+                      "после пристёжки игрок — узел внутри иерархии корабля");
+                break;
+            case 17:
+                var detachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons"),
+                                           "Detach Player");
+                Check(detachBtn != null, "Player зарегистрировал кнопку «Detach Player»");
+                detachBtn?.EmitSignal(BaseButton.SignalName.Pressed);
+                break;
+            case 18:
+                Check(_player != null && !_player.IsAttached, "Detach: игрок больше ни к чему не пристёгнут");
+                Check(_player != null && _player.GetParent() == _main,
+                      "Detach: игрок вернулся в корень Main");
+                break;
+            case 19:
+                var attachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons"),
+                                           "Attach Player to Seat");
+                Check(attachBtn != null, "Player зарегистрировал кнопку «Attach Player to Seat»");
+                attachBtn?.EmitSignal(BaseButton.SignalName.Pressed);
+                break;
+            case 20:
+                var seat = _ship?.GetNodeOrNull<AttachPoint>("AttachPoints/Seat");
+                Check(_player != null && _player.IsAttached && _player.AttachedTo == seat,
+                      "повторная пристёжка работает (игрок снова в кресле)");
+                Check(_player != null && seat != null &&
+                      _player.Position.DistanceTo(seat.PlayerOffset) < 0.001f,
+                      $"пристёгнутый игрок стоит в позе точки (локально {_player?.Position})");
                 break;
             case 25:
                 // спустя ~10 кадров после импульса: скорость сохранилась (linear_damp = 0),
@@ -228,6 +349,33 @@ public partial class Stage1Test : Node
                     Check(Mathf.IsZeroApprox(v.Y),
                           $"гравитация не тянет корабль вниз: v.Y = {v.Y:F4}");
                 }
+                break;
+            case 26:
+                // включаем паузу обратно — мир должен встать прямо при открытой панели
+                if (_chkPause != null) _chkPause.ButtonPressed = true;
+                break;
+            case 28:
+                Check(_layer.PauseWorldEnabled, "PauseWorldEnabled == true после возврата галочки");
+                Check(GetTree().Paused, "возврат опции: мир снова на паузе при открытой панели");
+                break;
+            case 29:
+                // на паузе физика не шагает: положение корабля замирает
+                _shipFrozenPos = _ship?.GlobalPosition ?? Vector3.Zero;
+                break;
+            case 39:
+                var p = _ship?.GlobalPosition ?? Vector3.Zero;
+                Check(p.DistanceTo(_shipFrozenPos) < 0.0001f,
+                      $"включённая пауза реально заморозила мир: смещение за 10 кадров = " +
+                      $"{p.DistanceTo(_shipFrozenPos):F4} м");
+                break;
+            case 40:
+                // F3 при открытой панели → закрыть панель, снять паузу, скрыть кнопку
+                SendF3();
+                break;
+            case 42:
+                Check(!_layer.DebugModeVisible, "повторный F3 выключает дебаг-режим");
+                Check(!_layer.PanelOpen, "панель закрылась");
+                Check(!GetTree().Paused, "пауза снята");
                 Finish();
                 break;
         }

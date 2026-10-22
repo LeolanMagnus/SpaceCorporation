@@ -1,0 +1,18 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/Ship.tscn" id="1_ship"]
+[ext_resource type="PackedScene" path="res://scenes/Player.tscn" id="2_player"]
+[ext_resource type="PackedScene" path="res://scenes/TestStand.tscn" id="3_stand"]
+[ext_resource type="Script" path="res://tests/ProbeNest.cs" id="4_probe"]
+
+; Прогон гипотезы вложенного CharacterBody3D + перепривязки в рантайме.
+; Структура повторяет Main.tscn: игрок лежит в корне сцены, а в кресло корабля
+; пристёгивается кодом (AttachPoints/Seat, IsDefaultForPlayer).
+[node name="ProbeNest" type="Node3D"]
+script = ExtResource("4_probe")
+
+[node name="Ship" parent="." instance=ExtResource("1_ship")]
+
+[node name="Player" parent="." instance=ExtResource("2_player")]
+
+[node name="TestStand" parent="." instance=ExtResource("3_stand")]

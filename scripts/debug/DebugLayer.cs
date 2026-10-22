@@ -5,24 +5,34 @@ namespace SpaceCorporation;
 
 /// <summary>
 /// Оболочка дебаг-режима (этап 1). Живёт на CanvasLayer поверх игры.
+/// Всё дерево UI описано в scenes/DebugLayer.tscn — код только управляет им.
 ///
-/// F3            — показать/скрыть кнопку «Debug Mode» (весь дебаг-режим).
-/// клик по кнопке — открыть/закрыть панель; открытая панель ставит дерево на паузу.
+/// F3             — показать/скрыть кнопку «Debug Mode» (весь дебаг-режим).
+/// клик по кнопке — открыть/закрыть панель (сигнал pressed подключён в сцене
+///                  к TogglePanel).
+///
+/// Открытая панель по умолчанию ставит мир на паузу, чтобы отладку было удобно
+/// читать, а кнопки применялись к неподвижному состоянию. Поведение — опция:
+/// чекбокс «Pause world» в панели (узел ChkPauseWorld, сигнал toggled → SetPauseWorld).
+/// Выключено — мир живёт при открытой панели (нужно для теста тяги и инерции на этапе 2).
 ///
 /// Системы добавляют сюда кнопки и строки отладки через DebugInfoBus
 /// (одна строка кода на механику), сам DebugLayer про них ничего не знает.
 /// </summary>
 public partial class DebugLayer : CanvasLayer
 {
-    private const string ActionToggle = "debug_toggle";
-
+    // Узлы берём из сцены (DebugRoot/... в scenes/DebugLayer.tscn).
     private Button _btnDebugMode = null!;
     private PanelContainer _panel = null!;
     private Label _lblDebugInfo = null!;
     private VBoxContainer _buttons = null!;
+    private CheckButton _chkPauseWorld = null!;
 
     /// <summary>Паузу дерева ставим сами — сами и снимаем (чужую паузу не трогаем).</summary>
     private bool _wePausedTheTree;
+
+    /// <summary>Морозить ли мир при открытой панели (чекбокс «Pause world», по умолчанию да).</summary>
+    private bool _pauseWorldEnabled = true;
 
     /// <summary>Видима ли сама кнопка «Debug Mode» (то есть включён ли дебаг-режим).</summary>
     public bool DebugModeVisible { get; private set; }
@@ -30,12 +40,20 @@ public partial class DebugLayer : CanvasLayer
     /// <summary>Открыта ли панель с кнопками.</summary>
     public bool PanelOpen => _panel.Visible;
 
+    /// <summary>Включена ли опция «паузить мир при открытой панели».</summary>
+    public bool PauseWorldEnabled => _pauseWorldEnabled;
+
     public override void _Ready()
     {
-        Layer = 10;
-        ProcessMode = ProcessModeEnum.Always;
+        _btnDebugMode = GetNode<Button>("DebugRoot/BtnDebugMode");
+        _panel = GetNode<PanelContainer>("DebugRoot/DebugPanel");
+        _lblDebugInfo = GetNode<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo");
+        _chkPauseWorld = GetNode<CheckButton>("DebugRoot/DebugPanel/VBox/ChkPauseWorld");
+        _buttons = GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons");
 
-        BuildUi();
+        // Состояние чекбокса из сцены (button_pressed = true) — источник правды для опции.
+        _pauseWorldEnabled = _chkPauseWorld.ButtonPressed;
+
         DebugInfoBus.Instance?.AttachLayer(this);
 
         // Тестовая кнопка — приёмка этапа: RegisterDebugButton работает, печатает в консоль.
@@ -44,82 +62,111 @@ public partial class DebugLayer : CanvasLayer
 
     public override void _ExitTree()
     {
+        ReleasePause();
         DebugInfoBus.Instance?.DetachLayer(this);
     }
 
-    // --------------------------------------------------------------------- UI
-
-    private void BuildUi()
+    public override void _UnhandledInput(InputEvent @event)
     {
-        var root = new Control
+        if (@event.IsActionPressed("debug_toggle"))
         {
-            Name = "DebugRoot",
-            // Растягиваем на весь экран, но клики не перехватываем — только свои контролы.
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            ProcessMode = ProcessModeEnum.Always,
-        };
-        root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        AddChild(root);
-
-        // Кнопка «Debug Mode»: левый верхний угол, зелёный текст, изначально скрыта.
-        _btnDebugMode = new Button
-        {
-            Name = "BtnDebugMode",
-            Text = "Debug Mode",
-            Visible = false,
-            ProcessMode = ProcessModeEnum.Always,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-        };
-        _btnDebugMode.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
-        _btnDebugMode.Position = new Vector2(8, 8);
-        _btnDebugMode.AddThemeColorOverride("font_color", new Color(0.2f, 1.0f, 0.35f));
-        _btnDebugMode.AddThemeColorOverride("font_hover_color", new Color(0.5f, 1.0f, 0.6f));
-        _btnDebugMode.AddThemeColorOverride("font_pressed_color", new Color(0.1f, 0.8f, 0.25f));
-        _btnDebugMode.Pressed += TogglePanel;
-        root.AddChild(_btnDebugMode);
-
-        // Панель: PanelContainer + VBoxContainer с Label отладки и контейнером кнопок.
-        _panel = new PanelContainer
-        {
-            Name = "DebugPanel",
-            Visible = false,
-            ProcessMode = ProcessModeEnum.Always,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-        };
-        _panel.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
-        _panel.Position = new Vector2(8, 44);
-        _panel.CustomMinimumSize = new Vector2(320, 0);
-        root.AddChild(_panel);
-
-        var vbox = new VBoxContainer { Name = "VBox" };
-        _panel.AddChild(vbox);
-
-        _lblDebugInfo = new Label
-        {
-            Name = "LblDebugInfo",
-            Text = string.Empty,
-            ProcessMode = ProcessModeEnum.Always,
-            // Моноширинный шрифт — цифры не «прыгают» между кадрами.
-        };
-        _lblDebugInfo.AddThemeColorOverride("font_color", new Color(0.85f, 0.9f, 0.95f));
-        vbox.AddChild(_lblDebugInfo);
-
-        vbox.AddChild(new HSeparator { Name = "Separator" });
-
-        _buttons = new VBoxContainer { Name = "Buttons" };
-        vbox.AddChild(_buttons);
+            ToggleDebugMode();
+            GetViewport().SetInputAsHandled();
+        }
     }
 
     /// <summary>
-    /// Публичный API: добавить кнопку в дебаг-панель одной строкой.
-    /// Возвращает созданную кнопку — можно подписаться дополнительно или переименовать.
+    /// F3: показать/скрыть кнопку «Debug Mode». При выключении заодно закрывает панель.
+    /// </summary>
+    public void ToggleDebugMode()
+    {
+        DebugModeVisible = !DebugModeVisible;
+        _btnDebugMode.Visible = DebugModeVisible;
+
+        if (!DebugModeVisible && _panel.Visible)
+            ClosePanel();
+    }
+
+    /// <summary>
+    /// Открыть/закрыть панель. Метод публичный и подключён к сигналу pressed кнопки
+    /// «Debug Mode» связью в сцене (не подпиской в коде).
+    /// </summary>
+    public void TogglePanel()
+    {
+        if (_panel.Visible)
+            ClosePanel();
+        else
+            OpenPanel();
+    }
+
+    /// <summary>
+    /// Включить/выключить опцию «морозить мир при открытой панели». Вызывается
+    /// чекбоксом ChkPauseWorld (сигнал toggled из сцены) и из кода. Пауза меняется
+    /// сразу, не дожидаясь открытия/закрытия панели.
+    /// </summary>
+    public void SetPauseWorld(bool enabled)
+    {
+        _pauseWorldEnabled = enabled;
+
+        // Синхронизируем галочку, если опцию включили/выключили из кода.
+        // Присваивание эмитирует toggled → повторный вызов безопасен (idempotent).
+        if (_chkPauseWorld.ButtonPressed != enabled)
+            _chkPauseWorld.ButtonPressed = enabled;
+
+        if (_panel.Visible)
+        {
+            if (enabled) ApplyPause();
+            else ReleasePause();
+        }
+    }
+
+    /// <summary>Переключить опцию паузы (для дебаг-кнопки из кода).</summary>
+    public void TogglePauseWorld() => SetPauseWorld(!_pauseWorldEnabled);
+
+    private void OpenPanel()
+    {
+        _panel.Visible = true;
+        if (_pauseWorldEnabled)
+            ApplyPause();
+    }
+
+    private void ClosePanel()
+    {
+        _panel.Visible = false;
+        ReleasePause();
+    }
+
+    /// <summary>Паузу ставим только если её никто другой не установил.</summary>
+    private void ApplyPause()
+    {
+        if (!GetTree().Paused)
+        {
+            GetTree().Paused = true;
+            _wePausedTheTree = true;
+        }
+    }
+
+    /// <summary>Снимаем только собственную паузу — чужую (меню паузы игры) не трогаем.</summary>
+    private void ReleasePause()
+    {
+        if (_wePausedTheTree)
+        {
+            GetTree().Paused = false;
+            _wePausedTheTree = false;
+        }
+    }
+
+    /// <summary>
+    /// Добавить кнопку в панель. Единственный узел, который создаёт код: список кнопок
+    /// известен только в рантайме. Работает через DebugInfoBus.RegisterDebugButton.
     /// </summary>
     public Button RegisterDebugButton(string label, Action callback)
     {
         var button = new Button
         {
-            Name = label,
+            Name = $"Btn_{label.Replace(" ", "")}",
             Text = label,
+            // Кнопки должны нажиматься и на паузе — как и весь дебаг-слой.
             ProcessMode = ProcessModeEnum.Always,
             MouseFilter = Control.MouseFilterEnum.Stop,
         };
@@ -131,66 +178,12 @@ public partial class DebugLayer : CanvasLayer
             }
             catch (Exception e)
             {
-                GD.PushError($"Debug button «{label}» упал: {e}");
+                GD.PushError($"DebugButton «{label}»: {e}");
             }
         };
         _buttons.AddChild(button);
         return button;
     }
-
-    // ------------------------------------------------------------------ ввод
-
-    public override void _UnhandledInput(InputEvent @event)
-    {
-        if (!@event.IsActionPressed(ActionToggle))
-            return;
-
-        ToggleDebugMode();
-        GetViewport().SetInputAsHandled();
-    }
-
-    private void ToggleDebugMode()
-    {
-        DebugModeVisible = !DebugModeVisible;
-        _btnDebugMode.Visible = DebugModeVisible;
-
-        // Выключили дебаг-режим — заодно закрываем панель и снимаем паузу.
-        if (!DebugModeVisible && PanelOpen)
-            ClosePanel();
-    }
-
-    private void TogglePanel()
-    {
-        if (PanelOpen)
-            ClosePanel();
-        else
-            OpenPanel();
-    }
-
-    private void OpenPanel()
-    {
-        _panel.Visible = true;
-        // Пока меню открыто — мир стоит, но UI (ProcessMode = Always) реагирует на клики.
-        // Паузу снимаем только если сами её поставили: позже появится меню паузы игры,
-        // и закрывать чужую паузу дебаг-панель не имеет права.
-        if (!GetTree().Paused)
-        {
-            GetTree().Paused = true;
-            _wePausedTheTree = true;
-        }
-    }
-
-    private void ClosePanel()
-    {
-        _panel.Visible = false;
-        if (_wePausedTheTree)
-        {
-            GetTree().Paused = false;
-            _wePausedTheTree = false;
-        }
-    }
-
-    // ------------------------------------------------------------ debug info
 
     public override void _Process(double delta)
     {
@@ -198,26 +191,24 @@ public partial class DebugLayer : CanvasLayer
     }
 
     /// <summary>
-    /// Обновляет строку «Debug Info». Текст собирает DebugInfoBus из блоков,
-    /// которые объявили системы; сам DebugLayer их содержимого не знает.
+    /// Строка отладки: собирает блоки всех зарегистрированных источников
+    /// (DebugInfoBus.RegisterInfoSource) через перенос строки.
     /// </summary>
     private void UpdateDebugInfo()
     {
-        if (!PanelOpen)
-            return; // на закрытой панели Label невидим — не тратим кадры
+        if (!_panel.Visible)
+            return;
 
-        var engine = Engine.GetFramesPerSecond();
         var camera = GetViewport().GetCamera3D();
-        var cameraPos = camera != null ? camera.GlobalPosition : Vector3.Zero;
-
         _lblDebugInfo.Text =
-            $"FPS: {engine}\n" +
-            $"gravity: 0.0 (невесомость)\n" +
-            $"camera: {Fmt(cameraPos)}\n" +
-            $"paused: {GetTree().Paused}\n" +
+            $"FPS: {Engine.GetFramesPerSecond():F0} | " +
+            $"physics ticks: {Engine.GetPhysicsTicksPerSecond()} | " +
+            $"gravity: {ProjectSettings.GetSetting("physics/3d/default_gravity").AsDouble()}\n" +
+            $"camera: {Format(camera?.GlobalPosition ?? Vector3.Zero)} | " +
+            $"world: {(_wePausedTheTree ? "PAUSED" : "running")}\n" +
             DebugInfoBus.BuildInfoText();
     }
 
-    private static string Fmt(Vector3 v) =>
+    private static string Format(Vector3 v) =>
         $"({v.X:F1}, {v.Y:F1}, {v.Z:F1})";
 }
