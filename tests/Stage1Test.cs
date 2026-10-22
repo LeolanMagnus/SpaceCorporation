@@ -116,6 +116,31 @@ public partial class Stage1Test : Node
         Check(_layer.GetNodeOrNull<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo") != null,
               "в панели есть Label «LblDebugInfo»");
 
+        // --- шаг 1.4: ввод и конфликт с меню
+        Check(InputMap.HasAction("debug_toggle"), "в InputMap есть действие debug_toggle");
+        bool f3Bound = false;
+        foreach (var ev in InputMap.ActionGetEvents("debug_toggle"))
+        {
+            if (ev is InputEventKey k && (k.Keycode == Key.F3 || k.PhysicalKeycode == Key.F3))
+                f3Bound = true;
+        }
+        Check(f3Bound, "debug_toggle привязан к F3 через InputMap, а не хардкодом");
+
+        var dbgRoot = _layer.GetNode<Control>("DebugRoot");
+        Check(dbgRoot.MouseFilter == Control.MouseFilterEnum.Ignore,
+              "фон DebugRoot не глотает клики по игре (MouseFilter = Ignore)");
+        Check(panel != null && panel.MouseFilter == Control.MouseFilterEnum.Stop,
+              "сама панель кликабельна (MouseFilter = Stop)");
+        Check(_layer.ProcessMode == ProcessModeEnum.Always,
+              "DebugLayer живёт на паузе (ProcessMode = Always)");
+
+        // --- зелёный текст кнопки «Debug Mode»
+        if (btn != null)
+        {
+            var c = btn.GetThemeColor("font_color");
+            Check(c.G > 0.6f && c.G > c.R + 0.3f, $"текст кнопки зелёный: {c}");
+        }
+
         // --- тестовая кнопка из DebugLayer.Ready()
         var buttons = _layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons");
         Check(buttons != null && buttons.GetChildCount() >= 1,

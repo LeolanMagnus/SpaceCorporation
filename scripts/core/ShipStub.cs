@@ -28,8 +28,10 @@ public partial class ShipStub : RigidBody3D
         // Кнопка для проверки инерции: короткий импульс вперёд, дальше тело летит само.
         DebugInfoBus.RegisterDebugButton("Nudge Ship", () =>
         {
-            ApplyImpulse(-GlobalTransform.Basis.Z * Mass * 5f);
-            GD.Print($"ship nudged, |v| = {LinearVelocity.Length():F2} m/s");
+            var impulse = -GlobalTransform.Basis.Z * Mass * 5f;
+            ApplyImpulse(impulse);
+            // Скорость обновится только на следующем шаге физики, поэтому печатаем импульс.
+            GD.Print($"ship nudged, impulse = {impulse.Length():F1} Н*с (ожидается |v| ≈ 5 м/с)");
         });
     }
 }

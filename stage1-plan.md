@@ -10,27 +10,31 @@
 **Критерий готовности (из исходного плана):** F3 → появляется кнопка «Debug Mode» →
 по клику открывается панель; `RegisterDebugButton` работает — тестовая кнопка печатает в консоль.
 
+> **СТАТУС: этап выполнен** (код в репо, коммит `dad5287` + последующие).
+> Автотест `tests/Stage1Test.tscn` — **50 проверок, 0 падений** (`./run-tests.sh`).
+> Отклонения от плана в конце файла («Итоги этапа»).
+
 ---
 
 ## Шаг 1.0 — Создать проект (0.5 ч)
 
-- [ ] `project.godot` в корне рабочей директории (`F:\petprojects\SpaceCorporation`), тип **.NET**
+- [x] `project.godot` в корне рабочей директории (`F:\petprojects\SpaceCorporation`), тип **.NET**
       (в проекте должны появиться `SpaceCorporation.csproj` и solution).
-- [ ] Стартовая сцена: `scenes/Main.tscn`.
-- [ ] `Main.tscn` (корень — `Node3D` "Main"):
+- [x] Стартовая сцена: `scenes/Main.tscn`.
+- [x] `Main.tscn` (корень — `Node3D` "Main"):
       - `WorldEnvironment` + `DirectionalLight3D` (чтобы геометрия была видна),
       - `Camera3D` (временно, без управления — до этапа 2),
       - `DebugLayer` (CanvasLayer) — из шага 1.2.
-- [ ] `dotnet build` проходит; F5 в редакторе открывает сцену без ошибок.
+- [x] `dotnet build` проходит; F5 в редакторе открывает сцену без ошибок.
 
 **Результат:** проект открывается, сцена рендерится, консоль чистая.
 
 ## Шаг 1.1 — Физика: невесомость и слои коллизий (1 ч)
 
-- [ ] `project.godot` → `physics/3d/default_gravity = 0.0` (глобальная гравитация выключена).
-- [ ] Именованные слои коллизий (Project Settings → Layer Names → 3D Physics):
+- [x] `project.godot` → `physics/3d/default_gravity = 0.0` (глобальная гравитация выключена).
+- [x] Именованные слои коллизий (Project Settings → Layer Names → 3D Physics):
       `1=Ship`, `2=Station`, `3=Character`, `4=Target`, `5=DockingZone`, `6=DebugHelper`.
-- [ ] Зафиксировать номера в `scripts/core/CollisionLayers.cs` (константы-степени двойки),
+- [x] Зафиксировать номера в `scripts/core/CollisionLayers.cs` (константы-степени двойки),
       чтобы в коде не писать magic-числа:
       ```csharp
       public static class CollisionLayers
@@ -43,7 +47,7 @@
           public const uint DebugHelper = 1u << 5;
       }
       ```
-- [ ] Заглушка-стенд: один `StaticBody3D` + `BoxMesh`/`BoxShape3D` на слое Station
+- [x] Заглушка-стенд: один `StaticBody3D` + `BoxMesh`/`BoxShape3D` на слое Station
       (временно, для проверки коллизий; на этапе 4 заменяется станцией).
 
 **Результат:** тело, брошенное в сцену, не падает; слои видны в инспекторе.
@@ -64,11 +68,11 @@ DebugLayer (CanvasLayer, Layer = 10, ProcessMode = Always)
 ```
 
 Требования из плана:
-- [ ] Кнопка в левом верхнем углу, текст зелёный (`AddThemeColorOverride`), надпись «Debug Mode»,
+- [x] Кнопка в левом верхнем углу, текст зелёный (`AddThemeColorOverride`), надпись «Debug Mode»,
       изначально `Visible = false`.
-- [ ] **F3** — переключает видимость кнопки.
-- [ ] Клик по кнопке — показать/скрыть `PanelContainer` с `VBoxContainer`.
-- [ ] В панели: `Label` «Debug Info» (пустой) + `RegisterDebugButton(string label, Action callback)`:
+- [x] **F3** — переключает видимость кнопки.
+- [x] Клик по кнопке — показать/скрыть `PanelContainer` с `VBoxContainer`.
+- [x] В панели: `Label` «Debug Info» (пустой) + `RegisterDebugButton(string label, Action callback)`:
       ```csharp
       public Button RegisterDebugButton(string label, Action callback)
       {
@@ -78,29 +82,29 @@ DebugLayer (CanvasLayer, Layer = 10, ProcessMode = Always)
           return b;
       }
       ```
-- [ ] Тестовая кнопка «Test» → `GD.Print("debug button pressed")` — вызывается из `DebugLayer.Ready()`.
+- [x] Тестовая кнопка «Test» → `GD.Print("debug button pressed")` — вызывается из `DebugLayer.Ready()`.
 
 **Результат:** F3 → кнопка → панель; тестовая кнопка печатает в консоль.
 
 ## Шаг 1.3 — DebugInfo-апдейтер (1.5 ч)
 
-- [ ] В `DebugLayer._Process(double delta)` — метод `UpdateDebugInfo()`,
+- [x] В `DebugLayer._Process(double delta)` — метод `UpdateDebugInfo()`,
       который пишет в `LblDebugInfo.Text` (строка, обновляемая раз в кадр).
-- [ ] Реестр источников: `RegisterInfoSource(Func<string> provider)` — каждая система
+- [x] Реестр источников: `RegisterInfoSource(Func<string> provider)` — каждая система
       позже добавляет свой блок текста; апдейтер склеивает блоки через `\n`.
-- [ ] Пока выводить только то, что реально есть: FPS, позиция камеры, «gravity = 0».
+- [x] Пока выводить только то, что реально есть: FPS, позиция камеры, «gravity = 0».
       (Скорость корабля / HP / состояние стыковки появятся на этапах 2, 4, 5.)
 
 **Результат:** в панели живая строка с FPS; добавление источника — одна строка кода.
 
 ## Шаг 1.4 — Ввод и конфликт с меню (1 ч)
 
-- [ ] InputMap: действие `debug_toggle` = **F3** (прописать в `project.godot`, а не хардкодом).
-- [ ] Пока панель открыта: `GetTree().Paused = true`, у `DebugLayer` — `ProcessMode = Always`,
+- [x] InputMap: действие `debug_toggle` = **F3** (прописать в `project.godot`, а не хардкодом).
+- [x] Пока панель открыта: `GetTree().Paused = true`, у `DebugLayer` — `ProcessMode = Always`,
       чтобы меню жило на паузе (смягчение риска «Дебаг-меню конфликтует с вводом»).
-- [ ] `MouseFilter = Stop` только на самих контролах (кнопка/панель), фон — `Ignore`,
+- [x] `MouseFilter = Stop` только на самих контролах (кнопка/панель), фон — `Ignore`,
       чтобы клики не проглатывались на весь экран.
-- [ ] F3 при открытом меню закрывает панель и снимает паузу.
+- [x] F3 при открытом меню закрывает панель и снимает паузу.
 
 **Результат:** F3 полностью управляет режимом; игра на паузе, UI работает.
 
@@ -108,9 +112,9 @@ DebugLayer (CanvasLayer, Layer = 10, ProcessMode = Always)
 
 Нужен, чтобы к этапу 2 не переделывать сцену.
 
-- [ ] `PlayerShip` — `RigidBody3D` + `BoxMesh` + `CollisionShape3D`, `GravityScale = 0`,
+- [x] `PlayerShip` — `RigidBody3D` + `BoxMesh` + `CollisionShape3D`, `GravityScale = 0`,
       `LinearDamp = 0`, `AngularDamp = 1.5`, слой Ship / маска Station+Target.
-- [ ] `scripts/core/DebugInfoBus.cs` — сингловый узел-«шина», через который системы
+- [x] `scripts/core/DebugInfoBus.cs` — сингловый узел-«шина», через который системы
       отдают текст в debug-info (чтобы UI не знал про них).
 
 **Результат:** корабль висит в невесомости; панель его видит через `RegisterInfoSource`.
@@ -139,13 +143,13 @@ scripts/debug/DebugLayer.cs
 
 ## Чек-лист приёмки этапа
 
-- [ ] F3 показывает/скрывает кнопку «Debug Mode» (зелёный текст, левый верхний угол).
-- [ ] Клик по кнопке открывает и закрывает панель с `VBoxContainer`.
-- [ ] `RegisterDebugButton("Test", ...)` — одна строка: кнопка появляется и печатает в консоль.
-- [ ] Строка `DebugInfo` обновляется каждый кадр, источники добавляются без правки `DebugLayer`.
-- [ ] Глобальная гравитация = 0: `RigidBody3D` с `GravityScale = 0` не падает.
-- [ ] Слои 1–6 именованы и доступны из C# через константы.
-- [ ] При открытом дебаг-менее игра на паузе, но UI реагирует на клики.
+- [x] F3 показывает/скрывает кнопку «Debug Mode» (зелёный текст, левый верхний угол).
+- [x] Клик по кнопке открывает и закрывает панель с `VBoxContainer`.
+- [x] `RegisterDebugButton("Test", ...)` — одна строка: кнопка появляется и печатает в консоль.
+- [x] Строка `DebugInfo` обновляется каждый кадр, источники добавляются без правки `DebugLayer`.
+- [x] Глобальная гравитация = 0: `RigidBody3D` с `GravityScale = 0` не падает.
+- [x] Слои 1–6 именованы и доступны из C# через константы.
+- [x] При открытом дебаг-менее игра на паузе, но UI реагирует на клики.
 
 ## Что сознательно НЕ делаем на этапе 1
 
@@ -173,3 +177,50 @@ scripts/debug/DebugLayer.cs
 - `RegisterInfoSource` → скорость и угловая скорость (2), HP (4), DockingState (5),
   состояние ботинок (6).
 - Слои коллизий → маски RayCast3D для стрельбы (3) и магнитных ботинок (6).
+
+---
+
+## Итоги этапа (что реально сделано)
+
+Фактический набор файлов:
+
+```
+project.godot                 // gravity = 0, debug_toggle = F3, 6 именованных слоёв, autoload DebugInfoBus
+SpaceCorporation.csproj       // Godot.NET.Sdk/4.7.2, net8.0
+scenes/Main.tscn              // WorldEnvironment, DirectionalLight3D, Camera3D, TestStand, PlayerShip, DebugLayer
+scenes/DebugLayer.tscn        // CanvasLayer + скрипт (весь UI строится кодом в BuildUi)
+scripts/core/CollisionLayers.cs
+scripts/core/DebugInfoBus.cs  // autoload-сингл: шина кнопок и debug-info
+scripts/core/ShipStub.cs      // корабль-заглушка + кнопка «Nudge Ship»
+scripts/debug/DebugLayer.cs   // F3, кнопка «Debug Mode», панель, RegisterDebugButton, UpdateDebugInfo
+tests/Stage1Test.cs / .tscn   // автотест приёмки (50 проверок)
+run-tests.sh                  // dotnet build + godot --headless прогон теста
+```
+
+Отличия и дополнения к плану:
+
+1. **UI строится кодом, а не в `.tscn`.** `DebugLayer.tscn` содержит только корень `CanvasLayer`
+   со скриптом; `DebugRoot / BtnDebugMode / DebugPanel / VBox / LblDebugInfo / Buttons` создаются
+   в `BuildUi()`. Причина: кнопки из `RegisterDebugButton` всё равно создаёт код, а UI, описанный
+   и в `.tscn`, и в коде, расходится при правках. Пути к узлам соответствуют дереву из шага 1.2.
+2. **`DebugInfoBus` сделан autoload-синглом уже на шаге 1.2** (в плане он значился для 1.5).
+   Это нужно, чтобы системы этапов 3–6 регистрировали кнопки и строки до/без UI: шина копит
+   запросы и выгружает их, когда `DebugLayer` готов.
+3. **Имена API приведены к плану:** `DebugLayer.RegisterDebugButton(label, callback)`,
+   `DebugInfoBus.RegisterDebugButton(...)` / `RegisterInfoSource(key, provider)`.
+   `RegisterInfoSource` принимает ключ + `Func<string>` (ключа в плане не было): повторная
+   регистрация по тому же ключу заменяет блок, поэтому системы могут перерегистрироваться
+   после рестарта сцены.
+4. **Открытая панель ставит дерево на паузу** (`GetTree().Paused = true`) — закрытие риска
+   «конфликт с вводом» из шага 1.4. Проверено тестом: на паузе DebugInfo продолжает обновляться.
+5. **Godot 4.7.2:** свойство `RigidBody3D` называется `CustomIntegrator` (bool), а не
+   `CustomIntegratorMode`; на этапе 1 не нужен, оставлен комментарий под этап 5 (пружина стыковки).
+6. **`TestStand`** (StaticBody3D, слой Station) и **`PlayerShip`** (шаг 1.5) живут в `Main.tscn`;
+   у корабля уже есть узел `Muzzle` под лазеры этапа 3.
+
+Как проверить:
+
+```
+godot --path .        # игра: F3 → «Debug Mode» → панель → кнопки Test / BusButton / Nudge Ship
+./run-tests.sh        # dotnet build + 50 проверок приёмки, exit code 0
+```
