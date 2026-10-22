@@ -21,6 +21,9 @@ public partial class DebugLayer : CanvasLayer
     private Label _lblDebugInfo = null!;
     private VBoxContainer _buttons = null!;
 
+    /// <summary>Паузу дерева ставим сами — сами и снимаем (чужую паузу не трогаем).</summary>
+    private bool _wePausedTheTree;
+
     /// <summary>Видима ли сама кнопка «Debug Mode» (то есть включён ли дебаг-режим).</summary>
     public bool DebugModeVisible { get; private set; }
 
@@ -168,13 +171,23 @@ public partial class DebugLayer : CanvasLayer
     {
         _panel.Visible = true;
         // Пока меню открыто — мир стоит, но UI (ProcessMode = Always) реагирует на клики.
-        GetTree().Paused = true;
+        // Паузу снимаем только если сами её поставили: позже появится меню паузы игры,
+        // и закрывать чужую паузу дебаг-панель не имеет права.
+        if (!GetTree().Paused)
+        {
+            GetTree().Paused = true;
+            _wePausedTheTree = true;
+        }
     }
 
     private void ClosePanel()
     {
         _panel.Visible = false;
-        GetTree().Paused = false;
+        if (_wePausedTheTree)
+        {
+            GetTree().Paused = false;
+            _wePausedTheTree = false;
+        }
     }
 
     // ------------------------------------------------------------ debug info
