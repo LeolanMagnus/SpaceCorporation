@@ -1,0 +1,51 @@
+[gd_resource type="SceneReplicationConfig" format=3]
+
+[resource]
+
+; Конфиг свойств MultiplayerSynchronizer корабля (шаг 2 плана, §3.3).
+;
+; ФОРМАТ ПУТИ — с двоеточием: "NetState:NetPosition", а НЕ "NetState/NetPosition".
+; Проверено пробом tests/probe_fmt.gd на Godot 4.7.2: путь без subname
+; (get_subname_count() == 0) отбрасывается в SceneReplicationConfig::_set с
+; ошибкой "path.is_empty() || path.get_subname_count() == 0", конфиг становится
+; ПУСТЫМ, и реплика молча не приходит ни по одному свойству (§3.11 п.2 — та самая
+; ловушка «свойство не найдено», только здесь она ещё и на этапе загрузки .tres).
+; Двоеточие означает: узел NetState (путь от RootPath синхронизатора = сам Ship),
+; свойство NetPosition на этом узле.
+;
+; Заголовок файла ОБЯЗАН быть в квадратных скобках: "[gd_resource ...]" — без них
+; парсер отвечает "Expected '['", и ресурс не грузится вовсе (проверено прогоном).
+;
+; replication_mode: 0 = Never, 1 = Always, 2 = OnChange.
+; Везде OnChange. По исходнику движка (modules/multiplayer/scene_replication_config.cpp,
+; _update): mode==Always -> sync_props, mode==OnChange -> watch_props, и те, и другие
+; уходят в дельта-обновления; ключи sync/watch в .tres — deprecated-алиасы mode
+; (sync=true <=> Always, watch=true <=> OnChange), в _get_property_list их нет,
+; поэтому в файле их писать не нужно (проверено пробом tests/probe_syncflag3.gd:
+; вручную написанный sync=true игнорируется, mode решает).
+; OnChange выбран вместо Always: значения меняются каждый физический шаг, слать их
+; «всегда» — платить дельтой за то, что дельта и так есть (§2.9).
+;
+; spawn = true обязательно для NetPosition/NetRotation/ShipNetId: корабль спавнится
+; в рантайме, и пир, зашедший позже, обязан получить снимок вместе с узлом (§4 В4=B).
+; Для скоростей и SimTick снимок при спавне тоже безвреден и полезен: картинка у
+; поздно зашедшего пира не должна стартовать с нулевой скорости.
+
+properties/0/path = NodePath("NetState:NetPosition")
+properties/0/spawn = true
+properties/0/replication_mode = 2
+properties/1/path = NodePath("NetState:NetRotation")
+properties/1/spawn = true
+properties/1/replication_mode = 2
+properties/2/path = NodePath("NetState:NetLinearVelocity")
+properties/2/spawn = true
+properties/2/replication_mode = 2
+properties/3/path = NodePath("NetState:NetAngularVelocity")
+properties/3/spawn = true
+properties/3/replication_mode = 2
+properties/4/path = NodePath("NetState:SimTick")
+properties/4/spawn = true
+properties/4/replication_mode = 2
+properties/5/path = NodePath("NetState:ShipNetId")
+properties/5/spawn = true
+properties/5/replication_mode = 2

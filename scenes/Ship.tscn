@@ -1,7 +1,9 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/core/Ship.cs" id="1_ship"]
 [ext_resource type="Script" path="res://scripts/core/AttachPoint.cs" id="2_attach"]
+[ext_resource type="Script" path="res://scripts/core/NetState.cs" id="3_netstate"]
+[ext_resource type="SceneReplicationConfig" path="res://scenes/ShipReplication.tres" id="4_replcfg"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hull"]
 size = Vector3(2, 1, 4)
@@ -9,25 +11,62 @@ size = Vector3(2, 1, 4)
 [sub_resource type="BoxMesh" id="BoxMesh_hull"]
 size = Vector3(2, 1, 4)
 
+; Корабль (шаг 2 переделки стадии 1, §3.3). Разделение «истина / картинка»:
+;
+;   Ship (RigidBody3D)      — ИСТИНА. Симулирует только тот пир, что является
+;                             мультиплеер-авторитетом узла (в offline это единственный
+;                             процесс, поэтому поведение стадии 1 не меняется).
+;   ShipHull (Node3D)       — КАРТИНКА. Обычный Node3D: его трансформ можно писать
+;                             репликой/интерполяцией сколько угодно, физике это не
+;                             мешает (§1.6, §2.5). Под ним же и точки крепления:
+;                             игрок в кабине обязан совпадать с картинкой, а не с
+;                             физическим корпусом (§3.3, решение «точки переносим»).
+;   NetState (Node)         — буфер сетевого состояния, реплицируется
+;                             Synchronizer'ом (RootPath = ".." = сам Ship).
+;
+; Коллизия корпуса и Muzzle остаются НА теле: столкновения и ствол привязаны к
+; истинному трансформу, а не к интерполированной оболочке.
 [node name="Ship" type="RigidBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -6)
 script = ExtResource("1_ship")
 
-[node name="Hull" type="MeshInstance3D" parent="."]
-mesh = SubResource("BoxMesh_hull")
-
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("BoxShape3D_hull")
 
-[node name="Muzzle" type="Node3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)
+; Картинка: Hull остаётся MeshInstance3D и не переименовывается — ссылки вида
+; Ship/ShipHull/Hull сохраняются, assert теста обновлён на этот путь (§3.8).
+[node name="ShipHull" type="Node3D" parent="."]
+
+[node name="Hull" type="MeshInstance3D" parent="ShipHull"]
+mesh = SubResource("BoxMesh_hull")
 
 ; Точки крепления игрока (этап 6: открепиться от корабля → прикрепиться к станции).
-[node name="AttachPoints" type="Node3D" parent="."]
+; Лежат под ShipHull — см. шапку сцены.
+[node name="AttachPoints" type="Node3D" parent="ShipHull"]
 
-[node name="Seat" type="Node3D" parent="AttachPoints"]
+[node name="Seat" type="Node3D" parent="ShipHull/AttachPoints"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0.2)
 script = ExtResource("2_attach")
 Kind = 0
 IsDefaultForPlayer = true
 PlayerOffset = Vector3(0, 0.9, 0)
+NetId = 0
+
+[node name="Muzzle" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)
+
+; Буфер «истины» для репликации (§3.2). Свойства — только [Export]-свойства,
+; иначе Godot их не видит и снимок молча не приходит (§3.11 п.2).
+[node name="NetState" type="Node" parent="."]
+script = ExtResource("3_netstate")
+
+; RootPath = ".." — путь ОТНОСИТЕЛЬНО самого синхронизатора, то есть корабль;
+; свойства в конфиге адресуются как NetState/<Свойство> (§3.3).
+; ReplicationInterval = 1/30 = 0.0333 — 30 Гц при физическом тике 60 Гц (§2.9).
+; PublicVisibility = true: картинка нужна всем, фильтров видимости нет намеренно
+; (для спавнера снятая видимость = удаление узла, §3.3).
+[node name="Synchronizer" type="MultiplayerSynchronizer" parent="."]
+root_path = NodePath("..")
+replication_interval = 0.0333
+public_visibility = true
+replication_config = ExtResource("4_replcfg")

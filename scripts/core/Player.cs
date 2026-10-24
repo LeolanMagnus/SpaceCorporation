@@ -37,6 +37,12 @@ public partial class Player : CharacterBody3D
     private bool _awaitingDefaultPoint = true;
     private int _defaultPointAttempts;
 
+    /// <summary>Этот узел — локальный игрок (§3.5 п.2): ввод, камера и кнопки только
+    /// для него. В offline авторитет = 1 = SelfId, поэтому true, и поведение стадии 1
+    /// не меняется. На клиенте чужие игроки имеют авторитет другого пира — у них
+    /// false; в dedicated-процессе узла Player нет вовсе (§2.4).</summary>
+    private bool _isLocal;
+
     public override void _Ready()
     {
         CollisionLayer = CollisionLayers.Character;
@@ -48,8 +54,28 @@ public partial class Player : CharacterBody3D
         FloorMaxAngle = Mathf.DegToRad(50f);
 
         _cameraRig = GetNode<Node3D>(CameraRigPath);
-        _worldRoot = GetParent() as Node3D ?? throw new System.InvalidOperationException(
-            "Player должен лежать в сцене внутри 3D-узла (Main), чтобы было куда открепляться");
+        // §3.5 п.1: при спавне через MultiplayerSpawner родителем станет GameRoot,
+        // а при креплении игрок вообще висит под ShipHull — поэтому мировой корень
+        // берётся явно, а не из GetParent(): идём вверх по цепочке Node3D-предков до
+        // верхнего 3D-узла сцены (в игре это Main; Stage1Test-обёртка — Node, цепочка
+        // обрывается на Main). GetTree().CurrentScene не годится: в тестах текущей
+        // сценой является обёртка Stage1Test, а не Main.
+        _worldRoot = FindWorldRoot();
+        if (_worldRoot == null)
+            throw new System.InvalidOperationException(
+                "Player должен лежать в сцене внутри 3D-узла (Main), чтобы было куда открепляться");
+
+        // §3.5 п.2: ввод, камера и кнопки — только локально-авторитетному игроку.
+        // В offline авторитет = 1 = SelfId, поэтому local == true и поведение
+        // стадии 1 не меняется. У чужих игроков камеру глушим принудительно:
+        // в Player.tscn стоит current = true, и вторая камера перехватит viewport.
+        _isLocal = IsMultiplayerAuthority();
+        if (!_isLocal)
+        {
+            var cam = GetActiveCamera();
+            if (cam != null && cam.IsCurrent())
+                cam.Current = false;
+        }
 
         // Автопристёгивание откладывается на первый физический шаг: Reparent во время
         // _Ready() запрещён (дерево сцены ещё достраивается), а на первом шаге все
@@ -58,17 +84,15 @@ public partial class Player : CharacterBody3D
 
         // Дебаг-кнопки: цикл «открепиться → свободно → пристегнуться обратно» — ровно
         // то, что понадобится на этапе 6 для перехода корабль ↔ станция.
-        DebugInfoBus.RegisterDebugButton("Detach Player", () =>
+        // §3.5 п.3: только локальному игроку, и вместо прямых AttachTo/Detach —
+        // запрос через сеть (Request*), чтобы Reparent был на сервере и повторялся
+        // каждым пиром. В offline запрос сворачивается в локальный вызов.
+        if (_isLocal)
         {
-            Detach();
-            GD.Print($"player detached, global = {Fmt(GlobalPosition)}");
-        });
-        DebugInfoBus.RegisterDebugButton("Attach Player to Seat", () =>
-        {
-            AttachToDefaultPoint();
-            GD.Print($"player attached to {(AttachedTo?.Name ?? "<nothing>")}, " +
-                     $"parent = {GetParent()?.GetName()}, global = {Fmt(GlobalPosition)}");
-        });
+            DebugInfoBus.RegisterDebugButton("Detach Player", OnButtonDetach);
+            DebugInfoBus.RegisterDebugButton("Attach Player to Seat", OnButtonAttach);
+        }
+
 
         DebugInfoBus.RegisterInfoSource("Player", () =>
             $"player: parent = {GetParent()?.GetName()}, " +
@@ -78,9 +102,25 @@ public partial class Player : CharacterBody3D
 
     private static string Fmt(Vector3 v) => $"({v.X:F2}, {v.Y:F2}, {v.Z:F2})";
 
+    /// <summary>Верхний Node3D-предок: мировой корень сцены (§3.5 п.1). Обёртка
+    /// теста — обычный Node, поэтому цепочка обрывается на Main.</summary>
+    private Node3D? FindWorldRoot()
+    {
+        Node3D? top = null;
+        for (var n = GetParent(); n != null; n = n.GetParent())
+            if (n is Node3D n3)
+                top = n3;
+        return top;
+    }
+
     public override void _PhysicsProcess(double delta)
     {
-        if (!_awaitingDefaultPoint)
+        // §3.5 п.4: автопристёгивание — только серверу и offline. На клиенте
+        // крепление приходит репликой ApplyAttach, и _awaitingDefaultPoint не должен
+        // заставлять клиента крепиться самому (иначе Reparent разойдётся с сервером).
+        var nm = NetworkManager.Instance;
+        bool authoritySide = nm == null || !nm.HasRealPeer || nm.IsServer;
+        if (!_awaitingDefaultPoint || !authoritySide)
             return;
 
         if (AttachToDefaultPoint())
@@ -98,19 +138,30 @@ public partial class Player : CharacterBody3D
         }
     }
 
-    /// <summary>Пристегнуться к точке с [Export] IsDefaultForPlayer = true.</summary>
+    /// <summary>Пристегнуться к точке с [Export] IsDefaultForPlayer = true.
+    /// При нескольких кораблях таких точек несколько (Seat каждого корабля),
+    /// поэтому выбирается ближайшая к игроку, а не первая из группы (§4 В4).</summary>
     public bool AttachToDefaultPoint()
     {
+        AttachPoint? best = null;
+        float bestDist = float.MaxValue;
         foreach (var node in GetTree().GetNodesInGroup(AttachPoint.GroupName))
         {
             if (node is AttachPoint point && point.IsDefaultForPlayer &&
                 GodotObject.IsInstanceValid(point))
             {
-                AttachTo(point);
-                return true;
+                float d = GlobalPosition.DistanceSquaredTo(point.GlobalPosition);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = point;
+                }
             }
         }
-        return false;
+        if (best == null)
+            return false;
+        AttachTo(best);
+        return true;
     }
 
     /// <summary>
@@ -171,6 +222,195 @@ public partial class Player : CharacterBody3D
         var wish = basis.X * input.X + basis.Z * input.Y;
         Velocity = wish * speed;
         MoveAndSlide();
+    }
+
+    // --------------------------------------------------------- сеть (§3.4)
+    //
+    // Адрес точки крепления — пара целых (ownerNetId, pointNetId), а не NodePath:
+    // пути расходятся между процессами в тот момент, когда кто-то сделал Reparent.
+    // Reparent выполняется сервером (он валидирует запрос) и повторяется каждым
+    // пиром по RPC ApplyAttach — только поэтому дерево не разъезжается (§3.5 п.6).
+    // Сигнатуры AttachTo/Detach при этом НЕ меняются: это единственное место,
+    // где происходит Reparent.
+
+    /// <summary>
+    /// Клиентский запрос пристегнуться к точке (ownerNetId, pointNetId).
+    /// CallLocal = false: на отправителе не выполняется — работает только
+    /// серверный экземпляр того же узла (пути спавненных узлов совпадают, §3.6).
+    /// </summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RequestAttach(int ownerNetId, int pointNetId)
+    {
+        if (NetworkManager.Instance is not { IsServer: true })
+        {
+            GD.PrintErr("Player.RequestAttach: запрос обработал не сервер — " +
+                        "валидировать отправителя некому");
+            return;
+        }
+        if (!IsRequestFromOwner())
+            return;
+        AttachServerSide(ownerNetId, pointNetId);
+    }
+
+    /// <summary>Клиентский запрос открепиться. Тот же порядок, что у RequestAttach.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RequestDetach()
+    {
+        if (NetworkManager.Instance is not { IsServer: true })
+        {
+            GD.PrintErr("Player.RequestDetach: запрос обработал не сервер");
+            return;
+        }
+        if (!IsRequestFromOwner())
+            return;
+        DetachServerSide();
+    }
+
+    /// <summary>Сервер подтвердил крепление — каждый пир повторяет Reparent локально.
+    /// RpcMode в Godot 4 не имеет значения «только сервер» (есть Authority/AnyPeer/
+    /// Disabled), поэтому режим AnyPeer + проверка отправителя == 1 внутри: подделать
+    /// рассылку может только пир с id 1 (§2.5 п.2).</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void ApplyAttach(int ownerNetId, int pointNetId)
+    {
+        if (!IsFromServer())
+            return;
+        var point = NetworkManager.Instance?.FindAttachPoint(ownerNetId, pointNetId);
+        if (point == null)
+        {
+            // Молча проглотить нельзя: дерево разъедется, и дальше игрок «в кабине»
+            // у одного пира и свободен у другого.
+            GD.PrintErr($"Player.ApplyAttach: точка ({ownerNetId}, {pointNetId}) " +
+                        "не найдена в реестре — дерево разойдётся");
+            return;
+        }
+        AttachTo(point);
+    }
+
+    /// <summary>Сервер подтвердил открепление — каждый пир делает Detach локально.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void ApplyDetach()
+    {
+        if (!IsFromServer())
+            return;
+        Detach();
+    }
+
+    /// <summary>Серверная (и offline) сердцевина пристёжки: валидация точки по
+    /// реестру, локальный Reparent, рассылка ApplyAttach.
+    /// Переход «из корабля в корабль» — ОДИН вызов: AttachTo сам делает Detach,
+    /// между сообщениями игрок не висит непристёгнутым (§3.4 п.3).
+    /// Публичен только для offline и автотестов (§3.9 п.15): в сети вызывается
+    /// исключительно из RequestAttach после проверки отправителя.</summary>
+    public void AttachServerSide(int ownerNetId, int pointNetId)
+    {
+        var point = NetworkManager.Instance?.FindAttachPoint(ownerNetId, pointNetId);
+        if (point == null)
+        {
+            GD.PrintErr($"Player: точка крепления ({ownerNetId}, {pointNetId}) " +
+                        "не найдена в реестре — отказ в запросе");
+            return;
+        }
+        AttachTo(point);
+        // §3.5 п.8: вход в кабину = смена авторитета корабля на пилота. Сервер
+        // уже валидировал точку; владелец игрока (GetMultiplayerAuthority) становится
+        // пилотом. Если владелец точки — не корабль (станция на этапе 6), авторитет
+        // не меняем: у станции его назначает сервер навсегда (§3.4 п.2).
+        if (NetworkManager.Instance is { IsServer: true } nm && nm.FindShip(ownerNetId) is { } ship)
+            nm.AssignShipAuthority(shipNetId: ownerNetId, peerId: GetMultiplayerAuthority());
+        if (NetworkManager.Instance is { HasRealPeer: true })
+            Rpc(nameof(ApplyAttach), ownerNetId, pointNetId);
+    }
+
+    /// <summary>Серверная (и offline) сердцевина отстёжки.</summary>
+    private void DetachServerSide()
+    {
+        // §3.5 п.8: если этот игрок был пилотом корабля, из которого он отстёгивается,
+        // авторитет возвращается серверу (автопилот, peerId = 1). Пилот определяется
+        // по PilotPeerId корабля-владельца точки, а не по тому, кто где сидел:
+        // PilotPeerId обновляется на сервере при каждой смене (§4 В3 п.3).
+        var ship = AttachedTo != null
+            ? NetworkManager.Instance?.FindShip(AttachedTo.OwnerNetId)
+            : null;
+        int playerPeer = GetMultiplayerAuthority();
+        Detach();
+        if (ship != null && ship.PilotPeerId == playerPeer &&
+            NetworkManager.Instance is { IsServer: true } nm)
+            nm.AssignShipAuthority(shipNetId: ship.Net!.ShipNetId, peerId: 1);
+        if (NetworkManager.Instance is { HasRealPeer: true })
+            Rpc(nameof(ApplyDetach));
+    }
+
+    /// <summary>Запрос RPC должен прийти от пира, которому принадлежит этот игрок:
+    /// иначе любой клиент гонял бы чужих игроков по сцене (§2.5 п.2).</summary>
+    private bool IsRequestFromOwner()
+    {
+        int sender = Multiplayer.GetRemoteSenderId();
+        if (sender == GetMultiplayerAuthority())
+            return true;
+        GD.PrintErr($"Player: пир {sender} просит переместить чужого игрока " +
+                    $"(авторитет узла = {GetMultiplayerAuthority()}) — отказ");
+        return false;
+    }
+
+    /// <summary>RPC-рассылка состояния принимается только от сервера (id = 1):
+    /// в авторитетной сервером модели именно он рассылает Apply* всем (§2.5).</summary>
+    private bool IsFromServer() => Multiplayer.GetRemoteSenderId() == 1;
+
+    // ------------------------------------------------------ дебаг-кнопки
+
+    private void OnButtonAttach()
+    {
+        var (owner, point) = NearestAttachPoint();
+        if (owner <= 0)
+        {
+            GD.PrintErr("Player: в реестре нет ни одной точки крепления");
+            return;
+        }
+        // §3.5 п.3: при нескольких кораблях кнопка крепит к ближайшей точке
+        // реестра, а не к Seat первого.
+        GD.Print($"attach → ship#{owner}/point#{point}");
+        if (NetworkManager.Instance is { HasRealPeer: true })
+            RequestAttach(owner, point);      // RPC → сервер
+        else
+            AttachServerSide(owner, point);   // offline: тот же код локально (§1.8)
+    }
+
+    private void OnButtonDetach()
+    {
+        if (NetworkManager.Instance is { HasRealPeer: true })
+            RequestDetach();                  // RPC → сервер
+        else
+            DetachServerSide();               // offline: локально
+        GD.Print($"player detached, global = {Fmt(GlobalPosition)}");
+    }
+
+    /// <summary>Ближайшая к игроку точка из реестра NetworkManager (§3.5 п.3).
+    /// В offline реестр тоже работает: адрес выдаёт тот же счётчик (§1.8).</summary>
+    private (int Owner, int Point) NearestAttachPoint()
+    {
+        var nm = NetworkManager.Instance;
+        if (nm == null)
+            return (0, 0);
+        int bestOwner = 0, bestPoint = 0;
+        float bestDist = float.MaxValue;
+        foreach (var (key, p) in nm.AttachPoints)
+        {
+            if (!GodotObject.IsInstanceValid(p))
+                continue;
+            float d = GlobalPosition.DistanceSquaredTo(p.GlobalPosition);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                bestOwner = key.Owner;
+                bestPoint = key.Point;
+            }
+        }
+        return (bestOwner, bestPoint);
     }
 
     /// <summary>Камера игрока (для дебаг-инфо и будущего прицела).</summary>

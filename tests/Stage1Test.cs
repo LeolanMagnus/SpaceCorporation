@@ -76,8 +76,29 @@ public partial class Stage1Test : Node
               main.GetNodeOrNull<DirectionalLight3D>("DirectionalLight3D") == null,
               "в корне Main нет самодельных узлов камеры/света — всё вынесено в сцены");
 
-        _player = main.GetNodeOrNull<Player>("Player");
-        Check(_player != null, "Player присутствует в Main");
+        // --- шаг 4 переделки (§3.6): Player и Ship больше НЕ лежат в Main.tscn —
+        // их спавнит WorldSpawner (GameRoot + MultiplayerSpawner). Спавн в offline
+        // происходит синхронно в _Ready цепочки сцен, но тест всё равно ищет их
+        // через GameRoot и проверяет, что статичных инстансов в сцене нет (§4 В4=B).
+        var gameRoot = main.GetNodeOrNull<Node>("GameRoot");
+        Check(gameRoot != null, "в Main есть GameRoot (спавнер объектов мира, §3.6)");
+        Check(gameRoot?.GetNodeOrNull<MultiplayerSpawner>("Spawner") != null,
+              "у GameRoot есть дочерний MultiplayerSpawner «Spawner»");
+        Check(main.GetNodeOrNull<Node>("Ship") == null && main.GetNodeOrNull<Node>("Player") == null,
+              "в корне Main нет статичных Ship/Player — их спавнит код (§4 В4=B)");
+
+        var spawnPoints = main.GetNodeOrNull<Node3D>("SpawnPoints");
+        Check(spawnPoints != null, "в Main есть SpawnPoints (набор стартовых точек, §3.6)");
+        int spawnMarkers = 0;
+        if (spawnPoints != null)
+            foreach (var c in spawnPoints.GetChildren())
+                if (c is Marker3D && c.Name.ToString().StartsWith("Spawn"))
+                    spawnMarkers++;
+        Check(spawnMarkers >= 1,
+              $"SpawnPoints содержит >= 1 Marker3D вида Spawn<N> (получено {spawnMarkers})");
+
+        _player = gameRoot?.GetNodeOrNull<Player>("Player");
+        Check(_player != null, "Player заспавнен в GameRoot");
         if (_player != null)
         {
             Check(_player.SceneFilePath == "res://scenes/Player.tscn",
@@ -95,9 +116,9 @@ public partial class Stage1Test : Node
                   $"Player: маска Station|Target без Ship (получено {_player.CollisionMask})");
         }
 
-        // --- шаг 1.5: корабль в Main.tscn (инстан отдельной сцены scenes/Ship.tscn)
-        _ship = main.GetNodeOrNull<RigidBody3D>("Ship");
-        Check(_ship != null, "Ship (RigidBody3D) присутствует в Main");
+        // --- шаг 1.5 + шаг 4: корабль спавнится через GameRoot (не инстан в Main.tscn)
+        _ship = gameRoot?.GetNodeOrNull<RigidBody3D>("Ship");
+        Check(_ship != null, "Ship (RigidBody3D) заспавнен в GameRoot");
         if (_ship != null)
         {
             Check(_ship.SceneFilePath == "res://scenes/Ship.tscn",
@@ -112,9 +133,23 @@ public partial class Stage1Test : Node
                   $"Ship: маска Station|Target (получено {_ship.CollisionMask})");
             Check(_ship.GetNodeOrNull<Node3D>("Muzzle") != null,
                   "у корабля есть нос Muzzle (пригодится на этапе 3)");
-            Check(_ship.GetNodeOrNull<AttachPoint>("AttachPoints/Seat") != null,
-                  "у корабля есть точка крепления AttachPoints/Seat");
+            // Точки крепления переехали под картинку ShipHull (§3.3 переделки стадии 1):
+            // игрок в кабине обязан совпадать с картинкой, а не с физическим корпусом.
+            Check(_ship.GetNodeOrNull<AttachPoint>("ShipHull/AttachPoints/Seat") != null,
+                  "у корабля есть точка крепления ShipHull/AttachPoints/Seat");
+
+            // §3.8: адрес корабля выдаётся до AddChild — у заспавненного NetId != 0
+            var net = _ship.GetNodeOrNull<NetState>("NetState");
+            Check(net != null, "у корабля есть узел NetState (§3.2)");
+            Check(net != null && net.ShipNetId != 0,
+                  $"ShipNetId != 0 (получено {net?.ShipNetId})");
+            Check(net != null && net.ShipNetId == 1,
+                  $"в offline первый корабль имеет ShipNetId = 1 (получено {net?.ShipNetId})");
         }
+
+        // §3.8: источник панели называется Ship#<ShipNetId>, а не Ship
+        Check(DebugInfoBus.HasInfoSource("Ship#1") && !DebugInfoBus.HasInfoSource("Ship"),
+              "в панели есть источник Ship#1 и нет просто Ship (именование по ShipNetId, §3.1 п.6)");
 
         // --- заглушка корабля (шаг 1.5): в невесомости не двигается
         _probe = new RigidBody3D
@@ -154,10 +189,11 @@ public partial class Stage1Test : Node
         Check(_layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons") != null,
               "в панели есть VBoxContainer с кнопками");
 
-        // UI описан в сцене: VBox содержит ровно четыре узла из .tscn, код к структуре не прикладывается
+        // UI описан в сцене: VBox содержит узлы из .tscn, код к структуре не прикладывается.
+        // >= 4: добавятся кнопки сети (Start Server / Join / Disconnect, §3.7 шаг 5).
         var vbox = _layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox");
-        Check(vbox != null && vbox.GetChildCount() == 4,
-              $"структура панели из сцены: VBox детей = {vbox?.GetChildCount()} (ожидается 4)");
+        Check(vbox != null && vbox.GetChildCount() >= 4,
+              $"структура панели из сцены: VBox детей = {vbox?.GetChildCount()} (ожидается >= 4)");
         Check(_layer.GetNodeOrNull<HSeparator>("DebugRoot/DebugPanel/VBox/Separator") != null,
               "разделитель LblDebugInfo / кнопок задан в сцене");
 
@@ -274,8 +310,10 @@ public partial class Stage1Test : Node
                 Check(label.Text.Contains("FPS"), $"DebugInfo содержит FPS: [{FirstLine(label.Text)}]");
                 Check(label.Text.Contains("probe vel"),
                       "DebugInfo содержит блок системы (probe vel)");
-                Check(label.Text.Contains("ship:"),
-                      "DebugInfo содержит блок корабля (ship: |v| ...)");
+                // §3.8: ключ источника — Ship#{ShipNetId}; в offline адрес = 1,
+                // поэтому строка панели начинается с "ship#1:" и в одиночном режиме.
+                Check(label.Text.Contains("ship#1:"),
+                      "DebugInfo содержит блок корабля (ship#1: |v| ...)");
                 break;
             case 11:
                 // выключаем опцию паузы галочкой в панели (смена ButtonPressed эмитирует toggled)
@@ -310,7 +348,7 @@ public partial class Stage1Test : Node
                       "Player авто-пристёгнут к точке по умолчанию");
                 Check(_player?.AttachedTo?.Name == "Seat",
                       $"точка по умолчанию — кресло корабля Seat (получено {_player?.AttachedTo?.Name})");
-                Check(_player != null && _player.GetParent() == _ship?.GetNodeOrNull<Node>("AttachPoints/Seat"),
+                Check(_player != null && _player.GetParent() == _ship?.GetNodeOrNull<Node>("ShipHull/AttachPoints/Seat"),
                       "после пристёжки игрок — узел внутри иерархии корабля");
                 break;
             case 17:
@@ -321,8 +359,10 @@ public partial class Stage1Test : Node
                 break;
             case 18:
                 Check(_player != null && !_player.IsAttached, "Detach: игрок больше ни к чему не пристёгнут");
+                // §3.5 п.1: мировой корень берается явно (Player.FindWorldRoot),
+                // после detach игрок возвращается в Main — не в GameRoot и не в Ship.
                 Check(_player != null && _player.GetParent() == _main,
-                      "Detach: игрок вернулся в корень Main");
+                      "Detach: игрок вернулся в мировой корень Main");
                 break;
             case 19:
                 var attachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons"),
@@ -331,7 +371,7 @@ public partial class Stage1Test : Node
                 attachBtn?.EmitSignal(BaseButton.SignalName.Pressed);
                 break;
             case 20:
-                var seat = _ship?.GetNodeOrNull<AttachPoint>("AttachPoints/Seat");
+                var seat = _ship?.GetNodeOrNull<AttachPoint>("ShipHull/AttachPoints/Seat");
                 Check(_player != null && _player.IsAttached && _player.AttachedTo == seat,
                       "повторная пристёжка работает (игрок снова в кресле)");
                 Check(_player != null && seat != null &&

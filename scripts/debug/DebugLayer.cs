@@ -185,6 +185,15 @@ public partial class DebugLayer : CanvasLayer
         return button;
     }
 
+    /// <summary>Убрать кнопку по метке (смена авторитета: у не-авторитета не должно
+    /// кнопки, шлющей импульс в никуда, §3.1 п.4). Нет такой — молча ничего не делать.</summary>
+    public void RemoveDebugButton(string label)
+    {
+        var name = $"Btn_{label.Replace(" ", "")}";
+        var child = _buttons.GetNodeOrNull(name);
+        child?.Free();
+    }
+
     public override void _Process(double delta)
     {
         UpdateDebugInfo();

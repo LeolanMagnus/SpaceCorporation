@@ -12,6 +12,10 @@ public static class CollisionLayers
     public const uint Target      = 1u << 3; // 4
     public const uint DockingZone = 1u << 4; // 5
     public const uint DebugHelper = 1u << 5; // 6
+    // Решение §2.8: нумерация существующих слоёв не меняется (она вшита в .tscn и
+    // тесты), новые слои добавляются в конец.
+    public const uint Debris      = 1u << 6; // 7 — обломки (этап 3+)
+    public const uint World       = 1u << 7; // 8 — статика мира (планеты, астероиды)
 
     /// <summary>Случайное тело корабля: сталкивается со станцией и мишенями.</summary>
     public const uint ShipMask = Station | Target;

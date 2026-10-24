@@ -62,6 +62,16 @@ public partial class DebugInfoBus : Node
         _pendingButtons.Clear();
     }
 
+    /// <summary>Снять кнопку (например, при смене авторитета: не-авторитет не имеет
+    /// права на «Nudge Ship», §3.1 п.4). Копия в очереди тоже удаляется.</summary>
+    public static void RemoveDebugButton(string label)
+    {
+        if (Instance == null)
+            return;
+        Instance._pendingButtons.RemoveAll(b => b.Label == label);
+        Instance._layer?.RemoveDebugButton(label);
+    }
+
     internal void DetachLayer(DebugLayer layer)
     {
         if (ReferenceEquals(_layer, layer))
@@ -90,6 +100,35 @@ public partial class DebugInfoBus : Node
         if (Instance != null)
             Instance._infoSources.Remove(key);
     }
+
+    /// <summary>Есть ли источник с таким ключом (для assert'ов и отладки: ключ —
+    /// часть контракта, например «Ship#&lt;ShipNetId&gt;», §3.1 п.6).</summary>
+    public static bool HasInfoSource(string key) =>
+        Instance != null && Instance._infoSources.ContainsKey(key);
+
+    // ------------------------------------------------------- журнал событий
+
+    // Короткие событийные строки (spawn, смены ролей) — последние N строк живут в
+    // панели как отдельный источник «Log»: без них события сети невидимы, а гонять
+    // каждый ивент отдельным RegisterInfoSource — плодить ключи (§3.11 п.9).
+    private readonly Queue<string> _logLines = new();
+    private const int LogCapacity = 6;
+
+    /// <summary>Одноразовая строка в панель (и в консоль). Не заменяет GD.PrintErr
+    /// для ошибок — это именно видимая в UI лента событий.</summary>
+    public static void Report(string line)
+    {
+        GD.Print($"[net] {line}");
+        if (Instance == null)
+            return;
+        Instance._logLines.Enqueue(line);
+        while (Instance._logLines.Count > LogCapacity)
+            Instance._logLines.Dequeue();
+        if (!Instance._infoSources.ContainsKey("Log"))
+            Instance._infoSources["Log"] = Instance.BuildLog;
+    }
+
+    private string BuildLog() => string.Join("\n", _logLines);
 
     /// <summary>Собирает все блоки текста через перенос строки.</summary>
     public static string BuildInfoText()

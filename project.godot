@@ -4,7 +4,7 @@
 ;
 ; Format:
 ;   [section] ; section goes between []
-;   param=value ; assign values to parameters
+;   param=value ; assign values in this format
 
 config_version=5
 
@@ -16,6 +16,7 @@ config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 
 [autoload]
 
+NetworkManager="*res://scripts/core/NetworkManager.cs"
 DebugInfoBus="*res://scripts/core/DebugInfoBus.cs"
 
 [dotnet]
@@ -38,7 +39,10 @@ debug_toggle={
 3d_physics/layer_4="Target"
 3d_physics/layer_5="DockingZone"
 3d_physics/layer_6="DebugHelper"
+3d_physics/layer_7="Debris"
+3d_physics/layer_8="World"
 
 [physics]
 
 3d/default_gravity=0.0
+3d/physics_ticks_per_second=60

@@ -2,25 +2,39 @@
 
 [ext_resource type="PackedScene" path="res://scenes/Environment.tscn" id="1_env"]
 [ext_resource type="PackedScene" path="res://scenes/TestStand.tscn" id="2_stand"]
-[ext_resource type="PackedScene" path="res://scenes/Ship.tscn" id="3_ship"]
-[ext_resource type="PackedScene" path="res://scenes/Player.tscn" id="4_player"]
 [ext_resource type="PackedScene" path="res://scenes/DebugLayer.tscn" id="5_debug"]
+[ext_resource type="Script" path="res://scripts/core/WorldSpawner.cs" id="6_spawner"]
 
-; Главная сцена: только инстансы отдельных сцен, никакой геометрии/узлов вручную.
+; Главная сцена (§3.6): только инстансы отдельных сцен + данные сцены.
 ;
-; Сам факт «игрок в кабине» — это крепление в рантайме (Player.AttachTo к точке
-; AttachPoints/Seat с IsDefaultForPlayer = true), а не вложенность узлов в сцене:
-; так игрок сможет открепиться (Detach) и пристегнуться к точке станции (этап 6).
-; Порядок инстансов не важен — Player ищет точку на первом физическом шаге, когда
-; всё дерево уже достроено.
+; Player и Ship из сцены УБРАНЫ: их создаёт сервер (корабли — при старте мира,
+; игрока — по RequestSpawn) и повторяет MultiplayerSpawner через
+; AddSpawnableScene("res://scenes/Ship.tscn") / AddSpawnableScene("res://scenes/Player.tscn").
+; Иначе у каждого процесса свой корабль со своим InstanceId, и Synchronizer не
+; знает, куда класть реплику. В offline (тесты стадии 1) те же узлы создаются тем
+; же путём — через WorldSpawner, а не лежат в сцене (§1.8).
+;
+; SpawnPoints — данные сцены, репликации нет: позиции точек одинаковы во всех
+; процессах, серверу достаточно знать их порядок. Обход — по имени (Spawn0,
+; Spawn1, …), чтобы он не зависел от порядка обхода дерева (§3.6).
 [node name="Main" type="Node3D"]
 
 [node name="Environment" parent="." instance=ExtResource("1_env")]
 
 [node name="TestStand" parent="." instance=ExtResource("2_stand")]
 
-[node name="Ship" parent="." instance=ExtResource("3_ship")]
+[node name="SpawnPoints" type="Node3D" parent="."]
 
-[node name="Player" parent="." instance=ExtResource("4_player")]
+[node name="Spawn0" type="Marker3D" parent="SpawnPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.9, 0)
+
+[node name="Spawn1" type="Marker3D" parent="SpawnPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0.9, 0)
+
+[node name="GameRoot" type="Node3D" parent="."]
+script = ExtResource("6_spawner")
+
+[node name="Spawner" type="MultiplayerSpawner" parent="GameRoot"]
+spawn_path = NodePath("..")
 
 [node name="DebugLayer" parent="." instance=ExtResource("5_debug")]
