@@ -495,7 +495,7 @@ RPC. Аутентификации ключа на стадии 0 нет — по
 слот, это принятая цена (§4 В2).
 
 Минус `user://` как хранилища ключа: папка `user://` привязана к имени проекта и
-к бинарнику. Проверено прогоном (`tests/probe_paths.gd`, Godot 4.7.2 mono):
+к бинарнику. Проверено прогоном (`tests/probes/probe_paths.gd`, Godot 4.7.2 mono):
 `OS.GetUserDataDir()` = `C:/Users/<user>/AppData/Roaming/Godot/app_userdata/SpaceCorporation`,
 и **редактор, и CLI-запуск `godot --path .` дают одну и ту же папку** — значит
 один и тот же `playerKey` работает и в редакторе, и в стенде из скрипта. В
@@ -685,8 +685,8 @@ Ship (RigidBody3D)              ← авторитет (пилот или сер
   `GetPeers()`, рассылка `AnyPeer`, интерполяция двух чужих игроков).
 - Флаги передаются **только после `--`**: `OS.GetCmdlineUserArgs()` их вернёт, без
   разделителя аргумент уезжает в `GetCmdlineArgs()` и до `NetworkManager` не
-  доходит. Проверено на 4.7.2 прогоном `tests/probe_args.gd`:
-  `--headless --path . -s res://tests/probe_args.gd -- --server` →
+  доходит. Проверено на 4.7.2 прогоном `tests/probes/probe_args.gd`:
+  `--headless --path . -s res://tests/probes/probe_args.gd -- --server` →
   `USER_ARGS=["--server"]`, а без `--` → `ENGINE_ARGS=[..., "--server"]`,
   `USER_ARGS=[]`. Тот же probe стоит оставить как регрессию на будущее.
 - Сервер в скрипте убивается по PID (`kill`), а не «сам когда-нибудь умрёт»:
@@ -1304,7 +1304,7 @@ listen-server в проекте нет (§4 В1), и слово «host» в эт
 6. `InputFrame` упакован/распакован без потерь (битовая маска + `Vector2` + tick).
 7. CLI-разбор: `-- --server` даёт роль `Dedicated`, `-- --join 127.0.0.1` —
    `Client`, а `--server` **без** разделителя `--` не даёт ничего (аргумент
-   уходит в `GetCmdlineArgs()`, проверено прогоном `tests/probe_args.gd`, §2.6).
+   уходит в `GetCmdlineArgs()`, проверено прогоном `tests/probes/probe_args.gd`, §2.6).
    Assert на это нужен, потому что иначе стенд «молча не сервер» выглядит как
    поломка ENet.
 8. Возврат на место спавна (§2.4, §4 В2=B) — три подпроверки на offline-peer,
@@ -1462,7 +1462,7 @@ listen-server в проекте нет (§4 В1), и слово «host» в эт
    том, и в другом (§2.5 п.5, §3.9 п.9).
 7. **CLI-флаги до `--` теряются молча** (§2.1): движок их не отдаёт
    `GetCmdlineUserArgs()`, процесс стартует с UI и без сервера, ошибок нет.
-   Проверено прогоном `tests/probe_args.gd` на 4.7.2; assert в `NetTest` (§3.9 п.7)
+   Проверено прогоном `tests/probes/probe_args.gd` на 4.7.2; assert в `NetTest` (§3.9 п.7)
    нужен именно потому, что иначе это выглядит как поломка ENet.
 8. **Висящий dedicated-процесс** с занятым портом делает следующий прогон
    `Error.AlreadyInUse` (§2.1): в `run-net-demo.sh` сервер убивается по PID и в
@@ -2042,7 +2042,7 @@ dedicated запрещает *игрока-сервер*, а не *запуск 
 `already-in-game`; п.9 — пустой `SpawnPoints` не роняет сервер), §3.10 (шаг 6:
 `SpawnPoints` → `playerKey` → таблицы), §3.11 п.11 (пишем позицию после
 `QueueFree`; сверка с `Vector3.Zero`; хранение по `peerId`), §2.4 (проверенный
-`OS.GetUserDataDir()` через `tests/probe_paths.gd`), В2 целиком (в т.ч. снята
+`OS.GetUserDataDir()` через `tests/probes/probe_paths.gd`), В2 целиком (в т.ч. снята
 битая ссылка на «этап 8»).
 
 Уже внесено по В3 (=B, авторитет корабля = пир-пилот, без пилота — `1`):

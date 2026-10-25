@@ -29,11 +29,19 @@
 ### 1.2 DebugLayer — оболочка дебаг-UI
 - `scenes/DebugLayer.tscn` + `scripts/debug/DebugLayer.cs` (`CanvasLayer`, layer = 10).
 - **F3** показывает/скрывает кнопку «Debug Mode» (левый верхний угол, зелёный текст).
-- Клик по кнопке открывает/закрывает панель (`PanelContainer` → `VBoxContainer`).
+- Клик по кнопке открывает/закрывает панель (`PanelContainer` фиксированной высоты 320×256).
 - `RegisterDebugButton(string label, Action callback)` — кнопка в один вызов; тестовая «Test»
   печатает в консоль.
+- **Кнопки скроллятся**: список кнопок лежит в `ScrollContainer` (`VBox/Scroll/Buttons`) —
+  сколько бы систем ни зарегистрировало кнопки, панель не растёт за нижний край экрана
+  (баг BUG-002).
+- **Дебаг-информация — в отдельном окне**: `DebugInfoPanel` под основной панелью,
+  раскрывается toggle-кнопкой «Debug Info» (`toggled → ToggleInfoPanel`). Строки
+  FPS/Ship/Player/Net не раздувают основную панель и не сдвигают кнопки вниз.
+  При закрытии панели (`ClosePanel`) инфо-окно закрывается вместе с ней.
 - **UI строится из сцены, а не из кода**: всё статическое дерево (DebugRoot, BtnDebugMode,
-  DebugPanel, VBox, LblDebugInfo, Separator, ChkPauseWorld, Buttons) объявлено в `.tscn` вместе с позициями,
+  DebugPanel, VBox, HBoxTop, BtnDebugInfo, ChkPauseWorld, Separator, Scroll, Buttons,
+  DebugInfoPanel, LblDebugInfo) объявлено в `.tscn` вместе с позициями,
   размерами, `process_mode = Always`, `mouse_filter` и цветами. Скрипт только находит узлы и меняет
   их свойства; клик кнопки подключён связью сигнала в сцене (`pressed` → `TogglePanel`).
   Код создаёт лишь динамические кнопки из `RegisterDebugButton`.

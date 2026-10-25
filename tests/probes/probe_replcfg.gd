@@ -12,7 +12,7 @@ func _init() -> void:
 	cfg.property_set_sync(NodePath("NetState/SimTick"), false)
 	cfg.property_set_replication_mode(NodePath("NetState/SimTick"),
 		SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE)
-	var err := ResourceSaver.save(cfg, "res://tests/probe_replcfg.tres")
+	var err := ResourceSaver.save(cfg, "res://tests/probes/probe_replcfg.tres")
 	print("save err=", err)
 	print("count=", cfg.get_property_list().size())
 	for i in cfg.get_property_list().size():

@@ -141,6 +141,12 @@ public partial class Ship : RigidBody3D
 
     public override void _ExitTree()
     {
+        // Снимаем источник отладки по ключу Ship#{ShipNetId}: лямбда захватывает
+        // этот узел, и после освобождения корабля (DespawnShip, §3.9 п.16) шина
+        // звала бы мёртвую лямбду каждый кадр → ObjectDisposedException (§3.11 п.9).
+        DebugInfoBus.RemoveInfoSource($"Ship#{Net?.ShipNetId ?? 0}");
+        DebugInfoBus.RemoveDebugButton("Nudge Ship");
+
         // §3.9 п.16: игрок, пристёгнутый к точкам этого корабля, — узел внутри
         // ShipHull/AttachPoints, и при удалении корабля был бы удалён вместе с ним.
         // Сначала отпускаем таких игроков в мировой корень (точка крепления к этому

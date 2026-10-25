@@ -14,9 +14,9 @@ func _init() -> void:
 		  " sync=", cfg.property_get_sync(NodePath("NetState:NetRotation")))
 	cfg.property_set_sync(NodePath("NetState:NetPosition"), true)
 	print("after set_sync(true): sync=", cfg.property_get_sync(NodePath("NetState:NetPosition")))
-	var err := ResourceSaver.save(cfg, "res://tests/probe_syncflag.tres")
+	var err := ResourceSaver.save(cfg, "res://tests/probes/probe_syncflag.tres")
 	print("save err=", err)
-	var back := load("res://tests/probe_syncflag.tres") as SceneReplicationConfig
+	var back := load("res://tests/probes/probe_syncflag.tres") as SceneReplicationConfig
 	print("reload: sync(pos)=", back.property_get_sync(NodePath("NetState:NetPosition")),
 		  " sync(rot)=", back.property_get_sync(NodePath("NetState:NetRotation")))
 	quit()

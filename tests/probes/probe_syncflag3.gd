@@ -2,7 +2,7 @@ extends SceneTree
 
 # Сериализуется ли ключ sync в .tres? (probe_syncflag2.tres написан вручную)
 func _init() -> void:
-	var back := load("res://tests/probe_syncflag2.tres") as SceneReplicationConfig
+	var back := load("res://tests/probes/probe_syncflag2.tres") as SceneReplicationConfig
 	if back == null:
 		print("load failed")
 		quit()

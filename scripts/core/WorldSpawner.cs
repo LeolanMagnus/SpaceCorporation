@@ -44,6 +44,20 @@ public partial class WorldSpawner : Node3D
     private MultiplayerSpawner? _spawner;
     private bool _worldSpawned;
 
+    /// <summary>Запасная мировая камера (§3.11 п.10). Единственная камера в проекте
+    /// живёт внутри Player.tscn (current = true). Когда окно живёт, а игрока нет
+    /// (оконный dedicated из кнопки `Start Server`: одиночный игрок удалён, §2.4),
+    /// удаляется и его камера — а Godot НЕ выбирает новую current автоматически,
+    /// поэтому viewport остаётся без камеры и экран гаснет («игрок не видит сцену»).
+    /// Эта камера подстраховывает вид мира, пока активной камеры игрока нет.</summary>
+    private Camera3D? _fallbackCamera;
+
+    /// <summary>Мировой трансформ камеры последнего локального игрока, снятый перед
+    /// его удалением — чтобы запасная камера встала ровно туда, где смотрел игрок,
+    /// и вид мира не «прыгал» при переходе в серверный режим (§3.11 п.10).</summary>
+    private Transform3D _lastPlayerCamXform;
+    private bool _hasLastPlayerCamXform;
+
     public override void _Ready()
     {
         Current = this;
@@ -93,15 +107,83 @@ public partial class WorldSpawner : Node3D
         {
             // Уход из offline в сеть: одиночный игрок с авторитетом 1 удаляется —
             // в сети авторитет игрока всегда ≥ 2 (§2.4), оставить его = «игрок-призрак».
+            // Перед удалением снимаем мировой трансформ его камеры, чтобы запасная
+            // камера встала на то же место (вид не прыгает, §3.11 п.10).
+            CaptureLocalPlayerCamera();
             RemoveOfflinePlayer();
             if (next == NetworkManager.NetRole.Dedicated)
                 SpawnWorld();
+            // Окно живёт, а игрока (и его камеры) больше нет — включаем запасную
+            // камеру, иначе viewport остаётся без current и экран гаснет (§3.11 п.10).
+            // В CLI-dedicated этот путь не проходит: мир спавнится прямо из _Ready
+            // (RoleChanged сработал до Ready сцены), так что камера создаётся только
+            // при оконном `Start Server` через кнопку.
+            ActivateFallbackCamera();
         }
         else if (prev != NetworkManager.NetRole.Offline)
         {
             // Disconnect: возвращаем одиночного игрока в offline-мир (§3.9 п.5).
             StartSinglePlayerWorld();
+            // Камера игрока (current = true в Player.tscn) перехватывает viewport —
+            // запасную гасим, чтобы не было двух current-камер (§3.11 п.4).
+            DeactivateFallbackCamera();
         }
+    }
+
+    /// <summary>Снимает мировой трансформ активной камеры последнего локального игрока
+    /// (до его удаления) — для бесшовной передачи вида запасной камере (§3.11 п.10).</summary>
+    private void CaptureLocalPlayerCamera()
+    {
+        foreach (var node in GetTree().GetNodesInGroup("player"))
+        {
+            if (node is Player p && GodotObject.IsInstanceValid(p) &&
+                !p.IsQueuedForDeletion() && p.GetMultiplayerAuthority() == 1)
+            {
+                var cam = p.GetActiveCamera();
+                if (cam != null && GodotObject.IsInstanceValid(cam))
+                {
+                    _lastPlayerCamXform = cam.GlobalTransform;
+                    _hasLastPlayerCamXform = true;
+                }
+                return;
+            }
+        }
+    }
+
+    /// <summary>Создать (один раз) и включить запасную мировую камеру. Ставится в
+    /// мировой корень (WorldRoot), а не под игрока: игрока в этом режиме нет. Если
+    /// удалось снять трансформ камеры удалённого игрока — встаёт ровно на него.</summary>
+    private void ActivateFallbackCamera()
+    {
+        var root = WorldRoot;
+        if (root == null)
+            return;
+        if (_fallbackCamera == null || !GodotObject.IsInstanceValid(_fallbackCamera))
+        {
+            _fallbackCamera = new Camera3D
+            {
+                Name = "ServerCamera",
+                Far = 400.0f,
+                // Не реагирует на ввод и не мешает дебаг-слою; просто даёт viewport
+                // активную камеру, чтобы мир был виден без игрока (§3.11 п.10).
+                ProcessMode = ProcessModeEnum.Always,
+            };
+            root.AddChild(_fallbackCamera);
+        }
+
+        if (_hasLastPlayerCamXform)
+            _fallbackCamera.GlobalTransform = _lastPlayerCamXform;
+        else
+            _fallbackCamera.GlobalPosition = root.GlobalPosition + new Vector3(0f, 6f, 12f);
+
+        _fallbackCamera.Current = true;
+    }
+
+    /// <summary>Погасить запасную камеру: её сменила камера вернувшегося игрока.</summary>
+    private void DeactivateFallbackCamera()
+    {
+        if (_fallbackCamera != null && GodotObject.IsInstanceValid(_fallbackCamera))
+            _fallbackCamera.Current = false;
     }
 
     private void RemoveOfflinePlayer()

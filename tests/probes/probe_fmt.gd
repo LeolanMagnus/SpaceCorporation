@@ -12,8 +12,8 @@ func _init() -> void:
 	cfg.add_property(NodePath("NetState/SimTick"))  # сломанный вариант для сравнения
 	print("spawn(NetState:NetPosition)=", cfg.property_get_spawn(NodePath("NetState:NetPosition")))
 	print("spawn(NetState/SimTick)=", cfg.property_get_spawn(NodePath("NetState/SimTick")))
-	var err := ResourceSaver.save(cfg, "res://tests/probe_fmt.tres")
+	var err := ResourceSaver.save(cfg, "res://tests/probes/probe_fmt.tres")
 	print("save err=", err)
-	var back := load("res://tests/probe_fmt.tres") as SceneReplicationConfig
+	var back := load("res://tests/probes/probe_fmt.tres") as SceneReplicationConfig
 	print("reload spawn=", back.property_get_spawn(NodePath("NetState:NetPosition")))
 	quit()

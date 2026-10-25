@@ -24,9 +24,11 @@ public partial class DebugLayer : CanvasLayer
     // Узлы берём из сцены (DebugRoot/... в scenes/DebugLayer.tscn).
     private Button _btnDebugMode = null!;
     private PanelContainer _panel = null!;
+    private PanelContainer _infoPanel = null!;
     private Label _lblDebugInfo = null!;
     private VBoxContainer _buttons = null!;
     private CheckButton _chkPauseWorld = null!;
+    private Button _btnDebugInfo = null!;
 
     /// <summary>Паузу дерева ставим сами — сами и снимаем (чужую паузу не трогаем).</summary>
     private bool _wePausedTheTree;
@@ -47,9 +49,11 @@ public partial class DebugLayer : CanvasLayer
     {
         _btnDebugMode = GetNode<Button>("DebugRoot/BtnDebugMode");
         _panel = GetNode<PanelContainer>("DebugRoot/DebugPanel");
-        _lblDebugInfo = GetNode<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo");
-        _chkPauseWorld = GetNode<CheckButton>("DebugRoot/DebugPanel/VBox/ChkPauseWorld");
-        _buttons = GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons");
+        _infoPanel = GetNode<PanelContainer>("DebugRoot/DebugInfoPanel");
+        _lblDebugInfo = GetNode<Label>("DebugRoot/DebugInfoPanel/LblDebugInfo");
+        _chkPauseWorld = GetNode<CheckButton>("DebugRoot/DebugPanel/VBox/HBoxTop/ChkPauseWorld");
+        _btnDebugInfo = GetNode<Button>("DebugRoot/DebugPanel/VBox/HBoxTop/BtnDebugInfo");
+        _buttons = GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons");
 
         // Состояние чекбокса из сцены (button_pressed = true) — источник правды для опции.
         _pauseWorldEnabled = _chkPauseWorld.ButtonPressed;
@@ -123,6 +127,16 @@ public partial class DebugLayer : CanvasLayer
     /// <summary>Переключить опцию паузы (для дебаг-кнопки из кода).</summary>
     public void TogglePauseWorld() => SetPauseWorld(!_pauseWorldEnabled);
 
+    /// <summary>
+    /// Кнопка «Debug Info» (toggle_mode, сигнал toggled из сцены): раскрывает/сворачивает
+    /// отдельное окно дебаг-информации под основной панелью. Окно живёт своим местом —
+    /// длинные строки FPS/Ship/Player/Net не раздувают VBox панели и не сдвигают кнопки.
+    /// </summary>
+    public void ToggleInfoPanel(bool on)
+    {
+        _infoPanel.Visible = on;
+    }
+
     private void OpenPanel()
     {
         _panel.Visible = true;
@@ -133,6 +147,9 @@ public partial class DebugLayer : CanvasLayer
     private void ClosePanel()
     {
         _panel.Visible = false;
+        // Инфо-окно — часть панели: закрываем и его, снимая pressed с кнопки.
+        _infoPanel.Visible = false;
+        _btnDebugInfo.SetPressedNoSignal(false);
         ReleasePause();
     }
 

@@ -186,19 +186,22 @@ public partial class Stage1Test : Node
 
         var panel = _layer.GetNodeOrNull<PanelContainer>("DebugRoot/DebugPanel");
         Check(panel != null, "PanelContainer «DebugPanel» существует");
-        Check(_layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons") != null,
+        Check(_layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons") != null,
               "в панели есть VBoxContainer с кнопками");
 
         // UI описан в сцене: VBox содержит узлы из .tscn, код к структуре не прикладывается.
-        // >= 4: добавятся кнопки сети (Start Server / Join / Disconnect, §3.7 шаг 5).
+        // После переработки панели (BUG-002) VBox = HBoxTop (кнопка Debug Info + чекбокс
+        // Pause world) + Separator + Scroll (со скроллящимся VBox кнопок) = 3 детей.
         var vbox = _layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox");
-        Check(vbox != null && vbox.GetChildCount() >= 4,
-              $"структура панели из сцены: VBox детей = {vbox?.GetChildCount()} (ожидается >= 4)");
+        Check(vbox != null && vbox.GetChildCount() >= 3,
+              $"структура панели из сцены: VBox детей = {vbox?.GetChildCount()} (ожидается >= 3)");
         Check(_layer.GetNodeOrNull<HSeparator>("DebugRoot/DebugPanel/VBox/Separator") != null,
-              "разделитель LblDebugInfo / кнопок задан в сцене");
+              "разделитель кнопок задан в сцене");
+        Check(_layer.GetNodeOrNull<ScrollContainer>("DebugRoot/DebugPanel/VBox/Scroll") != null,
+              "кнопки лежат в ScrollContainer (панель не растёт за нижний край, BUG-002)");
 
         // Опция паузы мира — тоже узел сцены, а не созданный кодом чекбокс
-        _chkPause = _layer.GetNodeOrNull<CheckButton>("DebugRoot/DebugPanel/VBox/ChkPauseWorld")!;
+        _chkPause = _layer.GetNodeOrNull<CheckButton>("DebugRoot/DebugPanel/VBox/HBoxTop/ChkPauseWorld")!;
         Check(_chkPause != null, "в панели есть CheckButton «Pause world» из сцены");
         Check(_chkPause != null && _chkPause.ToggleMode && _chkPause.ButtonPressed,
               "чекбокс «Pause world» по умолчанию включён (паузить мир при открытой панели)");
@@ -230,7 +233,7 @@ public partial class Stage1Test : Node
                   "сигнал pressed кнопки подключён к методу TogglePanel дебаг-слоя");
         }
         Check(sceneConnection, "pressed кнопки «Debug Mode» подключён к TogglePanel в сцене");
-        Check(_layer.GetNodeOrNull<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo") != null,
+        Check(_layer.GetNodeOrNull<Label>("DebugRoot/DebugInfoPanel/LblDebugInfo") != null,
               "в панели есть Label «LblDebugInfo»");
 
         // --- шаг 1.4: ввод и конфликт с меню
@@ -259,7 +262,7 @@ public partial class Stage1Test : Node
         }
 
         // --- тестовая кнопка из DebugLayer.Ready()
-        var buttons = _layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons");
+        var buttons = _layer.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons");
         Check(buttons != null && buttons.GetChildCount() >= 1,
               $"тестовая кнопка зарегистрирована (кнопок: {buttons?.GetChildCount()})");
     }
@@ -287,19 +290,19 @@ public partial class Stage1Test : Node
             case 7:
                 Check(_layer.PanelOpen, "клик по «Debug Mode» открывает панель");
                 Check(GetTree().Paused, "открытая панель ставит дерево на паузу (опция включена по умолчанию)");
-                Check(_layer.GetNode<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo").Text
+                Check(_layer.GetNode<Label>("DebugRoot/DebugInfoPanel/LblDebugInfo").Text
                       .Contains("world: PAUSED"), "в DebugInfo видно, что мир на паузе");
                 break;
             case 8:
                 // клик по тестовой кнопке → печать в консоль (см. вывод «debug button pressed»)
-                var buttons = _layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons");
+                var buttons = _layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons");
                 var testBtn = FindButton(buttons, "Test");
                 Check(testBtn != null, "в панели есть кнопка «Test» из DebugLayer");
                 testBtn?.EmitSignal(BaseButton.SignalName.Pressed);
                 break;
             case 9:
                 // кнопка из шины должна появиться в той же панели
-                var busButtons = _layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons");
+                var busButtons = _layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons");
                 Check(busButtons.GetChildCount() >= 2,
                       $"DebugInfoBus.RegisterDebugButton добавил кнопку (всего: {busButtons.GetChildCount()})");
                 FindButton(busButtons, "BusButton")?.EmitSignal(BaseButton.SignalName.Pressed);
@@ -317,7 +320,7 @@ public partial class Stage1Test : Node
                 break;
             case 10:
                 // DebugInfo обновляется и на паузе (у DebugLayer ProcessMode = Always)
-                var label = _layer.GetNode<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo");
+                var label = _layer.GetNode<Label>("DebugRoot/DebugInfoPanel/LblDebugInfo");
                 Check(label.Text.Contains("FPS"), $"DebugInfo содержит FPS: [{FirstLine(label.Text)}]");
                 Check(label.Text.Contains("probe vel"),
                       "DebugInfo содержит блок системы (probe vel)");
@@ -339,7 +342,7 @@ public partial class Stage1Test : Node
                 Check(!_layer.PauseWorldEnabled, "PauseWorldEnabled == false после снятия галочки");
                 Check(_layer.PanelOpen, "панель при этом осталась открытой");
                 Check(!GetTree().Paused, "выключенная опция: мир НЕ на паузе при открытой панели");
-                Check(_layer.GetNode<Label>("DebugRoot/DebugPanel/VBox/LblDebugInfo").Text
+                Check(_layer.GetNode<Label>("DebugRoot/DebugInfoPanel/LblDebugInfo").Text
                       .Contains("world: running"), "в DebugInfo видно, что мир работает");
                 break;
             case 14:
@@ -350,7 +353,7 @@ public partial class Stage1Test : Node
             case 15:
                 // кнопка корабля: импульс → дальше инерция без гравитации.
                 // Мир живёт (опция паузы выключена), поэтому тело реально полетит.
-                var shipButtons = _layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons");
+                var shipButtons = _layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons");
                 var nudge = FindButton(shipButtons, "Nudge Ship");
                 Check(nudge != null, "Ship зарегистрировал кнопку «Nudge Ship» через шину");
                 nudge?.EmitSignal(BaseButton.SignalName.Pressed);
@@ -367,7 +370,7 @@ public partial class Stage1Test : Node
                       "после пристёжки игрок — узел внутри иерархии корабля");
                 break;
             case 17:
-                var detachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons"),
+                var detachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons"),
                                            "Detach Player");
                 Check(detachBtn != null, "Player зарегистрировал кнопку «Detach Player»");
                 detachBtn?.EmitSignal(BaseButton.SignalName.Pressed);
@@ -380,7 +383,7 @@ public partial class Stage1Test : Node
                       "Detach: игрок вернулся в мировой корень Main");
                 break;
             case 19:
-                var attachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Buttons"),
+                var attachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons"),
                                            "Attach Player to Seat");
                 Check(attachBtn != null, "Player зарегистрировал кнопку «Attach Player to Seat»");
                 attachBtn?.EmitSignal(BaseButton.SignalName.Pressed);

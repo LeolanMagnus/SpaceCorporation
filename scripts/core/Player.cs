@@ -101,9 +101,41 @@ public partial class Player : CharacterBody3D
 
 
         DebugInfoBus.RegisterInfoSource("Player", () =>
-            $"player: parent = {GetParent()?.GetName()}, " +
-            $"attached = {AttachedTo?.Name ?? "-"}, " +
-            $"pos = {Fmt(GlobalPosition)}");
+        {
+            // Защита от гонки удаления: если этот узел уже освобождён, а источник
+            // ещё висит в шине (QueueFree откладывает _ExitTree до конца кадра),
+            // GetParent() бросил бы ObjectDisposedException (§3.11 п.9).
+            if (!GodotObject.IsInstanceValid(this))
+                return string.Empty;
+            return
+                $"player: parent = {GetParent()?.GetName()}, " +
+                $"attached = {AttachedTo?.Name ?? "-"}, " +
+                $"pos = {Fmt(GlobalPosition)}";
+        });
+    }
+
+    public override void _ExitTree()
+    {
+        // Снимаем регистрации в шине дебага ТОЛЬКО при реальном удалении узла
+        // (QueueFree при смене роли Offline→Dedicated, §3.6): лямбда-источник
+        // «Player» и кнопки захватывают этот узел, и если он освобождён, а источник
+        // остался в шине, DebugInfoBus.BuildInfoText каждый кадр зовёт мёртвую лямбду
+        // → GetParent() на disposed-объекте → ObjectDisposedException (§3.11 п.9).
+        //
+        // Важно: _ExitTree срабатывает и при Reparent (пристёжка/отстёжка игрока
+        // переносит узел между точкой и мировым корнем), а _Ready после Reparent
+        // НЕ вызывается повторно. Поэтому без проверки на удаление кнопки и источник
+        // терялись бы после первой же пристёжки (§3.5). IsQueuedForDeletion() == true
+        // ровно когда узел помечен QueueFree — это и есть путь удаления.
+        if (!IsQueuedForDeletion())
+            return;
+
+        DebugInfoBus.RemoveInfoSource("Player");
+        if (_isLocal)
+        {
+            DebugInfoBus.RemoveDebugButton("Detach Player");
+            DebugInfoBus.RemoveDebugButton("Attach Player to Seat");
+        }
     }
 
     private static string Fmt(Vector3 v) => $"({v.X:F2}, {v.Y:F2}, {v.Z:F2})";

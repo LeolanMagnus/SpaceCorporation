@@ -5,7 +5,7 @@
 ; Конфиг свойств MultiplayerSynchronizer корабля (шаг 2 плана, §3.3).
 ;
 ; ФОРМАТ ПУТИ — с двоеточием: "NetState:NetPosition", а НЕ "NetState/NetPosition".
-; Проверено пробом tests/probe_fmt.gd на Godot 4.7.2: путь без subname
+; Проверено пробом tests/probes/probe_fmt.gd на Godot 4.7.2: путь без subname
 ; (get_subname_count() == 0) отбрасывается в SceneReplicationConfig::_set с
 ; ошибкой "path.is_empty() || path.get_subname_count() == 0", конфиг становится
 ; ПУСТЫМ, и реплика молча не приходит ни по одному свойству (§3.11 п.2 — та самая
@@ -21,7 +21,7 @@
 ; _update): mode==Always -> sync_props, mode==OnChange -> watch_props, и те, и другие
 ; уходят в дельта-обновления; ключи sync/watch в .tres — deprecated-алиасы mode
 ; (sync=true <=> Always, watch=true <=> OnChange), в _get_property_list их нет,
-; поэтому в файле их писать не нужно (проверено пробом tests/probe_syncflag3.gd:
+; поэтому в файле их писать не нужно (проверено пробом tests/probes/probe_syncflag3.gd:
 ; вручную написанный sync=true игнорируется, mode решает).
 ; OnChange выбран вместо Always: значения меняются каждый физический шаг, слать их
 ; «всегда» — платить дельтой за то, что дельта и так есть (§2.9).

@@ -243,6 +243,14 @@ public partial class NetTest : Node
         Check(DebugInfoBus.HasInfoSource("Ship#1") && DebugInfoBus.HasInfoSource("Ship#2"),
               "п.15: в DebugInfoBus два источника (Ship#1, Ship#2)");
 
+        // §3.11 п.10: после удаления одиночного игрока (вместе с его камерой из
+        // Player.tscn) viewport обязан остаться с активной камерой — иначе оконный
+        // dedicated получает чёрный экран («игрок не видит сцену»). WorldSpawner
+        // включает запасную ServerCamera; проверяем, что current-камера есть.
+        var activeCam = GetTree().Root.GetCamera3D();
+        Check(activeCam != null,
+              "п.15: после StartServer в viewport есть активная камера (мир виден без игрока)");
+
         // Назначаем авторитет второго корабля чужому пиру 2 (он в TestExtraPeers).
         nm.AssignShipAuthority(shipNetId: 2, peerId: 2);
         Check(ship2.PilotPeerId == 2, "п.15: Ship2.PilotPeerId == 2 после AssignShipAuthority(2,2)");
