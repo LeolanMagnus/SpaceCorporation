@@ -116,6 +116,10 @@ public partial class NetworkManager : Node
             return;
         }
         _attachPoints[key] = point;
+
+        // §2.4 п.4: игрок, вернувшийся к ещё не заспавненному кораблю, был отложен
+        // в _pendingAttach. Как только точка появилась в реестре — крепим его.
+        FlushPendingAttach(point.OwnerNetId, point.NetId);
     }
 
     public void UnregisterAttachPoint(AttachPoint point)
@@ -267,6 +271,280 @@ public partial class NetworkManager : Node
     /// Нужен, чтобы пир, создавший узел позже RPC, не остался с авторитетом 1.</summary>
     public bool TryGetPendingAuthority(int shipNetId, out int peerId) =>
         _pendingAuthority.TryGetValue(shipNetId, out peerId);
+
+    // -------------------------------------------------- идентичность (§4 В2)
+    //
+    // playerKey — GUID, созданный процессом один раз и лежащий в user://identity.cfg.
+    // peerId (unique_id ENet) выдаётся заново при каждом переподключении, поэтому
+    // ключ «где этот игрок был» — строковый playerKey, а не peerId. Папка user://
+    // привязана к имени проекта: редактор и CLI `godot --path .` дают одну и ту же
+    // папку (проверено probe_paths.gd), поэтому один ключ работает и там, и там.
+
+    private string? _playerKey;
+    public string PlayerKey => _playerKey ??= LoadOrCreatePlayerKey();
+
+    private const string IdentityPath = "user://identity.cfg";
+
+    private static string LoadOrCreatePlayerKey()
+    {
+        if (FileAccess.FileExists(IdentityPath))
+        {
+            using var f = FileAccess.Open(IdentityPath, FileAccess.ModeFlags.Read);
+            var line = f?.GetLine()?.Trim();
+            if (!string.IsNullOrEmpty(line))
+                return line!;
+        }
+        var key = Guid.NewGuid().ToString("N");
+        using var w = FileAccess.Open(IdentityPath, FileAccess.ModeFlags.Write);
+        w?.StoreLine(key);
+        GD.Print($"NetworkManager: новый playerKey = {key[..8]}… (записан в {IdentityPath})");
+        return key;
+    }
+
+    /// <summary>Серверное знание «где игрок был». Basis, а не Quaternion: в C#-обёртке
+    /// Transform3D.Basis имеет тип Godot.Basis, Quaternion появляется только через
+    /// Basis.GetQuaternion() — при сериализации в RPC-словарь это разные типы (§2.4).</summary>
+    public struct LastSeenState
+    {
+        public Vector3 Position;
+        public Basis Rotation;
+        public int OwnerNetId;   // владелец точки крепления (ShipNetId/StationNetId)
+        public int PointNetId;   // NetId точки на этом владельце
+        public bool WasAttached; // true — вышел пристёгнутым, возврат в точку крепления
+    }
+
+    // -------------------------------------------------- таблицы входа (§2.4)
+    //
+    //   peerId    → Player        // живой слот, живёт до PeerDisconnected
+    //   playerKey → LastSeenState // позиция/крепление, живёт до рестарта процесса
+    //   peerId    → playerKey     // обратная связь: по слоту найти ключ для записи
+    //   peerId    → (owner,point) // отложенное крепление: точка ещё не заспавнена
+
+    private readonly Dictionary<int, Player> _peerPlayers = new();
+    private readonly Dictionary<string, LastSeenState> _lastSeen = new();
+    private readonly Dictionary<int, string> _peerKeys = new();
+    private readonly Dictionary<int, (int Owner, int Point)> _pendingAttach = new();
+
+    public int LivePlayerCount => _peerPlayers.Count;
+    public bool TryGetPeerPlayer(int peerId, out Player? player) =>
+        _peerPlayers.TryGetValue(peerId, out player);
+
+    /// <summary>Снимок текущего состояния игрока в LastSeenState по его ключу.
+    /// Вызывается ПЕРЕД удалением узла (после QueueFree читать позицию не с чего, §2.4).</summary>
+    private void CaptureLastSeen(Player player, string key)
+    {
+        if (player == null || !GodotObject.IsInstanceValid(player))
+            return;
+        var st = new LastSeenState
+        {
+            Position = player.GlobalPosition,
+            Rotation = player.GlobalTransform.Basis,
+            WasAttached = player.IsAttached,
+            OwnerNetId = player.IsAttached ? player.AttachedTo!.OwnerNetId : 0,
+            PointNetId = player.IsAttached ? player.AttachedTo!.NetId : 0,
+        };
+        _lastSeen[key] = st;
+        DebugInfoBus.Report($"save LastSeen[{key[..System.Math.Min(8, key.Length)]}] " +
+                            $"@ ({st.Position.X:F2},{st.Position.Y:F2},{st.Position.Z:F2}) " +
+                            $"attached = {st.WasAttached}");
+    }
+
+    /// <summary>
+    /// Серверная сердцевина входа в игру (шаг 6, §2.4). Идемпотентна: повторный
+    /// запрос от того же пира не создаёт второго игрока. Публична как шов для
+    /// автотестов (§3.9 п.15): в сети вызывается только из RpcRequestSpawn после
+    /// проверки отправителя.
+    /// </summary>
+    public void HandleRequestSpawn(int peerId, string playerKey)
+    {
+        if (!IsServer)
+        {
+            GD.PrintErr($"NetworkManager.HandleRequestSpawn({peerId}, …): спавнит только сервер");
+            return;
+        }
+        if (peerId < 2)
+        {
+            // Авторитет игрока никогда не равен 1 (§2.4): серверный процесс живёт без Player.
+            GD.PrintErr($"NetworkManager: запрос спавна от id = {peerId} — отказ (авторитет ≥ 2)");
+            return;
+        }
+
+        // Идемпотентность: у пира уже есть игрок — второго не спавним.
+        if (_peerPlayers.TryGetValue(peerId, out var existing) &&
+            GodotObject.IsInstanceValid(existing))
+        {
+            GD.Print($"NetworkManager: пир {peerId} уже в игре — повторный RequestSpawn проигнорирован");
+            return;
+        }
+
+        // Ключ уже занят другим ЖИВЫМ пиром (оборванное соединение ещё не отвалилось
+        // по таймауту). Выбираем явно: выгнать старый слот, записав LastSeenState ДО
+        // DisconnectPeer(force:true) — при force:true сигнал PeerDisconnected не
+        // приходит, и позиция иначе потерялась бы (§2.4).
+        int holder = FindPeerHoldingKey(playerKey);
+        if (holder != 0 && holder != peerId &&
+            _peerPlayers.TryGetValue(holder, out var oldPlayer) &&
+            GodotObject.IsInstanceValid(oldPlayer))
+        {
+            GD.Print($"NetworkManager: ключ {playerKey[..System.Math.Min(8, playerKey.Length)]} " +
+                     $"занят пиром {holder} — выгоняю старый слот (force) и спавню заново");
+            CaptureLastSeen(oldPlayer, playerKey);
+            _peerPlayers.Remove(holder);
+            _peerKeys.Remove(holder);
+            _pendingAttach.Remove(holder);
+            if (HasRealPeer && System.Array.IndexOf(Multiplayer.GetPeers(), holder) >= 0)
+                Multiplayer.MultiplayerPeer?.DisconnectPeer(holder, force: true);
+            else
+                oldPlayer.QueueFree();
+        }
+
+        // Спавн по правилу §2.4 «Где спавнится игрок».
+        var spawner = WorldSpawner.Current;
+        if (spawner == null)
+        {
+            GD.PrintErr("NetworkManager.HandleRequestSpawn: WorldSpawner.Current нет — " +
+                        "спавн невозможен (нет GameRoot)");
+            RpcSpawnDeniedTo(peerId, "no-world");
+            return;
+        }
+
+        Player? player;
+        (int Owner, int Point)? deferred = null;
+        if (_lastSeen.TryGetValue(playerKey, out var seen))
+        {
+            if (seen.WasAttached)
+            {
+                var point = FindAttachPoint(seen.OwnerNetId, seen.PointNetId);
+                if (point != null)
+                {
+                    // Точка жива: спавним на свободной стартовой, затем крепим в точку
+                    // (AttachTo сам переносит в иерархию точки, мировая позиция — из неё).
+                    player = spawner.SpawnPlayerAt(playerKey, peerId);
+                    player?.AttachServerSide(seen.OwnerNetId, seen.PointNetId);
+                }
+                else
+                {
+                    // Точка крепления ещё не заспавнена (порядок Ship/Player) — спавним
+                    // на стартовой и откладываем крепление до регистрации точки (§2.4 п.4).
+                    player = spawner.SpawnPlayerAt(playerKey, peerId);
+                    deferred = (seen.OwnerNetId, seen.PointNetId);
+                }
+            }
+            else
+            {
+                // Игрок был свободен: возврат в сохранённую позицию/поворот, скорость ноль.
+                player = spawner.SpawnPlayerAt(playerKey, peerId,
+                    position: seen.Position, hasRotation: true, rotation: seen.Rotation);
+                if (player != null)
+                    player.Velocity = Vector3.Zero;
+            }
+        }
+        else
+        {
+            // Первый заход: первая свободная стартовая точка (SpawnPlayerAt выбирает сам).
+            player = spawner.SpawnPlayerAt(playerKey, peerId);
+        }
+
+        if (player == null)
+        {
+            RpcSpawnDeniedTo(peerId, "spawn-failed");
+            return;
+        }
+
+        _peerPlayers[peerId] = player;
+        _peerKeys[peerId] = playerKey;
+        if (deferred is { } d)
+        {
+            _pendingAttach[peerId] = d;
+            DebugInfoBus.Report($"attach[{playerKey[..System.Math.Min(8, playerKey.Length)]}] " +
+                                $"отложено до точки ({d.Owner},{d.Point}) (§2.4 п.4)");
+        }
+    }
+
+    private int FindPeerHoldingKey(string playerKey)
+    {
+        foreach (var (peer, key) in _peerKeys)
+            if (key == playerKey)
+                return peer;
+        return 0;
+    }
+
+    /// <summary>Серверный путь обработки отключения пира: сначала записать
+    /// LastSeenState по ключу слота, ПОТОМ убирать игрока из таблиц (§2.4). Публично
+    /// как шов автотеста; реальный сигнал PeerDisconnected зовёт этот же метод.</summary>
+    public void OnPeerLeft(int peerId)
+    {
+        if (!_peerPlayers.TryGetValue(peerId, out var player))
+            return; // слота нет (например, пир отвалился до RequestSpawn)
+        if (_peerKeys.TryGetValue(peerId, out var key))
+            CaptureLastSeen(player, key);
+        _peerPlayers.Remove(peerId);
+        _peerKeys.Remove(peerId);
+        _pendingAttach.Remove(peerId);
+        if (GodotObject.IsInstanceValid(player) && !player.IsQueuedForDeletion())
+            player.QueueFree();
+    }
+
+    /// <summary>Клиентский запрос входа в игру (после ConnectedToServer, §2.4).</summary>
+    private void RequestSpawn()
+    {
+        if (!IsClient)
+            return;
+        RpcId(1L, nameof(RpcRequestSpawn), PlayerKey);
+    }
+
+    /// <summary>Сервер принимает запрос входа. Отправитель — реальный пир (id ≥ 2);
+    /// сервер не спавнит «для себя» (§4 В1).</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcRequestSpawn(string playerKey)
+    {
+        int sender = Multiplayer.GetRemoteSenderId();
+        if (sender < 2)
+        {
+            GD.PrintErr($"NetworkManager.RpcRequestSpawn: запрос от id = {sender} — отказ");
+            return;
+        }
+        HandleRequestSpawn(sender, playerKey);
+    }
+
+    /// <summary>Отказ во входе — тому же пиру, а не молчание, иначе клиент зависнет
+    /// в «подключён, но без игрока» (§2.4).</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcSpawnDenied(string reason)
+    {
+        if (Multiplayer.GetRemoteSenderId() != 1)
+            return; // отказ присылает только сервер
+        GD.PrintErr($"NetworkManager: SpawnDenied reason = {reason} — остаюсь без игрока");
+    }
+
+    private void RpcSpawnDeniedTo(int peerId, string reason)
+    {
+        if (HasRealPeer)
+            RpcId(peerId, nameof(RpcSpawnDenied), reason);
+        else
+            GD.PrintErr($"NetworkManager: SpawnDenied({reason}) пиру {peerId} (без peer — только лог)");
+    }
+
+    /// <summary>Слить отложенные крепления: как только точка (owner,point) появилась
+    /// в реестре, пристегнуть ожидающего её игрока (§2.4 п.4).</summary>
+    private void FlushPendingAttach(int ownerNetId, int pointNetId)
+    {
+        if (_pendingAttach.Count == 0)
+            return;
+        var ready = new List<int>();
+        foreach (var (peerId, d) in _pendingAttach)
+            if (d.Owner == ownerNetId && d.Point == pointNetId &&
+                _peerPlayers.TryGetValue(peerId, out var p) &&
+                GodotObject.IsInstanceValid(p))
+            {
+                p.AttachServerSide(ownerNetId, pointNetId);
+                ready.Add(peerId);
+            }
+        foreach (var peerId in ready)
+            _pendingAttach.Remove(peerId);
+    }
 
     // ------------------------------------------------------------- запуск
     public override void _EnterTree()
@@ -500,20 +778,8 @@ public partial class NetworkManager : Node
     {
         GD.Print($"NetworkManager: PeerDisconnected id = {id}");
         // Порядок внутри обработчика жёсткий (§2.4): сначала записать LastSeenState
-        // по playerKey слота, ПОТОМ удалять узлы. Таблицы — шаг 6 плана.
-    }
-
-    /// <summary>
-    /// Клиентский запрос входа в игру. playerKey (user://identity.cfg) и таблицы
-    /// peerId → Player / playerKey → LastSeenState подключаются на шаге 6 плана;
-    /// сейчас это заглушка, чтобы цепочка ConnectedToServer → RequestSpawn была на месте.
-    /// </summary>
-    private void RequestSpawn()
-    {
-        if (!IsClient)
-            return;
-        // RpcId(1L, nameof(RequestSpawnServer), PlayerKey) появится на шаге 6.
-        GD.Print("NetworkManager.RequestSpawn: заглушка (playerKey/таблицы — шаг 6)");
+        // по playerKey слота, ПОТОМ удалять узлы.
+        OnPeerLeft((int)id);
     }
 
     // ------------------------------------------------------------- диагностика
@@ -578,7 +844,9 @@ public partial class NetworkManager : Node
         int players = IsServer ? peers.Length : (IsClient ? 1 : 0);
         long packets = _pktsSent + _pktsRecv;
         long bytes = _bytesSent + _bytesRecv;
+        string key = PlayerKey;
         return $"net: role = {Role.ToString().ToLower()}, self = {SelfId}, " +
+               $"key = {key[..System.Math.Min(8, key.Length)]}, " +
                $"peers = [{string.Join(",", peers)}], players = {players}, " +
                $"pkts/s = {packets} (tx {_pktsSent}/rx {_pktsRecv}), " +
                $"KB/s = {bytes / 1024f:F1}, {BuildRttString()}, err = {LastError}";

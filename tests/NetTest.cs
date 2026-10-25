@@ -26,7 +26,7 @@ public partial class NetTest : Node
     // значит к п.15 peer не должен быть активен. Два кадра: на втором QueueFree
     // уже обработан, и «игрока нет» проверяется на удалённом узле, а не на
     // помеченном.
-    private enum Phase { WaitSpawn, P5a, P5b, P13, P14, P15, P17, P16a, P16b, Done }
+    private enum Phase { WaitSpawn, P5a, P5b, P13, P14, P15, P17, P16a, P16b, P8, P18, Done }
     private Phase _phase = Phase.WaitSpawn;
 
     public override void _Ready()
@@ -68,9 +68,11 @@ public partial class NetTest : Node
             case Phase.P13: CheckVisibility(); _phase = Phase.P14; break;
             case Phase.P14: CheckSpawnSnapshot(); _phase = Phase.P15; break;
             case Phase.P15: CheckManyShips(); _phase = Phase.P17; break;
-            case Phase.P17: CheckShipToShip(); _phase = Phase.P16a; break;
+            case Phase.P17: CheckShipToShip(); _phase = Phase.P18; break;
+            case Phase.P18: RunP18(); _phase = Phase.P16a; break;
             case Phase.P16a: CheckShipDeleteWithPlayer(); _phase = Phase.P16b; break;
-            case Phase.P16b: CheckShipDeleteWithPlayer2(); _phase = Phase.Done; break;
+            case Phase.P16b: CheckShipDeleteWithPlayer2(); _phase = Phase.P8; break;
+            case Phase.P8: RunP8(); _phase = Phase.Done; break;
             case Phase.Done: Finish(); break;
         }
     }
@@ -360,8 +362,123 @@ public partial class NetTest : Node
               "п.16b: игрок перепришпилен к живому Ship2 без падения");
     }
 
-    // ------------------------------------------------------------- утилиты
+    // ------------------------------------------------------------- п.8: спавн/возврат/идемпотентность
+    /// <summary>§2.4 «Где спавнится игрок» + §4 В2=B. Всё в Dedicated без UDP:
+    /// сервер спавнит игроков по HandleRequestSpawn (шов автотеста вместо RPC),
+    /// слоты — фиктивные пиры 2 и 3. Проверки идут в одном кадре _Process, до
+    /// _PhysicsProcess, чтобы автопристёгивание к Seat не сдвинуло игрока со спавна.</summary>
+    private void RunP8()
+    {
+        var nm = NetworkManager.Instance!;
+        var spawner = WorldSpawner.Current!;
+        var set = spawner.WorldRoot!.GetNodeOrNull<Node3D>("SpawnPoints");
+        Check(set != null, "п.8: Main/SpawnPoints существует");
+        if (set == null) return;
+        var spawn0 = set.GetNodeOrNull<Node3D>("Spawn0");
+        var spawn1 = set.GetNodeOrNull<Node3D>("Spawn1");
+        Check(spawn0 != null && spawn1 != null, "п.8: в сцене ≥2 стартовые точки");
 
+        // (а) RequestSpawn("k1") → игрок на первой свободной точке, НЕ в Vector3.Zero.
+        nm.HandleRequestSpawn(2, "k1");
+        Check(nm.TryGetPeerPlayer(2, out var p1) && p1 != null,
+              "п.8: RequestSpawn(k1) создал игрока на слоте 2");
+        if (p1 == null) return;
+        Check(p1.GlobalPosition != Vector3.Zero,
+              "п.8: спавн не в Vector3.Zero (позиция — данные сцены)");
+        Check(p1.GlobalPosition.DistanceTo(spawn0!.GlobalPosition) < 0.01f,
+              "п.8: k1 заспавнен на первой свободной точке Spawn0");
+
+        // (в) RequestSpawn("k2") → другой игрок, стартовая точка отличается от
+        // занятой k1 (перебор свободных: два игрока не спавнятся в одной точке).
+        nm.HandleRequestSpawn(3, "k2");
+        Check(nm.TryGetPeerPlayer(3, out var p2) && p2 != null,
+              "п.8: RequestSpawn(k2) создал игрока на слоте 3");
+        if (p2 != null)
+        {
+            Check(p2.GlobalPosition.DistanceTo(p1.GlobalPosition) > 0.01f,
+                  "п.8: k2 спавнен не в той же точке, что k1 (перебор свободных)");
+            Check(p2.GlobalPosition.DistanceTo(spawn0.GlobalPosition) > 0.01f,
+                  "п.8: k2 не на Spawn0 (там стоит k1)");
+        }
+
+        // (б) сдвинуть k1, серверный путь PeerDisconnected → RequestSpawn(k1) снова →
+        // игрок в сохранённой позиции и с Velocity == Zero.
+        var moved = p1.GlobalPosition + new Vector3(3.5f, 0.2f, -1.25f);
+        p1.GlobalPosition = moved;
+        nm.OnPeerLeft(2);
+        Check(!nm.TryGetPeerPlayer(2, out _),
+              "п.8: OnPeerLeft убрал слот 2 из таблицы");
+        nm.HandleRequestSpawn(2, "k1");
+        Check(nm.TryGetPeerPlayer(2, out var p1b) && p1b != null,
+              "п.8: повторный RequestSpawn(k1) вернул игрока");
+        if (p1b != null)
+        {
+            Check(p1b.GlobalPosition.DistanceTo(moved) < 0.01f,
+                  "п.8: позиция восстановлена из LastSeenState (±0.01)");
+            Check(p1b.Velocity == Vector3.Zero,
+                  "п.8: скорость НЕ восстанавливается (Velocity == Zero)");
+        }
+
+        // (г) идемпотентность: RequestSpawn(k1) повторно от слота 2 → одного игрока.
+        int before = nm.LivePlayerCount;
+        nm.HandleRequestSpawn(2, "k1");
+        Check(nm.LivePlayerCount == before,
+              "п.8: повторный RequestSpawn(k1) от того же пира не создал второго");
+
+        // (д) тот же ключ от ДРУГОГО пира при живом слоте → старый слот выгнан,
+        // LastSeenState записан ДО DisconnectPeer(force) (§2.4).
+        nm.HandleRequestSpawn(4, "k1");
+        Check(!nm.TryGetPeerPlayer(2, out _),
+              "п.8: живой слот 2 с тем же ключом выгнан (force)");
+        Check(nm.TryGetPeerPlayer(4, out var p1c) && p1c != null,
+              "п.8: RequestSpawn(k1) от нового пира 4 заспавнил игрока");
+        if (p1c != null)
+            Check(p1c.GlobalPosition.DistanceTo(moved) < 0.01f,
+                  "п.8: при выдворении LastSeenState записан до force — позиция сохранена");
+
+        nm.Disconnect();
+    }
+
+    // ------------------------------------------------------------- п.18: интерполяция ShipHull
+    /// <summary>§3.10 п.8: не-авторитет интерполирует картинку ShipHull по снимкам.
+    /// Шов TestPushSnapshot + InterpolateHull без UDP и без гонки по времени:
+    /// задаём два снимка и момент now, проверяем результат.</summary>
+    private void RunP18()
+    {
+        var ship = _spawner!.FindShipByName("Ship");
+        Check(ship != null, "п.18: Ship доступен для теста интерполяции");
+        if (ship == null) return;
+
+        var a = new Vector3(0, 0, 0);
+        var b = new Vector3(4, 0, 0);
+        ship.TestPushSnapshot(1.0, a, Quaternion.Identity);
+        ship.TestPushSnapshot(1.2, b, Quaternion.Identity);
+
+        // Кадр ровно посередине между снимками (с учётом задержки 0.1):
+        // now=1.15 → render=1.05 → alpha=(1.05-1.0)/0.2=0.25 → x=1.
+        ship.InterpolateHull(1.15);
+        var mid = ship.TestHullGlobalPosition();
+        Check(mid.DistanceTo(new Vector3(1, 0, 0)) < 0.01f,
+              $"п.18: середина между снимками интерполирована (x≈1), получено {mid}");
+
+        // Кадр раньше самого старого снимка → рисуем самый старый (без экстраполяции назад).
+        ship.InterpolateHull(0.95); // render=0.85 < 1.0
+        Check(ship.TestHullGlobalPosition().DistanceTo(a) < 0.01f,
+              "п.18: до самого старого снимка рисуем самый старый");
+
+        // Кадр позже самого свежего → НЕ экстраполируем вперёд (картинка не обгоняет
+        // сеть), рисуем самый свежий.
+        ship.InterpolateHull(1.5); // render=1.4 > 1.2
+        Check(ship.TestHullGlobalPosition().DistanceTo(b) < 0.01f,
+              "п.18: после самого свежего снимка не экстраполируем — рисуем самый свежий");
+
+        // Картинка (ShipHull) ≠ трансформ тела: интерполяция не трогает RigidBody3D.
+        Check(ship.TestHullGlobalPosition() != ship.GlobalPosition ||
+              ship.TestHullGlobalPosition().DistanceTo(ship.GlobalPosition) > 0.01f,
+              "п.18: ShipHull отделён от тела (картинка ≠ физический трансформ)");
+    }
+
+    // ------------------------------------------------------------- утилиты
     /// <summary>Одиночный offline-игрок (авторитет 1) — для п.13. Ищем шире, чем
     /// просто дети GameRoot: игрок мог быть Reparent под точку крепления.</summary>
     private Player? FindOfflinePlayer()

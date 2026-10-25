@@ -90,10 +90,39 @@
       порта, offline-игрок удалён в Dedicated и восстановлен, checks=46).
       Проверено: `./run-tests.sh` → checks=103 failures=0;
       `NetTest` → checks=46 failures=0 (без ERROR движка).
-- [ ] **Шаг 6** — `SpawnPoints` + `playerKey` (`user://identity.cfg`) + `RequestSpawn`
+- [x] **Шаг 6** — `SpawnPoints` + `playerKey` (`user://identity.cfg`) + `RequestSpawn`
       (сейчас заглушка) + таблицы `peerId→Player`, `playerKey→LastSeenState`.
-- [ ] **Шаг 7** — `tests/NetTest.tscn` + `run-net-demo.sh` (файлов нет).
-- [ ] **Шаг 8** — реконсиляция/интерполяция `ShipHull` (ring buffer).
+      Готово: `PlayerKey` (GUID в `user://identity.cfg`), `struct LastSeenState`
+      (`Position`/`Rotation`/`OwnerNetId`/`PointNetId`/`WasAttached`), таблицы
+      `_peerPlayers`/`_peerKeys`/`_lastSeen`/`_pendingAttach`; клиентский
+      `RequestSpawn()` → `RpcRequestSpawn` (только сервер, авторитет ≥ 2), серверный
+      шов `HandleRequestSpawn` со спавном по правилу §2.4 (восстановление из
+      LastSeenState, отложенное крепление через `FlushPendingAttach`, идемпотентность,
+      выдворение старого слота с записью LastSeenState ДО `DisconnectPeer(force:true)`);
+      `OnPeerLeft` пишет LastSeenState перед удалением; `GetNetInfoLine` печатает
+      `key = <первые 8 символов>`. Assert'ы §3.9 п.8 в `NetTest` (спавн не в Zero,
+      возврат позиции ±0.01, `Velocity == Zero`, разные точки для k1/k2, идемпотентность,
+      выдворение) — зелёные.
+- [x] **Шаг 7** — `tests/NetTest.tscn` + `run-net-demo.sh` (файлов нет).
+      Готово: `tests/NetTest.tscn` (инстансит `Main.tscn`, `process_mode = 3`) +
+      `tests/NetTest.cs` (однопроцессный тест на `OfflineMultiplayerPeer`, assert'ы
+      §3.9 п.8/13–17); `run-net-demo.sh` — два процесса: dedicated-сервер
+      (`--headless -- --server --port`) + N клиентов (`-- --join 127.0.0.1`), число
+      клиентов задаёт скрипт (`./run-net-demo.sh 3`), флаги строго после `--`,
+      сервер убивается по PID (trap cleanup). Прогон: сервер печатает
+      `PeerConnected id = …`, `net: role = dedicated, self = 1, key = …, peers = […]`,
+      клиенты — `ConnectedToServer`. Критерий стадии 0 выполнен.
+- [x] **Шаг 8** — реконсиляция/интерполяция `ShipHull` (ring buffer).
+      Готово: не-авторитет интерполирует картинку `ShipHull` (Node3D), а не
+      трансформ замороженного тела (§1.6). В `Ship.cs` — кольцевой буфер снимков
+      `(localTime, NetPosition, NetRotation)` (`_interpBuf`), кадр рисуется на
+      `InterpDelay = 0.1` с назад (между двумя ближайшими снимками, `Lerp`/`Slerp`);
+      до самого старого снимка и после самого свежего — без экстраполяции (рисуем
+      ближайший крайний, чтобы картинка не дёргалась при потере пакета). Откат ввода
+      не нужен: не-авторитет не подаёт локального ввода на корабль (§2.3). Швы
+      автотеста `TestPushSnapshot`/`InterpolateHull`/`TestHullGlobalPosition`
+      (шов без UDP). Assert'ы §3.10 п.8 в `NetTest` (середина x≈1, границы без
+      экстраполяции, `ShipHull` ≠ тело) — зелёные.
 
 Все сетевые API ниже сверены с `GodotSharp.xml` установленной версии 4.7.2 —
 в C# это `MultiplayerApi` (не `MultiplayerAPI`), `Node.SetMultiplayerAuthority(int, bool)`,

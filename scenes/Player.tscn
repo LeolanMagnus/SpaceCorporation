@@ -1,30 +1,28 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene format=3 uid="uid://bp6mlv4ln050x"]
 
-[ext_resource type="Script" path="res://scripts/core/Player.cs" id="1_player"]
-
-[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_body"]
-radius = 0.3
-height = 1.8
+[ext_resource type="Script" uid="uid://cjph7486no6c7" path="res://scripts/core/Player.cs" id="1_player"]
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_body"]
 radius = 0.3
 height = 1.8
 
-; Игрок-капсула. Камера — потомок капсулы (CameraRig), поэтому «привязана к игроку»:
-; куда капсула, туда и камера. Когда игрок пристёгнут к креслу корабля, капсула
-; становится узлом внутри иерархии корабля, и камера летает вместе с кораблём.
-[node name="Player" type="CharacterBody3D"]
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_body"]
+radius = 0.3
+height = 1.8
+
+[node name="Player" type="CharacterBody3D" unique_id=1383330049]
 script = ExtResource("1_player")
 
-[node name="Body" type="MeshInstance3D" parent="."]
+[node name="Body" type="MeshInstance3D" parent="." unique_id=1844278183]
 mesh = SubResource("CapsuleMesh_body")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1778568277]
 shape = SubResource("CapsuleShape3D_body")
 
-[node name="CameraRig" type="Node3D" parent="."]
+[node name="CameraRig" type="Node3D" parent="." unique_id=1579295097]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 1.2)
 
-[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+[node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=1766801107]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3233267, 0)
 current = true
 far = 400.0
