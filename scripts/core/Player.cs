@@ -69,7 +69,13 @@ public partial class Player : CharacterBody3D
         // В offline авторитет = 1 = SelfId, поэтому local == true и поведение
         // стадии 1 не меняется. У чужих игроков камеру глушим принудительно:
         // в Player.tscn стоит current = true, и вторая камера перехватит viewport.
-        _isLocal = IsMultiplayerAuthority();
+        //
+        // Встроенный IsMultiplayerAuthority() при снятом peer (после Disconnect
+        // MultiplayerPeer = null) зовёт GetUniqueId() и печатает ERROR. Сравниваем
+        // авторитет узла с локальным id напрямую; при снятом peer локальный id = 1
+        // (offline-авторитет), поэтому в offline это 1 == 1.
+        int localId = Multiplayer.HasMultiplayerPeer() ? Multiplayer.GetUniqueId() : 1;
+        _isLocal = GetMultiplayerAuthority() == localId;
         if (!_isLocal)
         {
             var cam = GetActiveCamera();
@@ -315,13 +321,31 @@ public partial class Player : CharacterBody3D
                         "не найдена в реестре — отказ в запросе");
             return;
         }
+        // §3.9 п.17: переход «корабль A → корабль B» — один вызов, но авторитет
+        // A надо вернуть серверу, иначе пилот висит на двух кораблях сразу
+        // (счётчик «PilotPeerId == pilot» > 1 = два пилотируемых корабля).
+        // Запоминаем прежний корабль ДО AttachTo: после Reparent AttachedTo
+        // указывает на новую точку, и спросить «откуда ушли» будет негде.
+        var prevShip = AttachedTo != null
+            ? NetworkManager.Instance?.FindShip(AttachedTo.OwnerNetId)
+            : null;
+        int pilotPeer = GetMultiplayerAuthority();
+
         AttachTo(point);
         // §3.5 п.8: вход в кабину = смена авторитета корабля на пилота. Сервер
         // уже валидировал точку; владелец игрока (GetMultiplayerAuthority) становится
         // пилотом. Если владелец точки — не корабль (станция на этапе 6), авторитет
         // не меняем: у станции его назначает сервер навсегда (§3.4 п.2).
-        if (NetworkManager.Instance is { IsServer: true } nm && nm.FindShip(ownerNetId) is { } ship)
-            nm.AssignShipAuthority(shipNetId: ownerNetId, peerId: GetMultiplayerAuthority());
+        if (NetworkManager.Instance is { IsServer: true } nm)
+        {
+            if (nm.FindShip(ownerNetId) is { } ship)
+                nm.AssignShipAuthority(shipNetId: ownerNetId, peerId: pilotPeer);
+            // Прежний корабль освобождаем от пилота только если этот игрок был
+            // его пилотом (иначе это наблюдатель, и авторитет A не был его).
+            if (prevShip != null && prevShip.Net?.ShipNetId != ownerNetId &&
+                prevShip.PilotPeerId == pilotPeer)
+                nm.AssignShipAuthority(shipNetId: prevShip.Net!.ShipNetId, peerId: 1);
+        }
         if (NetworkManager.Instance is { HasRealPeer: true })
             Rpc(nameof(ApplyAttach), ownerNetId, pointNetId);
     }

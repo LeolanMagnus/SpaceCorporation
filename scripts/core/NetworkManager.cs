@@ -62,9 +62,16 @@ public partial class NetworkManager : Node
     public bool IsClient => Role == NetRole.Client;
     public bool IsActive => HasRealPeer;
 
-    /// <summary>В offline offline-peer имеет id = 1 — то же значение, что у сервера,
-    /// поэтому код различает режимы по `Role`, а не по номеру (§2.5 п.5).</summary>
-    public int SelfId => Multiplayer.GetUniqueId();
+    /// <summary>Локальный id авторитета: в Offline = 1 (то же значение, что у
+    /// сервера, поэтому режимы различают по `Role`, а не по номеру, §2.5 п.5).
+    /// GetUniqueId() при снятом peer (после Disconnect MultiplayerPeer = null)
+    /// печатает ERROR «No multiplayer peer» — берём 1 напрямую. Тот же id нужен
+    /// и Player/Ship для проверки авторитета вместо встроенного
+    /// IsMultiplayerAuthority(), который зовёт GetUniqueId() внутри.</summary>
+    public int LocalAuthorityId =>
+        Multiplayer.HasMultiplayerPeer() ? Multiplayer.GetUniqueId() : 1;
+
+    public int SelfId => LocalAuthorityId;
 
     /// <summary>Последняя ошибка запуска соединения (для панели: «port busy?»).</summary>
     public Error LastError { get; private set; } = Error.Ok;
@@ -155,6 +162,19 @@ public partial class NetworkManager : Node
     public Ship? FindShip(int shipNetId) =>
         _ships.TryGetValue(shipNetId, out var s) && GodotObject.IsInstanceValid(s) ? s : null;
 
+    /// <summary>Сколько кораблей считают пилотом этого пира (по PilotPeerId).
+    /// Инвариант §3.9 п.17: пир не может пилотировать два корабля сразу —
+    /// инвариант проверяется и как рантайм-гейт в AssignShipAuthority, и assert'ом
+    /// автотеста.</summary>
+    public int CountShipsPilotedBy(int peerId)
+    {
+        int n = 0;
+        foreach (var s in _ships.Values)
+            if (GodotObject.IsInstanceValid(s) && s.PilotPeerId == peerId)
+                n++;
+        return n;
+    }
+
     public IReadOnlyDictionary<int, Ship> Ships => _ships;
 
     // ------------------------------------------- авторитет кораблей (§4 В3 п.3)
@@ -164,9 +184,13 @@ public partial class NetworkManager : Node
     /// корабля; пир кладёт пару сюда и применяет в Ship._Ready (§4 В4 п.2).</summary>
     private readonly Dictionary<int, int> _pendingAuthority = new();
 
-    /// <summary>Единственная точка смены авторитета корабля — на сервере (§3.5 п.8):
-    /// валидация, локальная смена, RPC-рассылка всем пирам. peerId = 1 — авторитет
-    /// сервера (автопилот), peerId >= 2 — пилот-клиент.</summary>
+    /// <summary>Шов для автотестов (§3.9 п.15): дополнительные «существующие» пиры,
+    /// которых нет в реальном соединении. Живой сети в headless-тесте нет
+    /// (ENet-пиры в одном процессе к себе не подключаются, §3.10 шаг 6), а assert
+    /// про смену авторитета на id=2 требует, чтобы валидация пира его пропускала.
+    /// Пустое множество = боевое поведение: только реальные GetPeers().</summary>
+    public static readonly System.Collections.Generic.HashSet<int> TestExtraPeers = new();
+
     public void AssignShipAuthority(int shipNetId, int peerId)
     {
         if (!IsServer)
@@ -175,11 +199,26 @@ public partial class NetworkManager : Node
                         "авторитет назначает только сервер");
             return;
         }
-        if (peerId == 0 || (peerId != 1 && System.Array.IndexOf(Multiplayer.GetPeers(), peerId) < 0))
+        if (peerId == 0 || (peerId != 1 &&
+                            System.Array.IndexOf(Multiplayer.GetPeers(), peerId) < 0 &&
+                            !TestExtraPeers.Contains(peerId)))
         {
             GD.PrintErr($"NetworkManager.AssignShipAuthority: пир {peerId} не существует — отказ");
             return;
         }
+
+        // §3.9 п.17 (рантайм-гейт): пилот уже пилотирует другой корабль — сначала
+        // освобождаем прежний, иначе между двумя назначениями висит состояние
+        // «один пир — два авторитета», и он шлёт импульсы за оба корабля.
+        if (peerId != 1)
+            foreach (var other in _ships.Values)
+                if (GodotObject.IsInstanceValid(other) && other.Net != null &&
+                    other.Net.ShipNetId != shipNetId && other.PilotPeerId == peerId)
+                {
+                    GD.Print($"NetworkManager: пир {peerId} уже пилотирует " +
+                             $"ship#{other.Net.ShipNetId} — освобождаю прежний (§3.9 п.17)");
+                    ReleaseShipAuthority(other.Net.ShipNetId);
+                }
 
         _pendingAuthority[shipNetId] = peerId; // и для себя: запись единого источника правды
 
@@ -192,6 +231,19 @@ public partial class NetworkManager : Node
 
         if (HasRealPeer)
             Rpc(nameof(RpcApplyShipAuthority), shipNetId, peerId);
+    }
+
+    /// <summary>Освободить корабль от пилота (автопилот, peerId = 1) без рассылки
+    /// (рассылка — внутри AssignShipAuthority). Отдельный метод нужен, чтобы
+    /// освобождение прежнего корабля не запускало рекурсивный обход.</summary>
+    private void ReleaseShipAuthority(int shipNetId)
+    {
+        _pendingAuthority[shipNetId] = 1;
+        var ship = FindShip(shipNetId);
+        if (ship != null)
+            ship.ApplyRemoteAuthority(1);
+        if (HasRealPeer)
+            Rpc(nameof(RpcApplyShipAuthority), shipNetId, 1);
     }
 
     /// <summary>Серверная рассылка нового авторитета. Едет через autoload, а не через
@@ -231,7 +283,27 @@ public partial class NetworkManager : Node
     public override void _Ready()
     {
         SubscribeSignals();
+        RegisterDebugEntries();
         ApplyCmdlineArgs();
+    }
+
+    /// <summary>
+    /// Кнопки сети и строка `Net` в дебаг-панели (§3.7). Регистрирует их сам
+    /// NetworkManager через DebugInfoBus: DebugLayer про сети ничего не знает,
+    /// а в headless-сервере панели нет вовсе — источник и кнопки просто копятся
+    /// в очереди шины и никогда не появятся.
+    ///
+    /// Кнопки ровно три, `Host` нет: listen-server в проекте отсутствует (§4 В1),
+    /// и слово «host» означает именно его. `Start Server` поднимает dedicated в
+    /// ЭТОМ процессе (В13=A), `Join` — второй процесс к тому же порту, в одном
+    /// окне сыграть с собой нельзя: peer один (§4 В1 «цена»).
+    /// </summary>
+    private void RegisterDebugEntries()
+    {
+        DebugInfoBus.RegisterDebugButton("Start Server", () => StartServer());
+        DebugInfoBus.RegisterDebugButton("Join", () => Join("127.0.0.1"));
+        DebugInfoBus.RegisterDebugButton("Disconnect", () => Disconnect());
+        DebugInfoBus.RegisterInfoSource("Net", GetNetInfoLine);
     }
 
     /// <summary>Подписка на события соединения. В 4.7 они висят на MultiplayerApi,
@@ -379,6 +451,10 @@ public partial class NetworkManager : Node
             return;
         var prev = Role;
         Role = next;
+        // Счётчики относятся к ЗАКРЫТОМУ peer'у — на новой роли они обнулены,
+        // иначе панель показывает пакеты уже несуществующего соединения (§2.7).
+        ResetTrafficStats();
+        DebugInfoBus.Report($"role: {prev.ToString().ToLower()} -> {next.ToString().ToLower()}, self = {SelfId}");
         RoleChanged?.Invoke(prev, next);
     }
 
@@ -442,26 +518,86 @@ public partial class NetworkManager : Node
 
     // ------------------------------------------------------------- диагностика
 
-    /// <summary>Строка Net для панели и stdout (§2.7). Счётчики пакетов — шаг 5 плана.</summary>
+    // ------------------------------------------------- счётчики трафика (§2.7)
+    //
+    // Хостовые счётчики ENet забираются И ОБНУЛЯЮТСЯ вызовом PopStatistic, поэтому
+    // читать их можно ровно раз в интервал пересчёта (1 с), иначе часть пакетов
+    // потеряется из вида. Значения ниже — «за последнюю секунду».
+
+    private long _pktsSent, _pktsRecv, _bytesSent, _bytesRecv;
+
+    private void UpdateTrafficStats()
+    {
+        if (Multiplayer.MultiplayerPeer is not ENetMultiplayerPeer enet || enet.Host == null)
+        {
+            ResetTrafficStats();
+            return;
+        }
+        var host = enet.Host;
+        // PopStatistic возвращает double и обнуляет счётчик — читаем ровно раз в интервал.
+        _pktsSent = (long)host.PopStatistic(ENetConnection.HostStatistic.SentPackets);
+        _pktsRecv = (long)host.PopStatistic(ENetConnection.HostStatistic.ReceivedPackets);
+        _bytesSent = (long)host.PopStatistic(ENetConnection.HostStatistic.SentData);
+        _bytesRecv = (long)host.PopStatistic(ENetConnection.HostStatistic.ReceivedData);
+    }
+
+    private void ResetTrafficStats()
+    {
+        _pktsSent = _pktsRecv = _bytesSent = _bytesRecv = 0;
+    }
+
+    /// <summary>RTT по каждому пиру, мс (ENetPacketPeer.GetStatistic, §2.7).
+    /// У клиента пир-сервер в GetPeers() не состоит, но соединение с id = 1 есть —
+    /// его спрашиваем отдельно.</summary>
+    private string BuildRttString()
+    {
+        if (Multiplayer.MultiplayerPeer is not ENetMultiplayerPeer enet)
+            return "rtt = -";
+        var parts = new List<string>();
+        foreach (long id in Multiplayer.GetPeers())
+            AppendRtt(parts, enet, (int)id);
+        if (IsClient)
+            AppendRtt(parts, enet, 1);
+        return parts.Count == 0 ? "rtt = -" : "rtt = " + string.Join(",", parts);
+    }
+
+    private static void AppendRtt(List<string> parts, ENetMultiplayerPeer enet, int id)
+    {
+        var peer = enet.GetPeer(id);
+        if (peer == null)
+            return;
+        double rtt = peer.GetStatistic(ENetPacketPeer.PeerStatistic.RoundTripTime);
+        parts.Add($"{id}={rtt:F0}ms");
+    }
+
+    /// <summary>Строка Net для панели и stdout (§2.7): роль, self, пиры, число
+    /// игроков, пакеты/с и байты/с (порог плана — < 50 пакетов/с на игрока), RTT.</summary>
     public string GetNetInfoLine()
     {
         var peers = Multiplayer.GetPeers();
+        int players = IsServer ? peers.Length : (IsClient ? 1 : 0);
+        long packets = _pktsSent + _pktsRecv;
+        long bytes = _bytesSent + _bytesRecv;
         return $"net: role = {Role.ToString().ToLower()}, self = {SelfId}, " +
-               $"peers = [{string.Join(",", peers)}], err = {LastError}";
+               $"peers = [{string.Join(",", peers)}], players = {players}, " +
+               $"pkts/s = {packets} (tx {_pktsSent}/rx {_pktsRecv}), " +
+               $"KB/s = {bytes / 1024f:F1}, {BuildRttString()}, err = {LastError}";
     }
 
-    /// <summary>В headless-CLI сервере DebugLayer нет — та же строка уходит в stdout
-    /// раз в секунду (§2.7).</summary>
-    private float _stdoutTimer;
+    /// <summary>Пересчёт счётчиков и серверная строка — раз в секунду, не в каждом
+    /// кадре (§2.7). В headless-CLI сервере DebugLayer нет — та же строка уходит в
+    /// stdout; при запуске сервера кнопкой печать остаётся, чтобы прогон одинаково
+    /// читался и в окне, и в CI-логе.</summary>
+    private float _statsTimer;
     public override void _Process(double delta)
     {
-        if (Role != NetRole.Dedicated)
+        _statsTimer += (float)delta;
+        if (_statsTimer < 1f)
             return;
-        if (!DisplayServer.GetName().ToLowerInvariant().Contains("headless"))
-            return;
-        if (++_stdoutTimer < 1f)
-            return;
-        _stdoutTimer = 0f;
-        GD.Print(GetNetInfoLine());
+        _statsTimer = 0f;
+
+        UpdateTrafficStats();
+        if (Role == NetRole.Dedicated)
+            GD.Print(GetNetInfoLine());
     }
 }

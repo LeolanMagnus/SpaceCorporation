@@ -303,6 +303,17 @@ public partial class Stage1Test : Node
                 Check(busButtons.GetChildCount() >= 2,
                       $"DebugInfoBus.RegisterDebugButton добавил кнопку (всего: {busButtons.GetChildCount()})");
                 FindButton(busButtons, "BusButton")?.EmitSignal(BaseButton.SignalName.Pressed);
+                // §3.7 (шаг 5): NetworkManager регистрирует ровно три сетевые кнопки
+                // через шину — они обязаны отрисоваться в той же панели. Кнопки Host
+                // быть не должно: listen-server в проекте отсутствует (§4 В1).
+                Check(FindButton(busButtons, "Start Server") != null,
+                      "в панели есть кнопка «Start Server» (NetworkManager)");
+                Check(FindButton(busButtons, "Join") != null,
+                      "в панели есть кнопка «Join» (NetworkManager)");
+                Check(FindButton(busButtons, "Disconnect") != null,
+                      "в панели есть кнопка «Disconnect» (NetworkManager)");
+                Check(FindButton(busButtons, "Host") == null,
+                      "кнопки «Host» в панели нет (listen-server запрещён, §4 В1)");
                 break;
             case 10:
                 // DebugInfo обновляется и на паузе (у DebugLayer ProcessMode = Always)
@@ -314,6 +325,10 @@ public partial class Stage1Test : Node
                 // поэтому строка панели начинается с "ship#1:" и в одиночном режиме.
                 Check(label.Text.Contains("ship#1:"),
                       "DebugInfo содержит блок корабля (ship#1: |v| ...)");
+                // §3.7 (шаг 5): NetworkManager регистрирует источник «Net» — строка
+                // с ролью/self/peers/pkts появляется в панели даже в offline.
+                Check(label.Text.Contains("net: role = offline"),
+                      $"DebugInfo содержит строку Net: [{FirstLine(label.Text)}]");
                 break;
             case 11:
                 // выключаем опцию паузы галочкой в панели (смена ButtonPressed эмитирует toggled)

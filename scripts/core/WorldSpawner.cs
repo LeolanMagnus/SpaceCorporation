@@ -106,11 +106,42 @@ public partial class WorldSpawner : Node3D
 
     private void RemoveOfflinePlayer()
     {
-        if (WorldRoot == null)
-            return;
-        foreach (var node in WorldRoot.GetChildren())
-            if (node is Player p && p.GetMultiplayerAuthority() == 1)
+        // Ищем по группе, а не только детьми WorldRoot: в offline игрок
+        // автопристёгнут под точку крепления корабля (Reparent) и детьми корневого
+        // узла уже не является — обход детей его бы пропустил (§3.6). Пропускаем
+        // уже помеченных: повторный переход в том же кадре не зовёт QueueFree дважды.
+        foreach (var node in GetTree().GetNodesInGroup("player"))
+            if (node is Player p && GodotObject.IsInstanceValid(p) &&
+                !p.IsQueuedForDeletion() && p.GetMultiplayerAuthority() == 1)
                 p.QueueFree();
+    }
+
+    /// <summary>Серверный (и offline) путь удаления корабля (§3.9 п.16).
+    /// Godot освобождает дерево СНИЗУ ВВЕРХ: игрок, пристёгнутый к точке крепления,
+    /// — потомок корабля, и при `QueueFree` корабля он вышел бы из дерева и был бы
+    /// удалён РАНЬШЕ, чем сработал бы `Ship._ExitTree` (его цикл отстёжки уже не
+    /// нашёл бы игрока — тот вне дерева). Поэтому отстёгиваем пристёгнутых игроков
+    /// ДО `QueueFree`: `Detach()` переносит их в мировой корень, и корабль уходит,
+    /// не утягивая за собой живых игроков. `Ship._ExitTree` остаётся страховкой для
+    /// путей, где корабль удаляют без этой обёртки.</summary>
+    public void DespawnShip(Ship ship)
+    {
+        if (ship == null || !GodotObject.IsInstanceValid(ship) ||
+            ship.Net == null || ship.Net.ShipNetId == 0)
+            return;
+
+        int netId = ship.Net.ShipNetId;
+        foreach (var node in GetTree().GetNodesInGroup("player"))
+        {
+            if (node is Player p && GodotObject.IsInstanceValid(p) &&
+                p.IsAttached && p.AttachedTo!.OwnerNetId == netId)
+            {
+                GD.Print($"DespawnShip ship#{netId}: пристёгнутый игрок отстёгнут " +
+                         "до удаления корабля (§3.9 п.16)");
+                p.Detach();
+            }
+        }
+        ship.QueueFree();
     }
 
     /// <summary>Спавн объектов мира (только сервер и offline). Идемпотентен:
@@ -161,10 +192,13 @@ public partial class WorldSpawner : Node3D
         NetworkManager.Instance?.AssignNetIdIfUnset(ship.GetNode<NetState>("NetState"));
         if (nameOverride != null)
             ship.Name = nameOverride;
-        // Позиция ставится до AddChild: первый снимок реплики обязан быть корректным.
+        // Позиция ставится ПОСЛЕ AddChild: вне дерева get_global_transform вернёт
+        // Transform3D() и напечатает ERROR (§3.6). Первый снимок реплики берётся в
+        // _Process синхронизатора, а не внутри AddChild, поэтому позиция, заданная
+        // сразу после входа в дерево (тот же кадр, тот же вызов), в снимок попадает.
+        AddChild(ship);
         if (position is { } pos)
             ship.GlobalPosition = pos;
-        AddChild(ship);
         return ship;
     }
 
@@ -177,17 +211,26 @@ public partial class WorldSpawner : Node3D
         SpawnPlayerAt("offline", 1);
     }
 
+    /// <summary>Корабль по имени узла (`Ship`, `Ship2`) — только для автотестов
+    /// (§3.9 п.15): в бою адрес корабля — ShipNetId, а не путь/имя, и путь не должен
+    /// быть идентификатором. Возвращает живой узел из GameRoot или null.</summary>
+    public Ship? FindShipByName(string name)
+    {
+        foreach (var node in GetChildren())
+            if (node is Ship s && node.Name == name && GodotObject.IsInstanceValid(s))
+                return s;
+        return null;
+    }
+
     private Player? FindOfflinePlayer()
     {
-        if (WorldRoot == null)
-            return null;
-        foreach (var node in WorldRoot.GetChildren())
-            if (node is Player p && p.GetMultiplayerAuthority() == 1)
-                return p;
-        // Игрок мог быть пристёгнут (Reparent под точку крепления) — ищем шире.
+        // Пропускаем помеченных на удаление: QueueFree освобождает узел только в
+        // конце кадра, и если StartServer+Disconnect случились в одном кадре,
+        // удалённый игрок ещё «валиден» — без этой проверки StartSinglePlayerWorld
+        // принял бы его за живого и не возродил одиночный мир (§3.9 п.5).
         foreach (var node in GetTree().GetNodesInGroup("player"))
             if (node is Player p && GodotObject.IsInstanceValid(p) &&
-                p.GetMultiplayerAuthority() == 1)
+                !p.IsQueuedForDeletion() && p.GetMultiplayerAuthority() == 1)
                 return p;
         return null;
     }
@@ -212,6 +255,11 @@ public partial class WorldSpawner : Node3D
         // управляется не тем пиром (§2.5 п.5).
         player.SetMultiplayerAuthority(peerId);
 
+        // Позицию ставим ПОСЛЕ AddChild: до входа в дерево GlobalPosition — это
+        // identity, а get_global_transform вне дерева возвращает Transform3D() и
+        // печатает ERROR (§3.6). Порядок: авторитет → в дерево → позиция.
+        AddChild(player);
+
         if (position is { } pos)
         {
             player.GlobalPosition = pos;
@@ -227,8 +275,6 @@ public partial class WorldSpawner : Node3D
                 DebugInfoBus.Report($"spawn = start:NONE (нет SpawnPoints в сцене) — " +
                                     "игрок в GameRoot, это ошибка конфигурации (§3.6)");
         }
-
-        AddChild(player);
         DebugInfoBus.Report($"spawn = {playerKey[..System.Math.Min(8, playerKey.Length)]} " +
                             $"@ peer {peerId}");
         return player;

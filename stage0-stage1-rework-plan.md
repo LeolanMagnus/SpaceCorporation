@@ -45,9 +45,51 @@
       явный поиск верхнего `Node3D`-предка. Assert'ы `Stage1Test` обновлены
       (§3.8: GameRoot, SpawnPoints, ShipNetId=1, `Ship#1`, `>= 4` кнопок).
       Проверено: `./run-tests.sh` → checks=98 failures=0.
-- [ ] **Шаг 4b** — второй корабль + assert'ы §3.9 п.13–17.
-- [ ] **Шаг 5** — `DebugLayer`: кнопки `Start Server`/`Join`/`Disconnect`, `Net`-строка,
-      счётчики пакетов, переходы Offline↔Dedicated (удаление/возврат одиночного Player).
+- [x] **Шаг 4b** — второй корабль + assert'ы §3.9 п.13–17. Создан
+      `tests/NetTest.tscn` + `tests/NetTest.cs` (пока п.13–17; п.1–12 — шаг 7).
+      `WorldSpawner.SpawnShipAtSpawnPoint(1,"Ship2")` (Spawn1 → `GameRoot/Ship2`,
+      ShipNetId=2). `NetworkManager`: `CountShipsPilotedBy(peerId)`, `Ships`,
+      `TestExtraPeers` (оффлайн-пиры 2/3 для валидации без UDP), гейтинг
+      `AssignShipAuthority` (освобождает прежний корабль пилота перед назначением
+      нового → инвариант «≤1 корабль на пира», п.17). `WorldSpawner.DespawnShip(ship)`
+      — серверный путь удаления: `Detach` пристёгнутых игроков ДО `QueueFree`
+      (Godot освобождает дерево снизу вверх, иначе игрок ушёл бы раньше
+      `Ship._ExitTree`, п.16). Assert'ы: п.13 (PublicVisibility==true, нет
+      фильтров, SetVisibilityFor не удаляет), п.14 (ReplicationConfig содержит
+      ровно `NetState:NetPosition`, spawn=true), п.15 (2 корабля: разные NetId/пути,
+      2 источника `Ship#1`/`Ship#2`, AssignShipAuthority(2,2) не трогает Ship1,
+      attach к (2,0) → ShipNetId==2), п.17 (переход A→B: счётчик ≤1 всегда),
+      п.16 (DespawnShip: игрок выжил, точка исчезла из реестра, FindShip(1)==null,
+      перепришпиливается к Ship2 без падения). Переход Offline→Dedicated через
+      `StartServer()` в headless (server без клиентов, Rpc no-op).
+      Проверено: `NetTest` → checks=36 failures=0 (exit 0, без зависаний и
+      ObjectDisposedException); регресс `Stage1Test` → checks=98 failures=0.
+- [x] **Шаг 5** — кнопки сети + `Net`-строка + счётчики пакетов + переходы
+      Offline↔Dedicated. Кнопки регистрирует сам `NetworkManager` через
+      `DebugInfoBus.RegisterDebugButton` в `_Ready` (autoload стоит ВЫШЕ
+      `DebugInfoBus`, поэтому кнопки копятся в очереди шины и сливаются при
+      `AttachLayer`; `DebugLayer` про сети не знает, а в headless-сервере панели
+      нет вовсе). Ровно три кнопки: `Start Server`→`StartServer()`,
+      `Join`→`Join("127.0.0.1")`, `Disconnect`→`Disconnect()`; `Host` нет
+      (listen-server запрещён, §4 В1). Источник `Net` = `GetNetInfoLine()`:
+      роль/self/peers/players/pkts-s(tx/rx)/KB-s/RTT/err. Счётчики пакетов —
+      `ENetMultiplayerPeer.Host.PopStatistic(HostStatistic.{Sent,Received}Packets,
+      {Sent,Received}Data)` (PopStatistic ОБНУЛЯЕТ — читается ровно раз в интервал
+      1 с в `_Process`); RTT по пирам — `ENetPacketPeer.GetStatistic(RoundTripTime)`,
+      у клиента пир-сервер (id=1) спрашивается отдельно. `SetRole` сбрасывает
+      счётчики и пишет переход в лог. Переходы Offline↔Dedicated (шаг 4, WorldSpawner):
+      исправлено — `RemoveOfflinePlayer` и `FindOfflinePlayer` обходят ГРУППУ
+      `player` (в offline игрок Reparent под точку крепления, детьми WorldRoot не
+      является) и пропускают `IsQueuedForDeletion` (иначе StartServer+Disconnect в
+      одном кадре оставили бы 0 игроков). Попутно: `SpawnPlayerAt`/`SpawnShipFromScene`
+      ставят позицию ПОСЛЕ `AddChild` (вне дерева get_global_transform → ERROR);
+      `SelfId`/`Player._Ready` не зовут `GetUniqueId()` при снятом peer (offline id=1).
+      Assert'ы: `Stage1Test` — 3 сетевые кнопки по имени + отсутствие `Host` +
+      строка `net: role = offline` в панели (checks=103); `NetTest` — п.5 переходов
+      (StartServer Ok→Dedicated, повтор→AlreadyInUse, Disconnect→Ok-переиспользование
+      порта, offline-игрок удалён в Dedicated и восстановлен, checks=46).
+      Проверено: `./run-tests.sh` → checks=103 failures=0;
+      `NetTest` → checks=46 failures=0 (без ERROR движка).
 - [ ] **Шаг 6** — `SpawnPoints` + `playerKey` (`user://identity.cfg`) + `RequestSpawn`
       (сейчас заглушка) + таблицы `peerId→Player`, `playerKey→LastSeenState`.
 - [ ] **Шаг 7** — `tests/NetTest.tscn` + `run-net-demo.sh` (файлов нет).
