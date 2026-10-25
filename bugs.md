@@ -153,3 +153,40 @@
   `DebugLayer._Ready` (строки 53–56).
 - **Проверка:** `dotnet build` — 0 ошибок; `./run-tests.sh res://tests/Stage1Test.tscn`
   → `checks=104 failures=0`.
+
+---
+
+## FEAT-001 — Модель «игрок нажал Start Server и сам остался играть» (Host)
+
+- **Статус:** done
+- **Компонент:** `scripts/core/NetworkManager.cs`, `scripts/core/WorldSpawner.cs`,
+  `tests/NetTest.cs`
+- **Задача:** раньше `Start Server` поднимал dedicated-сервер и **удалял** локального
+  игрока (BUG-003/BUG-004 лечили симптомы: ObjectDisposedException и гаснущий экран).
+  Теперь кнопка `Start Server` поднимает сервер и оставляет игрока в игре — процесс
+  становится **Host**: сервер + локальный игрок с авторитетом 1 (= id сервера).
+- **Что изменилось:**
+  - `NetRole` получил значение `Host` (между `Dedicated` и `Client`).
+  - `IsServer => Dedicated || Host` (серверная ветка кода общая); добавлен `IsHost`.
+    `IsClient`/`HasRealPeer`/`IsActive` не менялись.
+  - `StartServer(port, maxPlayers, withLocalPlayer=false)`: `false` → Dedicated
+    (CLI `--server`, headless/CI — игрока нет, поведение стадии 0 не тронуто);
+    `true` → Host. Кнопка `Start Server` вызывает `withLocalPlayer: true`.
+  - Логика спавна вынесена в `SpawnPlayerForPeer(peerId, key)` (общая для клиентов и
+    хоста) + `SpawnHostPlayer()` (слот 1) + `CaptureHostCandidateLastSeen()`.
+  - `HandleRequestSpawn`: коллизия ключа клиента с ключом хоста (`holder == 1`) —
+    хоста НЕ выгоняем, клиент получает гостевой ключ `key#<peerId>` (dev-прогон
+    «два окна» с общим `user://identity.cfg`). Проверка идёт ДО ветки вытеснения.
+  - `WorldSpawner.OnRoleChanged`: `Offline → Host` = capture LastSeen → SpawnWorld →
+    RemoveOfflinePlayer → SpawnHostPlayer (игрок пересоздаётся через MultiplayerSpawner,
+    реплика доезжает до клиентов) → DeactivateFallbackCamera (камера игрока current=true,
+    запасная не нужна — мигания нет). `Host → Offline` (Disconnect): узел игрока
+    остаётся и становится offline-игроком; сетевой слот 1 чистится в `Disconnect()`.
+  - `GetNetInfoLine`: `players = peers.Length + (IsHost ? 1 : 0)` (свой игрок не в GetPeers).
+- **Проверка:** `dotnet build` — 0 ошибок. `NetTest` расширен фазами п.H
+  (`CheckHostStart`/`CheckHostPlayer`/`CheckHostDisconnect`): роль Host, IsServer/IsHost,
+  ровно один живой игрок с авторитетом 1, слот 1 в таблицах, активная камера, после
+  Disconnect — игрок остался offline-игроком, слот очищен. Итог:
+  `NetTest checks=79 failures=0`, `Stage1Test checks=104 failures=0`,
+  `run-net-demo.sh` — dedicated-путь цел (`OK: сервер принял пира(ов)`),
+  `ObjectDisposedException`/«источник … упал» нет.

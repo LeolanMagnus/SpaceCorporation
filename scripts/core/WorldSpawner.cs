@@ -79,10 +79,13 @@ public partial class WorldSpawner : Node3D
         if (nm != null)
         {
             nm.RoleChanged += OnRoleChanged;
-            // Dedicated из CLI: StartServer отработал в _Ready autoload'а, ДОReady этой
-            // сцены, — сигнал RoleChanged уже прошёл, мир спавним отсюда.
+            // Dedicated/Host из CLI или поднятые до Ready сцены: сигнал RoleChanged
+            // уже прошёл, мир спавним отсюда. У хоста дополнительно спавним его
+            // игрока с авторитетом 1 (офлайн-игрока к этому моменту уже нет).
             if (nm.IsServer)
                 SpawnWorld();
+            if (nm.IsHost)
+                NetworkManager.Instance?.SpawnHostPlayer();
         }
 
         // Offline (в т.ч. тесты стадии 1): мир из одного процесса — корабли + игрок.
@@ -103,10 +106,24 @@ public partial class WorldSpawner : Node3D
     /// возвращает. Корабли при этом не пересоздаются: они уже с адресом и реестром.</summary>
     private void OnRoleChanged(NetworkManager.NetRole prev, NetworkManager.NetRole next)
     {
-        if (next != NetworkManager.NetRole.Offline)
+        if (next == NetworkManager.NetRole.Host)
         {
-            // Уход из offline в сеть: одиночный игрок с авторитетом 1 удаляется —
-            // в сети авторитет игрока всегда ≥ 2 (§2.4), оставить его = «игрок-призрак».
+            // Offline → Host (стадия 0-rework): игрок НЕ сохраняется узлом (он мог
+            // быть перепришпилён и спавнился до появления peer — MultiplayerSpawner
+            // его не зарепликует). Путь как у клиентов: снять LastSeen → удалить
+            // offline-игрока → заспавнить заново через SpawnPlayerForPeer(1) с
+            // авторитетом 1. Камера игрока current=true перекрывает viewport,
+            // запасная НЕ нужна (мигания нет: старая камера освобождается в конце кадра).
+            NetworkManager.Instance?.CaptureHostCandidateLastSeen();
+            SpawnWorld();
+            RemoveOfflinePlayer();
+            NetworkManager.Instance?.SpawnHostPlayer();
+            DeactivateFallbackCamera();
+        }
+        else if (next != NetworkManager.NetRole.Offline)
+        {
+            // Уход из offline в dedicated: одиночный игрок с авторитетом 1 удаляется —
+            // в dedicated его быть не может (§2.4), оставить его = «игрок-призрак».
             // Перед удалением снимаем мировой трансформ его камеры, чтобы запасная
             // камера встала на то же место (вид не прыгает, §3.11 п.10).
             CaptureLocalPlayerCamera();
@@ -123,6 +140,8 @@ public partial class WorldSpawner : Node3D
         else if (prev != NetworkManager.NetRole.Offline)
         {
             // Disconnect: возвращаем одиночного игрока в offline-мир (§3.9 п.5).
+            // У хоста его игрок (авторитет 1) уже в мире — StartSinglePlayerWorld
+            // найдёт его через FindOfflinePlayer и не станет спавнить второго.
             StartSinglePlayerWorld();
             // Камера игрока (current = true в Player.tscn) перехватывает viewport —
             // запасную гасим, чтобы не было двух current-камер (§3.11 п.4).

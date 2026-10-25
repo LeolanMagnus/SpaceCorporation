@@ -26,7 +26,7 @@ public partial class NetTest : Node
     // значит к п.15 peer не должен быть активен. Два кадра: на втором QueueFree
     // уже обработан, и «игрока нет» проверяется на удалённом узле, а не на
     // помеченном.
-    private enum Phase { WaitSpawn, P5a, P5b, P13, P14, P15, P17, P16a, P16b, P8, P18, Done }
+    private enum Phase { WaitSpawn, P5a, P5b, PHa, PHb, PHc, P13, P14, P15, P17, P16a, P16b, P8, P18, Done }
     private Phase _phase = Phase.WaitSpawn;
 
     public override void _Ready()
@@ -64,7 +64,10 @@ public partial class NetTest : Node
                 }
                 break;
             case Phase.P5a: CheckRoleTransitions(); _phase = Phase.P5b; break;
-            case Phase.P5b: CheckOfflinePlayerRestored(); _phase = Phase.P13; break;
+            case Phase.P5b: CheckOfflinePlayerRestored(); _phase = Phase.PHa; break;
+            case Phase.PHa: CheckHostStart(); _phase = Phase.PHb; break;
+            case Phase.PHb: CheckHostPlayer(); _phase = Phase.PHc; break;
+            case Phase.PHc: CheckHostDisconnect(); _phase = Phase.P13; break;
             case Phase.P13: CheckVisibility(); _phase = Phase.P14; break;
             case Phase.P14: CheckSpawnSnapshot(); _phase = Phase.P15; break;
             case Phase.P15: CheckManyShips(); _phase = Phase.P17; break;
@@ -128,6 +131,62 @@ public partial class NetTest : Node
         Check(nm.Role == NetworkManager.NetRole.Offline, "п.5: по итогам переходов роль = Offline");
         Check(CountOfflinePlayers() == 1,
               $"п.5: offline-игрок удалён в Dedicated и восстановлен после Disconnect " +
+              $"(живых: {CountOfflinePlayers()})");
+    }
+
+    // ------------------------- п.H: Host-модель (стадия 0-rework)
+    //
+    // «Игрок нажал Start Server и сам остался играть»: кнопка поднимает сервер и
+    // делает процесс Host — сервер + локальный игрок с авторитетом 1. Проверяем
+    // переходы Offline → Host → Offline без потери игрока и без ошибок шины дебага.
+
+    private int _hostStartFrame;
+
+    /// <summary>Кадр PHa: старт Host-сервера (withLocalPlayer:true). Роль = Host,
+    /// IsServer true, IsHost true. Игрок пересоздаётся (capture → remove → spawn),
+    /// поэтому его наличие проверяем на следующем кадре (PHb).</summary>
+    private void CheckHostStart()
+    {
+        var nm = NetworkManager.Instance!;
+        const int port = 24598; // отдельный от п.5 (24599) и п.15 (дефолтный)
+        var err = nm.StartServer(port, withLocalPlayer: true);
+        Check(err == Error.Ok, $"п.H: StartServer(withLocalPlayer:true) -> Ok (получено {err})");
+        Check(nm.Role == NetworkManager.NetRole.Host, "п.H: после старта роль = Host");
+        Check(nm.IsServer, "п.H: Host проходит по серверной ветке (IsServer)");
+        Check(nm.IsHost, "п.H: IsHost == true");
+        _hostStartFrame = (int)Engine.GetFramesDrawn();
+    }
+
+    /// <summary>Кадр PHb (после QueueFree): ровно один живой игрок с авторитетом 1,
+    /// он зарегистрирован в таблице хостового слота (LivePlayerCount учитывает его),
+    /// активная камера в viewport есть (игрок видит мир).</summary>
+    private void CheckHostPlayer()
+    {
+        var nm = NetworkManager.Instance!;
+        Check(nm.Role == NetworkManager.NetRole.Host, "п.H: роль остаётся Host");
+        Check(CountOfflinePlayers() == 1,
+              $"п.H: у хоста ровно один живой игрок с авторитетом 1 " +
+              $"(живых: {CountOfflinePlayers()})");
+        Check(nm.LivePlayerCount == 1,
+              $"п.H: слот 1 зарегистрирован в сетевых таблицах " +
+              $"(LivePlayerCount = {nm.LivePlayerCount})");
+        Check(GetTree().CurrentScene?.GetViewport()?.GetCamera3D() != null,
+              "п.H: в viewport есть активная камера (хост видит мир)");
+    }
+
+    /// <summary>Кадр PHc: Disconnect из Host. Роль = Offline, узел игрока с
+    /// авторитетом 1 ОСТАЛСЯ в мире (стал offline-игроком), сетевой слот 1 очищен
+    /// (LivePlayerCount == 0), второго игрока не появилось.</summary>
+    private void CheckHostDisconnect()
+    {
+        var nm = NetworkManager.Instance!;
+        nm.Disconnect();
+        Check(nm.Role == NetworkManager.NetRole.Offline, "п.H: Disconnect из Host -> Offline");
+        Check(nm.LivePlayerCount == 0,
+              $"п.H: сетевой слот 1 очищен при Disconnect (LivePlayerCount = {nm.LivePlayerCount})");
+        // QueueFree нет — узел остаётся; проверяем в том же кадре (он не удалялся).
+        Check(CountOfflinePlayers() == 1,
+              $"п.H: игрок хоста стал offline-игроком, не удалён " +
               $"(живых: {CountOfflinePlayers()})");
     }
 

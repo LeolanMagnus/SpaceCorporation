@@ -8,25 +8,28 @@ namespace SpaceCorporation;
 /// Autoload-сингл (res://scripts/core/NetworkManager.cs), объявлен в project.godot
 /// ВЫШЕ DebugInfoBus — иначе DebugLayer при старте читает ещё не готовый синглтон.
 ///
-/// Единственный источник правды о режиме работы процесса (решение В1: dedicated,
-/// listen-server в проекте нет):
+/// Единственный источник правды о режиме работы процесса (решение В1,
+/// пересмотрено на стадии 0-rework: сервер поднимается вместе с игроком-хостом):
 ///
 ///   Offline    — нет peer'а; всё как на стадии 1, стадия 1 работает без изменений.
-///   Dedicated  — CLI `-- --server` или кнопка `Start Server`. Процесс НЕ является
+///   Dedicated  — CLI `-- --server` (headless-стенды/CI). Процесс НЕ является
 ///                игроком: Player не создаётся никогда, ни сейчас, ни позже.
+///   Host       — кнопка `Start Server`: сервер в этом процессе + локальный игрок
+///                с авторитетом 1 (= id сервера). Хост и есть сервер.
 ///   Client     — CLI `-- --join <ip>` или кнопка `Join`. Свой игрок приходит
 ///                репликой спавнера.
 ///
 /// Правила, из которых код не имеет права выпадать:
 ///   - GetUniqueId() == 1 бывает только у серверного процесса; авторитет Player
-///     никогда не равен 1 (всегда id >= 2);
-///   - «мой игрок» — player.GetMultiplayerAuthority() == Multiplayer.GetUniqueId();
+///     равен 1 только у игрока хоста; чужие игроки — всегда id >= 2 (§2.4);
+///   - «мой игрок» — player.GetMultiplayerAuthority() == LocalAuthorityId
+///     (для хоста 1 == 1, для клиента — свой id);
 ///   - режим определяется Role, а не наличием UI: серверная ветка не имеет права
 ///     знать, запущена она из CLI или кнопкой (§2.6).
 /// </summary>
 public partial class NetworkManager : Node
 {
-    public enum NetRole { Offline, Dedicated, Client }
+    public enum NetRole { Offline, Dedicated, Host, Client }
 
     // ------------------------------------------------------------- константы
     public const int Port = 24567;
@@ -58,8 +61,11 @@ public partial class NetworkManager : Node
 
     /// <summary>Источник истины о роли — сам `Role`, а не `Multiplayer.IsServer()`:
     /// offline-peer тоже «сервер» (id = 1), и на этом различии строить нельзя (§2.1).</summary>
-    public bool IsServer => Role == NetRole.Dedicated;
+    public bool IsServer => Role == NetRole.Dedicated || Role == NetRole.Host;
     public bool IsClient => Role == NetRole.Client;
+    /// <summary>Сервер с локальным игроком (кнопка `Start Server`, стадия 0-rework):
+    /// серверная ветка + свой Player с авторитетом 1.</summary>
+    public bool IsHost => Role == NetRole.Host;
     public bool IsActive => HasRealPeer;
 
     /// <summary>Локальный id авторитета: в Offline = 1 (то же значение, что у
@@ -377,11 +383,27 @@ public partial class NetworkManager : Node
             return;
         }
 
+        int holder = FindPeerHoldingKey(playerKey);
+
+        // Коллизия ключа с игроком ХОСТА (holder == 1): хоста не выгоняем — он и
+        // есть сервер. Клиент с тем же ключом (dev-прогон «два окна» одного
+        // проекта: user://identity.cfg общий) получает гостевой ключ key#<peerId>.
+        // Проверка идёт ДО ветки вытеснения: иначе обычный код вытеснения принял бы
+        // слот 1 за «старый слот другого пира» и выгнал бы игрока хоста.
+        if (holder == 1)
+        {
+            string guestKey = $"{playerKey}#{peerId}";
+            GD.PrintErr($"NetworkManager: ключ {playerKey} совпал с ключом хоста " +
+                        $"(общий user://identity.cfg при двух окнах) — клиенту " +
+                        $"выдан гостевой ключ {guestKey}");
+            playerKey = guestKey;
+            holder = 0;
+        }
+
         // Ключ уже занят другим ЖИВЫМ пиром (оборванное соединение ещё не отвалилось
         // по таймауту). Выбираем явно: выгнать старый слот, записав LastSeenState ДО
         // DisconnectPeer(force:true) — при force:true сигнал PeerDisconnected не
         // приходит, и позиция иначе потерялась бы (§2.4).
-        int holder = FindPeerHoldingKey(playerKey);
         if (holder != 0 && holder != peerId &&
             _peerPlayers.TryGetValue(holder, out var oldPlayer) &&
             GodotObject.IsInstanceValid(oldPlayer))
@@ -398,14 +420,24 @@ public partial class NetworkManager : Node
                 oldPlayer.QueueFree();
         }
 
-        // Спавн по правилу §2.4 «Где спавнится игрок».
+        var player = SpawnPlayerForPeer(peerId, playerKey);
+        if (player == null)
+            RpcSpawnDeniedTo(peerId, "spawn-failed");
+    }
+
+    /// <summary>Сердцевина спавна игрока пира по правилу §2.4 «Где спавнится
+    /// игрок»: LastSeenState (позиция/крепление) → SpawnPlayerAt → регистрация в
+    /// таблицах. Используется и для клиентов (HandleRequestSpawn), и для игрока
+    /// хоста с авторитетом 1 (SpawnHostPlayer, стадия 0-rework). Возвращает узел
+    /// или null (нет WorldSpawner / спавн не удался).</summary>
+    public Player? SpawnPlayerForPeer(int peerId, string playerKey)
+    {
         var spawner = WorldSpawner.Current;
         if (spawner == null)
         {
-            GD.PrintErr("NetworkManager.HandleRequestSpawn: WorldSpawner.Current нет — " +
+            GD.PrintErr("NetworkManager: WorldSpawner.Current нет — " +
                         "спавн невозможен (нет GameRoot)");
-            RpcSpawnDeniedTo(peerId, "no-world");
-            return;
+            return null;
         }
 
         Player? player;
@@ -446,10 +478,7 @@ public partial class NetworkManager : Node
         }
 
         if (player == null)
-        {
-            RpcSpawnDeniedTo(peerId, "spawn-failed");
-            return;
-        }
+            return null;
 
         _peerPlayers[peerId] = player;
         _peerKeys[peerId] = playerKey;
@@ -459,6 +488,38 @@ public partial class NetworkManager : Node
             DebugInfoBus.Report($"attach[{playerKey[..System.Math.Min(8, playerKey.Length)]}] " +
                                 $"отложено до точки ({d.Owner},{d.Point}) (§2.4 п.4)");
         }
+        return player;
+    }
+
+    /// <summary>Спавн игрока ХОСТА (авторитет 1 = id сервера, стадия 0-rework):
+    /// тот же путь, что у клиентов — через SpawnPlayerForPeer и MultiplayerSpawner,
+    /// чтобы реплика доехала до подключённых клиентов. Публично как шов автотеста.</summary>
+    public Player? SpawnHostPlayer()
+    {
+        if (!IsHost)
+        {
+            GD.PrintErr("NetworkManager.SpawnHostPlayer: роль не Host — спавн игрока " +
+                        "в серверном процессе без локального игрока запрещён (§2.4)");
+            return null;
+        }
+        if (_peerPlayers.TryGetValue(1, out var cur) && GodotObject.IsInstanceValid(cur) &&
+            !cur.IsQueuedForDeletion())
+            return cur; // идемпотентность: игрок хоста уже есть
+        return SpawnPlayerForPeer(1, PlayerKey);
+    }
+
+    /// <summary>Перед уходом offline-игрока (авторитет 1) в Host — записать его
+    /// LastSeenState по PlayerKey, чтобы SpawnHostPlayer вернул его на то же место
+    /// и в то же крепление (стадия 0-rework).</summary>
+    public void CaptureHostCandidateLastSeen()
+    {
+        foreach (var node in GetTree().GetNodesInGroup("player"))
+            if (node is Player p && GodotObject.IsInstanceValid(p) &&
+                !p.IsQueuedForDeletion() && p.GetMultiplayerAuthority() == 1)
+            {
+                CaptureLastSeen(p, PlayerKey);
+                return;
+            }
     }
 
     private int FindPeerHoldingKey(string playerKey)
@@ -578,7 +639,7 @@ public partial class NetworkManager : Node
     /// </summary>
     private void RegisterDebugEntries()
     {
-        DebugInfoBus.RegisterDebugButton("Start Server", () => StartServer());
+        DebugInfoBus.RegisterDebugButton("Start Server", () => StartServer(withLocalPlayer: true));
         DebugInfoBus.RegisterDebugButton("Join", () => Join("127.0.0.1"));
         DebugInfoBus.RegisterDebugButton("Disconnect", () => Disconnect());
         DebugInfoBus.RegisterInfoSource("Net", GetNetInfoLine);
@@ -655,10 +716,15 @@ public partial class NetworkManager : Node
     }
 
     /// <summary>
-    /// Поднять dedicated-сервер в ЭТОМ процессе (не «хост»: игрока здесь не будет, §4 В1).
-    /// Имя метода — StartServer, а не Host: слово «host» в проекте означает listen-server.
+    /// Поднять сервер в ЭТОМ процессе. `withLocalPlayer` решает роль:
+    ///   false → Dedicated (CLI `--server`, headless/CI): игрока в процессе нет;
+    ///   true  → Host (кнопка `Start Server`, стадия 0-rework): сервер + локальный
+    ///           игрок с авторитетом 1. Игрок спавнится через RoleChanged в
+    ///           WorldSpawner (capture LastSeen → remove offline → SpawnHostPlayer).
+    /// Имя метода — StartServer, а не Host: «host» в проекте означает listen-server.
     /// </summary>
-    public Error StartServer(int port = Port, int maxPlayers = MaxPlayers)
+    public Error StartServer(int port = Port, int maxPlayers = MaxPlayers,
+                             bool withLocalPlayer = false)
     {
         if (HasRealPeer)
         {
@@ -677,9 +743,10 @@ public partial class NetworkManager : Node
         }
 
         Multiplayer.MultiplayerPeer = peer;
-        SetRole(NetRole.Dedicated);
-        GD.Print($"NetworkManager: dedicated-сервер, self = {SelfId}, порт = {port}, " +
-                 $"макс. игроков = {maxPlayers}, каналов = {ChannelCount}");
+        SetRole(withLocalPlayer ? NetRole.Host : NetRole.Dedicated);
+        GD.Print($"NetworkManager: {(withLocalPlayer ? "host" : "dedicated")}-сервер, " +
+                 $"self = {SelfId}, порт = {port}, макс. игроков = {maxPlayers}, " +
+                 $"каналов = {ChannelCount}");
         OnServerUp();
         return Error.Ok;
     }
@@ -717,8 +784,19 @@ public partial class NetworkManager : Node
     {
         if (!Multiplayer.HasMultiplayerPeer())
             return;
+        bool wasHost = IsHost;
         Multiplayer.MultiplayerPeer?.Close();
         Multiplayer.MultiplayerPeer = null;
+        // Хостовый слот 1: узел игрока остаётся в мире и становится offline-игроком
+        // (FindOfflinePlayer найдёт его по авторитету 1), но сетевые таблицы слота 1
+        // чистим — иначе коллизия ключа/идемпотентность примут offline-игрока за
+        // сетевого игрока хоста (стадия 0-rework).
+        if (wasHost)
+        {
+            _peerPlayers.Remove(1);
+            _peerKeys.Remove(1);
+            _pendingAttach.Remove(1);
+        }
         SetRole(NetRole.Offline);
         GD.Print("NetworkManager: соединение закрыто, роль = Offline");
     }
@@ -841,7 +919,9 @@ public partial class NetworkManager : Node
     public string GetNetInfoLine()
     {
         var peers = Multiplayer.GetPeers();
-        int players = IsServer ? peers.Length : (IsClient ? 1 : 0);
+        // На сервере пиры = подключившиеся клиенты; у хоста ещё свой игрок (авторитет 1),
+        // он не входит в GetPeers() (стадия 0-rework).
+        int players = IsServer ? peers.Length + (IsHost ? 1 : 0) : (IsClient ? 1 : 0);
         long packets = _pktsSent + _pktsRecv;
         long bytes = _bytesSent + _bytesRecv;
         string key = PlayerKey;
