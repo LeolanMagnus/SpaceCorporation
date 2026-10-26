@@ -187,6 +187,50 @@
   (`CheckHostStart`/`CheckHostPlayer`/`CheckHostDisconnect`): роль Host, IsServer/IsHost,
   ровно один живой игрок с авторитетом 1, слот 1 в таблицах, активная камера, после
   Disconnect — игрок остался offline-игроком, слот очищен. Итог:
-  `NetTest checks=79 failures=0`, `Stage1Test checks=104 failures=0`,
+  `NetTest checks=84 failures=0`, `Stage1Test checks=104 failures=0`,
   `run-net-demo.sh` — dedicated-путь цел (`OK: сервер принял пира(ов)`),
   `ObjectDisposedException`/«источник … упал» нет.
+
+---
+
+## BUG-005 — Host жмёт `Detach Player`: «пир 0 просит переместить чужого игрока (авторитет = 1) — отказ»
+
+- **Статус:** done
+- **Компонент:** `scripts/core/Player.cs` (кнопки Detach/Attach),
+  `scripts/core/DebugInfoBus.cs` + `scripts/debug/DebugLayer.cs` (шина кнопок)
+- **Симптом:** после FEAT-001 хост жмёт `Detach Player` от своего игрока (авторитет 1)
+  и получает отказ: `Player: пир 0 просит переместить чужого игрока (авторитет узла = 1) —
+  отказ`. Плюс при нажатии кнопки из старого (offline) игрока сыпался
+  `ObjectDisposedException` (сирота-кнопка с колбэком на освобождённый узел).
+- **Причина (две независимые):**
+  1. `OnButtonDetach`/`OnButtonAttach` ветвились по `HasRealPeer` и для хоста уходили в
+     клиентский RPC `RequestDetach`/`RequestAttach` (`CallLocal=false`). У хоста нет
+     клиент→серверного перехода: обработчик отрабатывал НЕ из сети
+     (`GetRemoteSenderId() == 0`), а `IsRequestFromOwner` сравнивал 0 с авторитетом 1 и
+     отклонял запрос (§2.5 п.2). Хост — это и есть сервер, ему RPC «наверх» не нужен.
+  2. `Player` снимал свои кнопки по МЕТКЕ (`RemoveDebugButton("Detach Player")`). При
+     Offline→Host старый игрок удаляется `QueueFree` (его `_ExitTree` — в конце кадра),
+     а новый игрок в том же кадре регистрирует кнопку с той же меткой. Снятие по метке
+     либо не находило кнопку (Godot переименовывает коллизию имени в `@Button@N`), либо
+     срезало кнопку НОВОГО игрока; кнопка СТАРОГО оставалась сиротой с колбэком на
+     освобождённый узел. Отдельно: если кнопка была зарегистрирована ДО готовности
+     `DebugLayer`, она лежала в очереди `_pendingButtons` и экземпляр `Button` вообще не
+     был известен владельцу — снять её было нечем.
+- **Фикс:**
+  1. В `OnButtonDetach`/`OnButtonAttach` RPC шлём ТОЛЬКО настоящему клиенту
+     (`NetworkManager.Instance is { IsClient: true }`); хост и offline вызывают
+     `DetachServerSide`/`AttachServerSide` напрямую — тот же признак authoritySide, что в
+     `_PhysicsProcess`.
+  2. `DebugInfoBus.RegisterDebugButton` возвращает `DebugButtonHandle` — ручку на кнопку.
+     `Player` хранит ручки и снимает СВОИ кнопки по ним в `_ExitTree`
+     (`RemoveDebugButton(handle)`). Ручка работает и для отложенной заявки: снятие убирает
+     либо готовый `Button`, либо запись в `_pendingButtons`, не задевая чужую кнопку с той
+     же меткой. `RemoveDebugButton(string)` оставлен по-прежнему по имени/метке — он нужен
+     `Ship` (у нескольких кораблей законно по своей «Nudge Ship», массовая чистка по метке
+     ломала инерцию в `Stage1Test`).
+- **Проверка:** `dotnet build` — 0 ошибок. `NetTest` расширен фазой п.H.detach
+  (`CheckHostDetachButton`): у хоста ровно ОДНА живая кнопка `Detach Player` (нет мёртвых
+  от старого игрока), нажатие открепляет СВОЕГО игрока без отказа. Итог:
+  `NetTest checks=84 failures=0`, `Stage1Test checks=104 failures=0` (инерция корабля
+  снова зелёная), в логе нет `ObjectDisposedException`, «источник … упал» и
+  «просит переместить чужого игрока».

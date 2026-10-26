@@ -26,7 +26,7 @@ public partial class NetTest : Node
     // значит к п.15 peer не должен быть активен. Два кадра: на втором QueueFree
     // уже обработан, и «игрока нет» проверяется на удалённом узле, а не на
     // помеченном.
-    private enum Phase { WaitSpawn, P5a, P5b, PHa, PHb, PHc, P13, P14, P15, P17, P16a, P16b, P8, P18, Done }
+    private enum Phase { WaitSpawn, P5a, P5b, PHa, PHb, PHd, PHc, P13, P14, P15, P17, P16a, P16b, P8, P18, Done }
     private Phase _phase = Phase.WaitSpawn;
 
     public override void _Ready()
@@ -66,7 +66,8 @@ public partial class NetTest : Node
             case Phase.P5a: CheckRoleTransitions(); _phase = Phase.P5b; break;
             case Phase.P5b: CheckOfflinePlayerRestored(); _phase = Phase.PHa; break;
             case Phase.PHa: CheckHostStart(); _phase = Phase.PHb; break;
-            case Phase.PHb: CheckHostPlayer(); _phase = Phase.PHc; break;
+            case Phase.PHb: CheckHostPlayer(); _phase = Phase.PHd; break;
+            case Phase.PHd: CheckHostDetachButton(); _phase = Phase.PHc; break;
             case Phase.PHc: CheckHostDisconnect(); _phase = Phase.P13; break;
             case Phase.P13: CheckVisibility(); _phase = Phase.P14; break;
             case Phase.P14: CheckSpawnSnapshot(); _phase = Phase.P15; break;
@@ -172,6 +173,49 @@ public partial class NetTest : Node
               $"(LivePlayerCount = {nm.LivePlayerCount})");
         Check(GetTree().CurrentScene?.GetViewport()?.GetCamera3D() != null,
               "п.H: в viewport есть активная камера (хост видит мир)");
+    }
+
+    /// <summary>Регрессия бага «пир 0 просит переместить чужого игрока (авторитет
+    /// узла = 1) — отказ»: хост жмёт реальную кнопку `Detach Player` от своего
+    /// игрока (авторитет 1). До фикса кнопка вела в клиентский RPC RequestDetach
+    /// (CallLocal=false); у хоста нет клиент→серверного перехода, обработчик
+    /// отрабатывал НЕ из сети (GetRemoteSenderId()==0), и IsRequestFromOwner
+    /// отклонял запрос. После фикса хост (он же сервер) выполняет DetachServerSide
+    /// напрямую — открепление проходит синхронно в том же кадре.</summary>
+    private void CheckHostDetachButton()
+    {
+        var p = HostPlayer();
+        Check(p != null, "п.H.detach: есть живой игрок хоста (авторитет 1)");
+        if (p == null) return;
+
+        // Хост авто-пристёгивается к точке по умолчанию (§3.5 п.4: authoritySide).
+        // Если по какой-то причине ещё не пристёгнут — пристёгиваем явно, чтобы
+        // кнопке было что откреплять.
+        if (!p.IsAttached)
+            p.AttachToDefaultPoint();
+        Check(p.IsAttached, "п.H.detach: игрок хоста пристёгнут (кнопке есть что откреплять)");
+
+        var btn = FindButton("Detach Player");
+        Check(btn != null, "п.H.detach: кнопка `Detach Player` найдена в DebugLayer");
+        if (btn == null) return;
+        // Регрессия на накопление мёртвых кнопок: при Offline→Host старый игрок
+        // удаляется QueueFree, новый регистрирует кнопку с той же меткой. Кнопка
+        // должна быть РОВНО одна и живая (иначе нажатие попадёт в освобождённый узел).
+        var layer = FindNodeByName(GetTree().CurrentScene, "DebugLayer") as CanvasLayer;
+        var box = layer?.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons");
+        int detachButtons = 0;
+        if (box != null)
+            foreach (var c in box.GetChildren())
+                if (c is Button bb && bb.Text == "Detach Player")
+                    detachButtons++;
+        Check(detachButtons == 1,
+              $"п.H.detach: ровно одна кнопка `Detach Player` (нет мёртвых от старого " +
+              $"игрока; найдено: {detachButtons})");
+
+        btn.EmitSignal(Button.SignalName.Pressed);   // реальный путь кнопки (§3.5 п.3)
+        Check(!p.IsAttached,
+              "п.H.detach: хост открепил СВОЕГО игрока кнопкой без отказа " +
+              "(нет «пир 0 просит переместить чужого игрока»)");
     }
 
     /// <summary>Кадр PHc: Disconnect из Host. Роль = Offline, узел игрока с
@@ -567,6 +611,43 @@ public partial class NetTest : Node
                 !p.IsQueuedForDeletion() && p.GetMultiplayerAuthority() == 1)
                 n++;
         return n;
+    }
+
+    /// <summary>Найти кнопку дебаг-меню по подписи (DebugLayer → VBoxContainer).</summary>
+    private Button? FindButton(string label)
+    {
+        // DebugLayer в NetTest — под Main (NetTest.tscn инстансит Main.tscn), поэтому
+        // ищем CanvasLayer с этим именем рекурсивно, а не по фиксированному пути.
+        var layer = FindNodeByName(GetTree().CurrentScene, "DebugLayer") as CanvasLayer;
+        // Кнопки дебаг-меню: DebugRoot/DebugPanel/VBox/Scroll/Buttons (DebugLayer.tscn).
+        var box = layer?.GetNodeOrNull<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons");
+        if (box == null) return null;
+        foreach (var c in box.GetChildren())
+            if (c is Button b && b.Text == label)
+                return b;
+        return null;
+    }
+
+    private static Node? FindNodeByName(Node? root, string name)
+    {
+        if (root == null) return null;
+        if (root.Name == name) return root;
+        foreach (var c in root.GetChildren())
+        {
+            var found = FindNodeByName(c, name);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /// <summary>Живой игрок хоста (авторитет 1) или null.</summary>
+    private Player? HostPlayer()
+    {
+        foreach (var node in GetTree().GetNodesInGroup("player"))
+            if (node is Player p && GodotObject.IsInstanceValid(p) &&
+                !p.IsQueuedForDeletion() && p.GetMultiplayerAuthority() == 1)
+                return p;
+        return null;
     }
 
     private void Check(bool ok, string what)

@@ -43,6 +43,13 @@ public partial class Player : CharacterBody3D
     /// false; в dedicated-процессе узла Player нет вовсе (§2.4).</summary>
     private bool _isLocal;
 
+    /// <summary>Свои кнопки дебаг-меню (только для _isLocal). Храним ручки,
+    /// чтобы снять именно их при _ExitTree, не задев кнопки нового игрока с теми же
+    /// метками при смене роли (§3.11 п.9). Ручка работает и если кнопка была
+    /// зарегистрирована до готовности слоя (тогда снимается отложенная заявка).</summary>
+    private DebugButtonHandle? _debugDetachButton;
+    private DebugButtonHandle? _debugAttachButton;
+
     public override void _Ready()
     {
         CollisionLayer = CollisionLayers.Character;
@@ -95,8 +102,12 @@ public partial class Player : CharacterBody3D
         // каждым пиром. В offline запрос сворачивается в локальный вызов.
         if (_isLocal)
         {
-            DebugInfoBus.RegisterDebugButton("Detach Player", OnButtonDetach);
-            DebugInfoBus.RegisterDebugButton("Attach Player to Seat", OnButtonAttach);
+            // Держим СВОИ кнопки по экземплярам: при смене роли (Offline→Host) старый
+            // игрок удаляется QueueFree, а новый регистрирует кнопки с теми же метками
+            // в том же кадре. Снятие по экземпляру гарантирует, что _ExitTree старого
+            // игрока уберёт именно его кнопки, а не кнопки нового (§3.11 п.9).
+            _debugDetachButton = DebugInfoBus.RegisterDebugButton("Detach Player", OnButtonDetach);
+            _debugAttachButton = DebugInfoBus.RegisterDebugButton("Attach Player to Seat", OnButtonAttach);
         }
 
 
@@ -133,8 +144,15 @@ public partial class Player : CharacterBody3D
         DebugInfoBus.RemoveInfoSource("Player");
         if (_isLocal)
         {
-            DebugInfoBus.RemoveDebugButton("Detach Player");
-            DebugInfoBus.RemoveDebugButton("Attach Player to Seat");
+            // Снимаем СВОИ кнопки по ручкам: при Offline→Host старый игрок удаляется
+            // QueueFree (этот _ExitTree отработает в конце кадра), а новый игрок уже
+            // успел зарегистрировать кнопки с теми же метками. Снятие по ручке убирает
+            // ровно нашу кнопку (или её отложенную заявку), не задев кнопки нового
+            // игрока (§3.11 п.9).
+            DebugInfoBus.RemoveDebugButton(_debugDetachButton);
+            DebugInfoBus.RemoveDebugButton(_debugAttachButton);
+            _debugDetachButton = null;
+            _debugAttachButton = null;
         }
     }
 
@@ -430,18 +448,28 @@ public partial class Player : CharacterBody3D
         // §3.5 п.3: при нескольких кораблях кнопка крепит к ближайшей точке
         // реестра, а не к Seat первого.
         GD.Print($"attach → ship#{owner}/point#{point}");
-        if (NetworkManager.Instance is { HasRealPeer: true })
-            RequestAttach(owner, point);      // RPC → сервер
+        // RPC → сервер нужен ТОЛЬКО настоящему клиенту. Хост — это и есть сервер
+        // (авторитетная сторона): у его собственного игрока нет клиент→серверного
+        // перехода, и RequestAttach с CallLocal=false отработал бы НЕ из сети
+        // (GetRemoteSenderId() == 0), а IsRequestFromOwner сравнил бы 0 с авторитетом
+        // 1 и отклонил запрос (§2.5 п.2). Хост и offline выполняют серверную логику
+        // напрямую — тот же признак authoritySide, что в _PhysicsProcess.
+        if (NetworkManager.Instance is { IsClient: true })
+            RequestAttach(owner, point);      // клиент: RPC → сервер
         else
-            AttachServerSide(owner, point);   // offline: тот же код локально (§1.8)
+            AttachServerSide(owner, point);   // хост/offline: тот же код локально (§1.8)
     }
 
     private void OnButtonDetach()
     {
-        if (NetworkManager.Instance is { HasRealPeer: true })
-            RequestDetach();                  // RPC → сервер
+        // См. OnButtonAttach: RPC → сервер только настоящему клиенту. Хост (он же
+        // сервер) и offline выполняют DetachServerSide напрямую — иначе RPC с
+        // CallLocal=false отработает не из сети, GetRemoteSenderId() == 0, и
+        // IsRequestFromOwner отклонит запрос («пир 0 просит … авторитет = 1»).
+        if (NetworkManager.Instance is { IsClient: true })
+            RequestDetach();                  // клиент: RPC → сервер
         else
-            DetachServerSide();               // offline: локально
+            DetachServerSide();               // хост/offline: локально
         GD.Print($"player detached, global = {Fmt(GlobalPosition)}");
     }
 

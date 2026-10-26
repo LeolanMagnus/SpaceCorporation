@@ -19,7 +19,7 @@ public partial class DebugInfoBus : Node
     public static DebugInfoBus? Instance { get; private set; }
 
     private readonly Dictionary<string, Func<string>> _infoSources = new();
-    private readonly List<(string Label, Action Callback)> _pendingButtons = new();
+    private readonly List<DebugButtonHandle> _pendingButtons = new();
     private DebugLayer? _layer;
 
     public override void _EnterTree()
@@ -37,39 +37,58 @@ public partial class DebugInfoBus : Node
 
     /// <summary>
     /// Регистрирует кнопку в дебаг-панели. Работает и до появления UI — запросы копятся
-    /// и выгружаются, когда DebugLayer готов.
+    /// и выгружаются, когда DebugLayer готов. Возвращает ручку: снятие по ней убирает
+    /// ровно ЭТУ кнопку (или её отложенную заявку), не задев чужую с той же меткой.
     /// </summary>
-    public static void RegisterDebugButton(string label, Action callback)
+    public static DebugButtonHandle? RegisterDebugButton(string label, Action callback)
     {
         if (Instance == null)
         {
             GD.PushWarning($"DebugInfoBus: нет сингла, кнопка «{label}» не добавлена.");
-            return;
+            return null;
         }
 
+        var handle = new DebugButtonHandle(label, callback);
         if (Instance._layer != null)
-            Instance._layer.RegisterDebugButton(label, callback);
+            handle.Button = Instance._layer.RegisterDebugButton(label, callback);
         else
-            Instance._pendingButtons.Add((label, callback));
+            Instance._pendingButtons.Add(handle); // слой ещё не готов — заявка до готовности
+        return handle;
     }
 
     /// <summary>Вызывается DebugLayer при готовности: забрать накопленные кнопки.</summary>
     internal void AttachLayer(DebugLayer layer)
     {
         _layer = layer;
-        foreach (var (label, callback) in _pendingButtons)
-            layer.RegisterDebugButton(label, callback);
+        foreach (var handle in _pendingButtons)
+            if (!handle.Removed)
+                handle.Button = layer.RegisterDebugButton(handle.Label, handle.Callback);
         _pendingButtons.Clear();
     }
 
-    /// <summary>Снять кнопку (например, при смене авторитета: не-авторитет не имеет
-    /// права на «Nudge Ship», §3.1 п.4). Копия в очереди тоже удаляется.</summary>
+    /// <summary>Снять кнопку по метке (например, при смене авторитета: не-авторитет не
+    /// имеет права на «Nudge Ship», §3.1 п.4). Убирает первую кнопку с таким именем и
+    /// копию в очереди. Копия в очереди тоже удаляется.</summary>
     public static void RemoveDebugButton(string label)
     {
         if (Instance == null)
             return;
         Instance._pendingButtons.RemoveAll(b => b.Label == label);
         Instance._layer?.RemoveDebugButton(label);
+    }
+
+    /// <summary>Снять конкретную кнопку по ручке (полученной из RegisterDebugButton).
+    /// Владелец снимает ровно свою кнопку, не задев чужую с той же меткой — надёжно при
+    /// смене роли, когда старый и новый игрок живут в одном кадре, и когда кнопка была
+    /// зарегистрирована до готовности слоя (§3.11 п.9).</summary>
+    public static void RemoveDebugButton(DebugButtonHandle? handle)
+    {
+        if (Instance == null || handle == null)
+            return;
+        handle.Removed = true;
+        Instance._pendingButtons.Remove(handle);          // ещё не создана — убрать заявку
+        if (handle.Button != null && GodotObject.IsInstanceValid(handle.Button))
+            handle.Button.Free();                          // уже создана — убрать кнопку
     }
 
     internal void DetachLayer(DebugLayer layer)
@@ -159,5 +178,27 @@ public partial class DebugInfoBus : Node
         }
 
         return sb.ToString();
+    }
+}
+
+/// <summary>
+/// Ручка на дебаг-кнопку. Владелец (Player/Ship) получает её из
+/// DebugInfoBus.RegisterDebugButton и снимает кнопку по ней в _ExitTree. Работает и
+/// когда кнопка ещё не создана (зарегистрирована до готовности DebugLayer): снятие
+/// убирает отложенную заявку, а не только готовый Button — иначе при Offline→Host
+/// кнопка старого игрока оставалась бы сиротой с колбэком на освобождённый узел
+/// (§3.11 п.9).
+/// </summary>
+public sealed class DebugButtonHandle
+{
+    internal string Label { get; }
+    internal Action Callback { get; }
+    internal Button? Button;
+    internal bool Removed;
+
+    internal DebugButtonHandle(string label, Action callback)
+    {
+        Label = label;
+        Callback = callback;
     }
 }
