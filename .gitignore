@@ -3,6 +3,7 @@
 .mono/
 bin/
 obj/
+build/
 *.translation
 # Visual Studio / Rider
 .vs/
