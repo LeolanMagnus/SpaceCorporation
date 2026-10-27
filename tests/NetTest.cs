@@ -26,7 +26,7 @@ public partial class NetTest : Node
     // значит к п.15 peer не должен быть активен. Два кадра: на втором QueueFree
     // уже обработан, и «игрока нет» проверяется на удалённом узле, а не на
     // помеченном.
-    private enum Phase { WaitSpawn, P5a, P5b, PHa, PHb, PHd, PHc, P13, P14, P15, P17, P16a, P16b, P8, P18, Done }
+    private enum Phase { WaitSpawn, P5a, P5b, PHa, PHb, PHd, PHc, P13, P14, P15, P78, P17, P16a, P16b, P8, P18, P19, Done }
     private Phase _phase = Phase.WaitSpawn;
 
     public override void _Ready()
@@ -71,9 +71,11 @@ public partial class NetTest : Node
             case Phase.PHc: CheckHostDisconnect(); _phase = Phase.P13; break;
             case Phase.P13: CheckVisibility(); _phase = Phase.P14; break;
             case Phase.P14: CheckSpawnSnapshot(); _phase = Phase.P15; break;
-            case Phase.P15: CheckManyShips(); _phase = Phase.P17; break;
+            case Phase.P15: CheckManyShips(); _phase = Phase.P78; break;
+            case Phase.P78: CheckPilotInput(); _phase = Phase.P17; break;
             case Phase.P17: CheckShipToShip(); _phase = Phase.P18; break;
-            case Phase.P18: RunP18(); _phase = Phase.P16a; break;
+            case Phase.P18: RunP18(); _phase = Phase.P19; break;
+            case Phase.P19: RunP19(); _phase = Phase.P16a; break;
             case Phase.P16a: CheckShipDeleteWithPlayer(); _phase = Phase.P16b; break;
             case Phase.P16b: CheckShipDeleteWithPlayer2(); _phase = Phase.P8; break;
             case Phase.P8: RunP8(); _phase = Phase.Done; break;
@@ -318,9 +320,10 @@ public partial class NetTest : Node
 
     /// <summary>§3.9 п.15: N кораблей. Сервер спавнит два корабля → разные
     /// ShipNetId (1 и 2), разные пути, в DebugInfoBus два источника (Ship#1,
-    /// Ship#2); AssignShipAuthority(2, 2) меняет авторитет второго, не трогая
-    /// первый; AttachServerSide(2, 0) крепит именно ко второму.
-    /// Требует Dedicated: авторитет назначает только сервер, поэтому здесь
+    /// Ship#2); SetPilot(2, 2) меняет пилота второго, не трогая первый (авторитет
+    /// узла при этом НЕ меняется — он навсегда у сервера, §3.5 п.8);
+    /// AttachServerSide(2, 0) крепит именно ко второму.
+    /// Требует Dedicated: пилота назначает только сервер, поэтому здесь
     /// поднимаем headless-сервер (0 клиентов, Rpc — no-op).</summary>
     private void CheckManyShips()
     {
@@ -354,10 +357,16 @@ public partial class NetTest : Node
         Check(activeCam != null,
               "п.15: после StartServer в viewport есть активная камера (мир виден без игрока)");
 
-        // Назначаем авторитет второго корабля чужому пиру 2 (он в TestExtraPeers).
-        nm.AssignShipAuthority(shipNetId: 2, peerId: 2);
-        Check(ship2.PilotPeerId == 2, "п.15: Ship2.PilotPeerId == 2 после AssignShipAuthority(2,2)");
+        // §3.9 п.15 + шаг 2.3 (В14=B): пилот второго корабля — чужой пир 2 (он в
+        // TestExtraPeers), но АВТОРИТЕТ узла обязан остаться у сервера (id = 1):
+        // сервер не отдаёт истину клиенту, иначе тот вернёт позицию как факт.
+        nm.SetPilot(shipNetId: 2, peerId: 2);
+        Check(ship2.PilotPeerId == 2, "п.15: Ship2.PilotPeerId == 2 после SetPilot(2,2)");
         Check(ship1.PilotPeerId == 1, "п.15: Ship1.PilotPeerId не тронут (== 1)");
+        Check(ship2.GetMultiplayerAuthority() == 1 && ship2.IsServerAuthority,
+              "п.15: SetPilot НЕ меняет авторитет: Ship2 остаётся авторитетным для сервера (§3.5 п.8)");
+        Check(!ship2.Freeze,
+              "п.15: сервер-авторитет не заморожен, даже когда пилот — клиент (истина интегрируется здесь)");
 
         // AttachServerSide(2, 0) — пара (ownerNetId=2, pointNetId=0) крепит ко
         // второму кораблю. Спавним чужого игрока с авторитетом 2 и крепим в том
@@ -374,12 +383,97 @@ public partial class NetTest : Node
         }
     }
 
+    // ------------------------------------------------- п.7-п.8: кадры ввода
+    /// <summary>§3.5 п.7-п.8 (шаг 2.3, В14=B): сервер — единственный интегратор
+    /// корабля; от пилота ему приходят кадры ВВОДА, а не позиция. Тест гоняет
+    /// боевой путь гейта (`AcceptInputFrom`) через шов `TestSubmitInput` (в
+    /// headless нет UDP, а `GetRemoteSenderId()` вне RPC = 0, §3.8/§3.9 п.15) и
+    /// боевой шаг (`TestStepForTest` → `FrameForStep` → `_serverInput`).</summary>
+    private void CheckPilotInput()
+    {
+        var ship2 = _spawner!.FindShipByName("Ship2");
+        Check(ship2 != null, "п.7: Ship2 жив (настройка из п.15 сохранена)");
+        if (ship2 == null) return;
+
+        // Предусловие: сервер — авторитет, пилот — клиент 2, корабль не заморожен.
+        Check(ship2.IsServerAuthority && !ship2.Freeze,
+              "п.7: сервер-авторитет Ship2 интегрирует сам (не заморожен)");
+        Check(ship2.PilotPeerId == 2, "п.7: пилот Ship2 — пир 2 (настройка п.15)");
+
+        int accBefore = ship2.AcceptedInputCount;
+        int rejBefore = ship2.RejectedInputCount;
+
+        // --- п.7: кадр от ПИЛОТА принимается и интегрируется ---
+        Vector3 pos0 = ship2.GlobalPosition;
+        float speed0 = ship2.LinearVelocity.Length();
+        bool ok7 = ship2.TestSubmitInput(senderPeer: 2, tick: 1, mask: InputMask.ThrustF);
+        Check(ok7, "п.7: TestSubmitInput(пир 2 = пилот) принят (гейт пропускает пилота)");
+        Check(ship2.AcceptedInputCount == accBefore + 1,
+              "п.7: счётчик принятых кадров вырос на 1");
+        Check(ship2.ServerInputFrame.Mask == InputMask.ThrustF,
+              "п.7: принятый кадр лёг в очередь (_serverInput.Mask == ThrustF)");
+
+        // Шаг модели берёт кадр из очереди: тяга обязана разогнать корабль.
+        for (int i = 0; i < 10; i++)
+            ship2.TestStepForTest(1.0f / 60.0f);
+        float speed1 = ship2.LinearVelocity.Length();
+        float moved = (ship2.GlobalPosition - pos0).Length();
+        Check(speed1 > speed0 + 1f,
+              $"п.7: сервер интегрировал тягу пилота: |v| {speed0:F2} → {speed1:F2} м/с");
+        Check(moved > 0.5f,
+              $"п.7: корабль сдвинулся на {moved:F2} м от серверной тяги");
+
+        // --- п.8: кадр от ЧУЖОГО пира отклоняется (гейт по PilotPeerId) ---
+        // Сначала гасим тягу пустым кадром от настоящего пилота (пир 2, тик 2):
+        // иначе залипший ThrustF в очереди сам разгонял бы корабль и тест п.8
+        // «чужой кадр не применён» прошёл бы неверно.
+        bool okEmpty = ship2.TestSubmitInput(senderPeer: 2, tick: 2, mask: 0u);
+        Check(okEmpty, "п.8: пустой кадр от пилота принят (снять залипшую тягу)");
+
+        // Кадр с тягой от НЕ-пилота (пир 3) — обязан быть отклонён.
+        Vector3 posBeforeForeign = ship2.GlobalPosition;
+        float speedBeforeForeign = ship2.LinearVelocity.Length();
+        bool okForeign = ship2.TestSubmitInput(senderPeer: 3, tick: 3, mask: InputMask.ThrustF);
+        Check(!okForeign, "п.8: TestSubmitInput(пир 3 ≠ пилот) ОТКЛОНЁН (§3.5 п.8)");
+        Check(ship2.RejectedInputCount == rejBefore + 1,
+              "п.8: счётчик отклонённых кадров вырос на 1");
+        Check(ship2.ServerInputFrame.Mask == 0u,
+              "п.8: чужой кадр НЕ попал в очередь (_serverInput.Mask остался 0)");
+
+        // Дальнейшие шаги: раз тяга в очереди = 0, корабль летит по инерции —
+        // |v| не растёт. Если бы чужой кадр просочился, тяга бы разогнала корпус.
+        for (int i = 0; i < 10; i++)
+            ship2.TestStepForTest(1.0f / 60.0f);
+        float speedAfterForeign = ship2.LinearVelocity.Length();
+        Check(speedAfterForeign <= speedBeforeForeign + 0.01f,
+              $"п.8: чужой кадр не разогнал корабль: |v| {speedBeforeForeign:F2} → {speedAfterForeign:F2} м/с");
+
+        // --- п.8b: гейт по тик (дубликат/устаревший кадр отклоняется) ---
+        // Тот же пир 2, но тик 2 (уже принят) — обязан быть отклонён как дубль.
+        bool okDup = ship2.TestSubmitInput(senderPeer: 2, tick: 2, mask: InputMask.Boost);
+        Check(!okDup, "п.8: дубликат тика (tick <= lastAccepted) отклонён");
+        Check(ship2.ServerInputFrame.Mask == 0u,
+              "п.8: отклонённый дубликат не перезаписал очередь (Boost не попал)");
+
+        // --- п.7b: сервер применяет look из кадра (радианы), а не из своей мыши ---
+        // Это чинит баг шага 2.3: у сервера-авторитета нет своей мыши по чужому
+        // кораблю, доворот носа приходит ТОЛЬКО через кадр ввода.
+        float yawBefore = ship2.GlobalTransform.Basis.GetEuler().Y;
+        bool okLook = ship2.TestSubmitInput(senderPeer: 2, tick: 4, mask: 0u,
+                                            lookYaw: 0.3f, lookPitch: 0f);
+        Check(okLook, "п.7: кадр с поворотом мыши (lookYaw) от пилота принят");
+        ship2.TestStepForTest(1.0f / 60.0f);
+        float yawAfter = ship2.GlobalTransform.Basis.GetEuler().Y;
+        Check(Mathf.Abs(yawAfter - yawBefore) > 0.1f,
+              $"п.7: сервер довернул нос по lookYaw кадра: {yawBefore:F3} → {yawAfter:F3} рад");
+    }
+
     // ------------------------------------------------------------ п.17
 
     /// <summary>§3.9 п.17: переход корабль A → корабль B одним вызовом. Счётчик
     /// «сколько кораблей имеют PilotPeerId == pilot» никогда не превышает 1:
-    /// AssignShipAuthority отпускает прежний корабль ДО назначения нового
-    /// (рантайм-гейт), поэтому промежуточного «два авторитета» не возникает.</summary>
+    /// SetPilot отпускает прежний корабль ДО назначения нового (рантайм-гейт),
+    /// поэтому промежуточного «один пир — два пилотируемых корабля» не возникает.</summary>
     private void CheckShipToShip()
     {
         var nm = NetworkManager.Instance;
@@ -587,6 +681,48 @@ public partial class NetTest : Node
         Check(ship.TestHullGlobalPosition() != ship.GlobalPosition ||
               ship.TestHullGlobalPosition().DistanceTo(ship.GlobalPosition) > 0.01f,
               "п.18: ShipHull отделён от тела (картинка ≠ физический трансформ)");
+    }
+
+    /// <summary>§2.5 п.13: при ВЫКЛЮЧЕННОЙ интерполяции hull прыгает прямо в
+    /// ПОСЛЕДНИЙ принятый снимок, без сдвига на InterpDelay и без смешивания.
+    /// Тот же набор снимков, что в п.18, но флаг интерполяции сброшен кнопкой
+    /// `Toggle Interpolation` (шов SetInterpolation).</summary>
+    private void RunP19()
+    {
+        var ship = _spawner!.FindShipByName("Ship");
+        Check(ship != null, "п.13: Ship доступен для теста выключенной интерполяции");
+        if (ship == null) return;
+
+        var a = new Vector3(0, 0, 0);
+        var b = new Vector3(4, 0, 0);
+        // Буфер интерполяции пуст после п.18? Нет — там снимки a,b уже в буфере.
+        // Чистим, загнав окно: пушим свежие снимки заново (TestPushSnapshot
+        // добавляет, а InterpolateHull режет старьё по окну). Чтобы тест был
+        // детерминирован, работаем на новом корабле нельзя (он один), поэтому
+        // просто пушим те же a,b ещё раз — последние два останутся a,b.
+        ship.TestPushSnapshot(1.0, a, Quaternion.Identity);
+        ship.TestPushSnapshot(1.2, b, Quaternion.Identity);
+
+        // Выключаем интерполяцию (как кнопка Toggle Interpolation).
+        ship.SetInterpolation(false);
+        Check(!ship.InterpolationEnabled, "п.13: интерполяция выключена (SetInterpolation(false))");
+
+        // Тот же mid-момент, что в п.18 (now=1.15): при включённой интерполяции
+        // hull был бы в x=1. При выключенной — обязан прыгнуть в ПОСЛЕДНИЙ снимок b.
+        ship.InterpolateHull(1.15);
+        var hull = ship.TestHullGlobalPosition();
+        Check(hull.DistanceTo(b) < 0.01f,
+            $"п.13: при выключенной интерполяции hull в последнем снимке " +
+            $"(|до b| = {hull.DistanceTo(b):F3} м, x = {hull.X:F2})");
+        Check(hull.DistanceTo(a) > 1f,
+            "п.13: hull НЕ остался в середине между снимками (прыжок, не смешивание)");
+
+        // Возвращаем интерполяцию — картинка снова едет по окну (не деградирует).
+        ship.SetInterpolation(true);
+        Check(ship.InterpolationEnabled, "п.13: интерполяцию можно включить обратно");
+        ship.InterpolateHull(1.15); // render=1.05 → alpha=0.25 → x=1
+        Check(Mathf.Abs(ship.TestHullGlobalPosition().X - 1f) < 0.01f,
+            "п.13: после включения интерполяции hull снова в середине окна (x≈1)");
     }
 
     // ------------------------------------------------------------- утилиты

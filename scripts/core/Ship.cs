@@ -6,18 +6,19 @@ namespace SpaceCorporation;
 /// <summary>
 /// Корабль (сцена scenes/Ship.tscn). Сети — шаг 2 переделки стадии 1 (§3.1, §2.5).
 ///
-/// Разделение «истина / картинка»:
+/// Разделение «истина / картинка» (шаг 2.3, решение В14 = B):
 ///   - тело `Ship` симулирует ТОТ пир, который является мультиплеер-авторитетом
-///     узла; все остальные пиры держат тело замороженным (`FreezeMode.Static`) и
-///     лишь интерполируют картинку `ShipHull` по реплике `NetState`;
-///   - проверять надо `IsMultiplayerAuthority()`, а не
-///     `GetMultiplayerAuthority() == 1`: при dedicated-модели `1` бывает и у
-///     серверного тела («истина — я»), и у клиента («истина на сервере, я только
-///     интерполирую»), а при смене пилота номер вообще меняется в рантайме (§4 В3=B).
-///     В offline авторитет = 1 и `IsMultiplayerAuthority()` = true, поэтому
-///     поведение стадии 1 сохраняется целиком.
+///     узла. С шага 2.3 авторитетом корабля ВСЕГДА остаётся сервер (id = 1):
+///     только так сервер интегрирует физику сам, а не принимает чужую позицию
+///     как факт (§3.5 п.8, В14=B);
+///   - пилот — отдельная роль: `PilotPeerId` (его назначает сервер через
+///     `NetworkManager.SetPilot`). Пилот НЕ интегрирует тело: он собирает кадры
+///     ввода и шлёт их серверу (`RpcSubmitInput`), а сам летает на предсказании
+///     своей картинки (шаг 2.4);
+///   - все остальные пиры держат тело замороженным (`FreezeMode.Static`) и лишь
+///     интерполируют картинку `ShipHull` по реплике `NetState`;
 ///   - `ApplyImpulse` и прочие силовые вызовы — только авторитету (§2.5 п.6);
-///     в offline цепочка сворачивается в один локальный вызов.
+///     в offline сервер = локальный пир, и цепочка сворачивается в один вызов.
 ///
 /// AttachPoints — узлы, к которым может быть пристёгнут игрок (см. Player.AttachTo).
 /// Они лежат под `ShipHull`: игрок в кабине обязан совпадать с картинкой, а не с
@@ -35,13 +36,10 @@ public partial class Ship : RigidBody3D
     protected bool HasAuthority { get; private set; }
 
     /// <summary>Последний известный пилот корабля (id пира; 1 = сервер/автопилот).
-    /// Обновляется на всех пирах через ApplyRemoteAuthority; нужен, чтобы при
-    /// отстёжке пилота сервер мог вернуть авторитет именно этому кораблю (§3.5 п.8).</summary>
+    /// Обновляется на всех пирах через `ApplyPilot`; нужен, чтобы при отстёжке
+    /// пилота сервер вернул корабль в автопилот, а серверный гейт `RpcSubmitInput`
+    /// отклонял кадры не от своего пилота (§3.5 п.8, шаг 2.3).</summary>
     public int PilotPeerId { get; private set; } = 1;
-
-    /// <summary>Последний принятый сервером SimTick пилотского репорта: репорты
-    /// старше отбрасываются — окно рассинхрона при смене авторитета (§4 В3 п.6).</summary>
-    private int _lastAcceptedReportTick;
 
     // --- интерполяция картинки (шаг 8, §2.5/§3.3) ---------------------------
     //
@@ -60,6 +58,22 @@ public partial class Ship : RigidBody3D
     /// <summary>Задержка интерполяции, сек. Больше 2×ReplicationInterval (1/30),
     /// чтобы кадр всегда попадал внутрь окна двух снимков.</summary>
     private const double InterpDelay = 0.1;
+
+    /// <summary>Включена ли интерполяция картинки не-авторитета. Выключена — hull
+    /// ставится прямо в ПОСЛЕДНИЙ принятый снимок (без сдвига на `InterpDelay` и без
+    /// смешивания двух): картинка прыгает дискретно, зато совпадает с сетью по времени.
+    /// Переключается кнопкой `Toggle Interpolation` в дебаг-панели (stage2-plan §2.5,
+    /// автотест п.13).</summary>
+    private bool _interpolationEnabled = true;
+
+    /// <summary>Состояние интерполяции (для панели и автотеста).</summary>
+    public bool InterpolationEnabled => _interpolationEnabled;
+
+    /// <summary>Включить/выключить интерполяцию картинки не-авторитета.</summary>
+    public void SetInterpolation(bool enabled) => _interpolationEnabled = enabled;
+
+    /// <summary>Переключить интерполяцию (для кнопки дебаг-панели).</summary>
+    public void ToggleInterpolation() => _interpolationEnabled = !_interpolationEnabled;
 
     /// <summary>Буфер снимков (кольцевой по времени): (момент приёма, позиция,
     /// поворот). Храним локальное время приёма, потому что снимки приходят
@@ -80,13 +94,256 @@ public partial class Ship : RigidBody3D
         }
     }
 
+    // ------------------------------------------------------------------
+    // Пилотирование 6DoF (стадия 2, шаг 2.2)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Радиус «прицела» мыши, метры (шаг 2.2.2). Мышь пилота — ПРЯМОЙ доворот
+    /// носа, поэтому она обязана работать, даже когда курсор (виртуальный, при
+    /// `Captured` он сидит в центре окна) не попал в корпус: иначе при быстром
+    /// взмахе мышь «отлипает» и нос перестаёт слушаться.
+    ///
+    /// Порог нужен ровно для одного случая: пилот навёл курсор на UI-панель или на
+    /// чужой объект и крутит не корабль. Измеряется НЕ в пикселях, а в метрах от
+    /// центра корабля до луча, восстановленного из позиции курсора: пиксельный
+    /// размер корпуса зависит от дистанции камеры, метры — нет. Тест п.6 проверяет
+    /// именно этот порог.
+    /// </summary>
+    private const float AimRadiusM = 6f;
+
+    /// <summary>
+    /// Параметры полёта МОДЕЛИ (stage2-plan §1.1). Это не настройки движка: при
+    /// `CustomIntegrator = true` движок не применяет ни демпфирование, ни
+    /// гравитацию (пробы `tests/probes/probe_custom_integrator.*`), поэтому
+    /// демпфирование считает `FlightModel`, а его значения берутся из свойств
+    /// тела — так `LinearDamp`/`AngularDamp` остаются и настройками модели, и
+    /// тем, что проверяет автотест стадии 1.
+    /// </summary>
+    public FlightParams Flight;
+
+    /// <summary>Плечо мыши: радианы поворота носа на 1 пиксель движения мыши.</summary>
+    [Export] public float MouseSensitivity = 0.0025f;
+
+    /// <summary>Дистанция камеры-преследования за кормой (шаг 2.2.3).</summary>
+    [Export] public float CameraDistance = 12f;
+
+    /// <summary>Подъём камеры над кормой, чтобы корпус не перекрывал вид.</summary>
+    [Export] public float CameraHeight = 3f;
+
+    /// <summary>Кадр ввода, собранный для текущего физического шага.</summary>
+    private InputFrame _localInput;
+
+    /// <summary>Дельта мыши, накопленная между физшагами: `InputEventMouseMotion`
+    /// приходит в `_Input`, а симуляция считается в `_IntegrateForces`.</summary>
+    private Vector2 _lookDelta;
+
+    /// <summary>Счётчик физических шагов этого процесса = номер тика в кадрах
+    /// ввода. Шаг 2.3 добавит серверную сверку тиков, здесь счётчик локальный.</summary>
+    private uint _tick;
+
+    // ------------------------------------------------------------------
+    // Предсказание и реконсиляция на пилоте (стадия 2, шаг 2.4, §1.6)
+    // ------------------------------------------------------------------
+    //
+    // Пилот-клиент заморожен (не имеет права двигать истину), но обязан вести
+    // КАРТИНКУ и камеру по СОБСТВЕННОМУ предсказанию, иначе управление ощущается
+    // с задержкой в один RTT. Схема (классический client-side prediction):
+    //   (а) каждый физшаг пилот шлёт кадр ввода серверу И тут же интегрирует им
+    //       своё предсказанное `FlightState`, а тело ставит в это предсказание
+    //       (проба `tests/probes/probe_frozen_move.tscn`: запись в замороженное
+    //       тело приживается, а камера и hull — дети тела, поэтому следуют за ним);
+    //   (б) кадр кладётся в кольцевой буфер по индексу `tick & 255`, чтобы потом
+    //       переиграть его, если серверный эталон покажет расхождение;
+    //   (в) когда приходит реплика `NetState` (эталон с `AppliedTick`), пилот
+    //       сверяет предсказание с эталоном: расхождение больше порога — откат к
+    //       эталону и переигровка кадров с `Tick > AppliedTick`; меньше — только
+    //       подтянуть скорости (soft-sync), без телепорта, чтобы не дёргалось.
+    //
+    // Эталон приходит НЕ отдельным RPC, а теми же репликами `NetState`, что
+    // Synchronizer шлёт всем не-авторитетам (§1.5): пилот — не авторитет (В14=B),
+    // поэтому получает их наравне с наблюдателями.
+
+    /// <summary>Порог ЖЁСТКОГО отката, метры. Расхождение меньше — считаем шумом
+    /// интегрирования/сети и не телепортируем картинку (soft-sync: подтягиваем
+    /// только скорости). Порог ПРИРАВНЕН к критерию готовности §2.6 (а)
+    /// `predErr < 0,3 м`: рассогласование в пределах допуска предсказания — это
+    /// штатная работа, оно гасится мягкой синхронизацией скоростей и НЕ должно
+    /// порождать телепорт. Жёсткий откат — только за подлинные расхождения сверх
+    /// допуска (стартовый транзиент ~2 м, тесты п.9=5 м / п.11=1 м). Так критерии
+    /// (а) и (б) связаны напрямую: пока честная ошибка держится ниже 0,3 м,
+    /// жёстких откатов нет вовсе (кроме старта), и `hardRollbacks ≤ 1/сек`
+    /// выполняется автоматически. Тесты п.9-11 задают пороги 0.04 (soft) и 1/5 м
+    /// (hard) — при 0.3 они проходят как раньше.</summary>
+    private const float ReconcileThreshold = 0.3f;
+
+    /// <summary>Размер кольцевого буфера неподтверждённых вводов. 256 кадров =
+    /// ~4.3 с на 60 Гц — с запасом перекрывает любой разумный RTT+джиттер.</summary>
+    private const int PendingRingSize = 256;
+
+    /// <summary>Кольцевой буфер вводов пилота: индекс = `tick & (PendingRingSize-1)`.
+    /// Храним и сам кадр, и его тик, чтобы при переигровке отличить «свой» кадр от
+    /// мусора после перезаписи кольца.</summary>
+    private readonly InputFrame[] _pending = new InputFrame[PendingRingSize];
+
+    /// <summary>История предсказанных позиций пилота по тикам: индекс = `tick &
+    /// (PendingRingSize-1)`, рядом хранится сам тик, чтобы отличить «свою» запись
+    /// от мусора после перезаписи кольца. Нужна для ЧЕСТНОЙ метрики предсказания
+    /// (§2.6 критерий (а)): сверяя реплику с эталоном, сравниваем серверную позицию
+    /// (она соответствует `AppliedTick`) с тем предсказанием, что пилот держал ровно
+    /// на `AppliedTick`, а НЕ с текущим предсказанием — иначе ошибка завышается на
+    /// «упреждение» скорость×RTT и даёт ложные жёсткие откаты каждый снимок.</summary>
+    private readonly Vector3[] _predPosHistory = new Vector3[PendingRingSize];
+    private readonly uint[] _predPosTick = new uint[PendingRingSize];
+
+    /// <summary>Скорость предсказания пилота на том же тике, что и `_predPosHistory`
+    /// (та же валидность по `_predPosTick`). Нужна для мягкой синхронизации: серверный
+    /// снимок несёт скорость на `AppliedTick`, а `_predicted` ушёл вперёд на RTT/2
+    /// кадров. Подставлять серверную скорость как АБСОЛЮТ — значит выбросить прирост
+    /// скорости за эти кадры: пилот отстаёт, ошибка растает до порога и каждый снимок
+    /// даёт жёсткий откат (зубчатый `hardRollbacks`). Поэтому в мягкой сверке берём
+    /// РАЗНОСТЬ скоростей (сервер на AppliedTick минус пилот на AppliedTick) и
+    /// докладываем её в текущую предсказанную скорость: при детерминизме разница ≈ 0
+    /// (зубцов нет), а реальный дрейф (залипание кадра) корректируется.</summary>
+    private readonly Vector3[] _predVelHistory = new Vector3[PendingRingSize];
+    private readonly Vector3[] _predAngVelHistory = new Vector3[PendingRingSize];
+
+    /// <summary>Предсказанное состояние пилота. Для offline/сервера не используется
+    /// (истина ведётся телом через `_IntegrateForces`); значимо только пилоту-клиенту.</summary>
+    private FlightState _predicted;
+
+    /// <summary>Есть ли уже валидное предсказание (инициализировано из тела при
+    /// входе пилота). До первого шага предсказывать нечего.</summary>
+    private bool _hasPrediction;
+
+    /// <summary>Последний `SimTick` эталона, по которому уже сверялись: чтобы не
+    /// реконсилироваться по одной и той же реплике многократно.</summary>
+    private int _lastReconcileTick = -1;
+
+    /// <summary>Счётчик физшагов для гейта публикации `NetState` (шаг 2.6, метрика
+    /// (г) §2.7). Сервер пишет реплику не каждый физшаг (60 Гц), а раз в 2 шага
+    /// (30 Гц) — ровно как задумано в §2.9 («30 снимков/с репликации»). Причина:
+    /// в Godot 4.7 OnChange-репликация синхронизатора НЕ уважает `replication_interval`
+    /// (проверено: interval=10.0 в сцене, а доставка всё равно 60/с — дельты уходят
+    /// каждый физшаг, пока меняется свойство). Единственный способ задать частоту
+    /// снимков — менять сами свойства реже. Симуляция тела при этом идёт полные
+    /// 60 Гц (через `_IntegrateForces`), реже публикуется только сетевой снимок.
+    /// Реконсиляция не ломается: `SimTick`/`AppliedTick` в снимке всегда указывают
+    /// точный физшаг, к которому он относится, а буфер ввода пилота хранит все
+    /// 60-герцовые кадры — переигровка по `Tick > AppliedTick` остаётся точной.</summary>
+    private int _netPublishPhase;
+    private const int NetPublishEveryN = 2;   // 60 Гц физики / 2 = 30 снимков/с
+
+    /// <summary>Расхождение предсказания с последней принятой репликой, метры —
+    /// для дебаг-панели (`Prediction Error`, §1.6).</summary>
+    public float PredictionError { get; private set; }
+
+    /// <summary>Счётчик переигранных кадров на последней реконсиляции — для assert'а
+    /// п.9 автотеста (переигран ровно N кадров).</summary>
+    public int LastReplayedCount { get; private set; }
+
+    // --------------------------------------------------------------- искусственная
+    // задержка (шов `TestLatencyMs`, §2.6). Лаг вносится на уровне отправки/приёма
+    // на клиенте, НЕ трогая ENet: кадры ввода пилота и снимки `NetState` кладутся в
+    // буфер и «дозревают» через `TestLatencyMs` миллисекунд. Так при RTT ≈ 2×latency
+    // измеряют `Prediction Error`, число откатов и дельту hull, не правя транспорт.
+    // При `TestLatencyMs == 0` (дефолт) буферы пустеют в тот же кадр — поведение
+    // идентично прежнему, автотесты п.9-13 не деградируют.
+
+    /// <summary>Буфер исходящих кадров ввода пилота: (момент «доставки», кадр).</summary>
+    private readonly Queue<(long DueMs, InputFrame Frame)> _sendBuf = new();
+
+    /// <summary>Буфер входящих снимков `NetState`: (момент «доставки», снимок). Время
+    /// в секундах (та же шкала, что `Time.GetTicksMsec()/1000.0` в `_Process`).</summary>
+    private readonly Queue<(double DueSec, NetSnap Snap)> _recvBuf = new();
+
+    /// <summary>Копия снимка `NetState` для буфера приёма: `NetState` перезаписывается
+    /// репликой каждый кадр, поэтому задерживаемое состояние надо скопировать.</summary>
+    private struct NetSnap
+    {
+        public int SimTick;
+        public uint AppliedTick;
+        public Vector3 Pos, Lin, Ang;
+        public Quaternion Rot;
+    }
+
+    /// <summary>Число ЖЁСТКИХ откатов-телепортов (err > порога) за время жизни корабля
+    /// — метрика критерия (б) §2.6 (откатов ≤ 1/сек при LATENCY=100).</summary>
+    public int HardRollbackCount { get; private set; }
+
+    /// <summary>Максимальная дельта hull наблюдателя между соседними кадрами, метры —
+    /// метрика критерия (в) §2.6 (чужой корабль: дельта < 0.15 м, «не резинит»).</summary>
+    public float MaxHullDelta { get; private set; }
+    private Vector3 _lastHullPos;
+    private bool _haveHullPos;
+
+    /// <summary>Таймер печати метрик §2.6 в headless-стенде (раз в секунду).</summary>
+    private float _metricsTimer;
+
+    /// <summary>Камера-преследование, которую корабль создаёт себе сам, когда его
+    /// пилотирует локальный пир. Ссылка нужна, чтобы погасить её при выходе пилота:
+    /// иначе в world-viewport останется вторая current-камера.</summary>
+    private Camera3D? _chaseCam;
+
+    /// <summary>Чужую камеру (обычно камеру игрока) глушим при пилотировании и
+    /// возвращаем при освобождении камеры корабля.</summary>
+    private Camera3D? _silencedCam;
+
+    /// <summary>Ввод из теста (без клавиатуры): если true, `_localInput` берётся
+    /// из `_testFrame`, а не из `Input.IsActionPressed`.</summary>
+    private bool _testInput;
+    private InputFrame _testFrame;
+
+    /// <summary>Шаг из теста: `_IntegrateForces` игнорирует реальные физкадры и
+    /// ждёт явного `TestStepForTest()`. Нужен, если в headless физический шаг
+    /// этого тела не доходит до интегратора (проверяется пробой
+    /// `tests/probes/ProbeInputHeadless.tscn`).</summary>
+    private bool _testStep;
+
+    /// <summary>Состояние окна, которое пилотирование временно перехватывает:
+    /// режим мыши и включён ли ввод у узла. Возвращаем при освобождении.</summary>
+    private Input.MouseModeEnum _prevMouseMode = Input.MouseModeEnum.Visible;
+    private bool _capturedInput;
+
+    /// <summary>Текущий тик корабля (для автотестов и шага 2.4).</summary>
+    public uint Tick => _tick;
+
+    /// <summary>Кадр ввода, поданный на последнем шаге (для отладки и шага 2.4).</summary>
+    public InputFrame LocalInput => _localInput;
+
+    /// <summary>Пилотирует ли этот корабль локальный пир: именно он собирает кадры
+    /// ввода и шлёт их серверу. С шага 2.3 это НЕ равно авторитету: авторитет
+    /// корабля навсегда у сервера (id = 1), пилот — клиент (§3.5 п.8, В14=B).
+    /// В offline SelfId = 1 = PilotPeerId, поэтому поведение стадии 1 сохраняется.</summary>
+    public bool IsLocalPilot => PilotPeerId == NetworkManager.Instance?.SelfId;
+
+    /// <summary>Симулирует ли это тело локальный пир (авторитет узла = мы).
+    /// С шага 2.3 для корабля это «мы сервер».</summary>
+    public bool IsServerAuthority => HasAuthority;
+
     public override void _Ready()
     {
         GravityScale = 0f;
         LinearDamp = 0f;
         AngularDamp = 1.5f;
-        // CustomIntegrator = true включится на этапе 5 (пружина стыковки в _IntegrateForces),
-        // и только авторитетному пиру (§3.1 п.7).
+
+        // Тело с CustomIntegrator обязано быть активным ВСЕГДА: спящее тело не
+        // вызывает _integrate_forces, а значит тяга с клавиш не смогла бы его
+        // сдвинуть (пробуждение по импульсу есть, а по нашей тяге — нет).
+        CanSleep = false;
+
+        // Параметры модели из свойств тела (см. документацию Flight выше).
+        // Тяги подобраны под массу 1200 кг: 90 кН ≈ 75 м/с² — «дистанционный»
+        // разгон, при котором корпус 2×1×4 м управляем в висячей сцене Main.
+        Flight = new FlightParams
+        {
+            Mass = Mass,
+            LinearThrust = 90000f,
+            AngularThrust = 40000f,
+            LinearDamping = LinearDamp,   // 0 → инерция сохраняется (тест этапа 1)
+            AngularDamping = AngularDamp, // 1.5 → вращение гаснет само
+            BoostMultiplier = 2f,
+        };
 
         CollisionLayer = CollisionLayers.Ship;
         CollisionMask = CollisionLayers.ShipMask;
@@ -94,7 +351,7 @@ public partial class Ship : RigidBody3D
         Net = GetNodeOrNull<NetState>("NetState");
 
         // §3.1 п.8: корабль с нулевым адресом физически живёт в сцене, но все его
-        // RPC (репорт NetState, AssignShipAuthority, RequestAttach) уходят в никуда,
+        // RPC (RequestAttach, рассылка NetState, кадры ввода) уходят в никуда,
         // и выглядит это как «физика сломалась». Ошибка — громкая.
         if (Net == null || Net.ShipNetId == 0)
         {
@@ -112,9 +369,17 @@ public partial class Ship : RigidBody3D
             $"ship#{Net?.ShipNetId ?? 0}: |v| = {LinearVelocity.Length():F2} m/s, " +
             $"|w| = {AngularVelocity.Length():F2} rad/s, " +
             $"mass = {Mass:F1}, " +
-            // Без auth/frozen/|err| реконсиляцию и смену авторитета отлаживать нечем (§3.1 п.6).
-            $"auth = {GetMultiplayerAuthority()}, frozen = {Freeze}, " +
+            // Без auth/frozen/|err| реконсиляцию и смену пилота отлаживать нечем (§3.1 п.6).
+            $"auth = {GetMultiplayerAuthority()}, pilot = {PilotPeerId}, " +
+            $"frozen = {Freeze}, " +
             $"netid = {Net?.ShipNetId ?? 0}, " +
+            // Показатели stage2-plan §2.5: Server Tick (тикет серверной физики из
+            // реплики NetState), Prediction Error (расхождение предсказания пилота
+            // с эталоном), Interp Buffer (число снимков в буфере интерполяции) и
+            // состояние интерполяции. Пинг (RTT) печатает строка «Net» NetworkManager.
+            $"srvTick = {(Net == null ? "—" : Net.SimTick.ToString())}, " +
+            $"predErr = {PredictionError:F3}, " +
+            $"interpBuf = {_interpBuf.Count}, interpOn = {_interpolationEnabled}, " +
             $"|err| = {(Net == null ? 0f : Net.NetPosition.DistanceTo(GlobalPosition)):F3}");
 
         // Реестр кораблей по адресу: RPC про корабль идут по ShipNetId, не по пути (§4 В4 п.3).
@@ -122,12 +387,12 @@ public partial class Ship : RigidBody3D
         {
             NetworkManager.Instance?.RegisterShip(this);
 
-            // §4 В4 п.2: AssignShipAuthority мог прийти раньше, чем спавнер создал
-            // у этого пира узел корабля, — забираем отложенное назначение сейчас.
+            // §4 В4 п.2: сервер мог назначить пилота раньше, чем спавнер создал у
+            // этого пира узел корабля, — забираем отложенное назначение сейчас.
             if (NetworkManager.Instance is { } nm &&
-                nm.TryGetPendingAuthority(Net.ShipNetId, out int pending) &&
-                pending != GetMultiplayerAuthority())
-                ApplyRemoteAuthority(pending);
+                nm.TryGetPilot(Net.ShipNetId, out int pending) &&
+                pending != PilotPeerId)
+                ApplyPilot(pending);
         }
 
         // Кнопка для проверки инерции: короткий импульс вперёд, дальше тело летит само.
@@ -136,6 +401,13 @@ public partial class Ship : RigidBody3D
         if (HasAuthority)
         {
             DebugInfoBus.RegisterDebugButton("Nudge Ship", NudgeShip);
+        }
+        else
+        {
+            // Кнопка интерполяции картинки не-авторитета (stage2-plan §2.5): имеет
+            // смысл только там, где hull рисуется по снимкам (наблюдатель/пилот-
+            // предсказание), поэтому и регистрируется только не-авторитету.
+            DebugInfoBus.RegisterDebugButton("Toggle Interpolation", ToggleInterpolation);
         }
     }
 
@@ -146,6 +418,7 @@ public partial class Ship : RigidBody3D
         // звала бы мёртвую лямбду каждый кадр → ObjectDisposedException (§3.11 п.9).
         DebugInfoBus.RemoveInfoSource($"Ship#{Net?.ShipNetId ?? 0}");
         DebugInfoBus.RemoveDebugButton("Nudge Ship");
+        DebugInfoBus.RemoveDebugButton("Toggle Interpolation");
 
         // §3.9 п.16: игрок, пристёгнутый к точкам этого корабля, — узел внутри
         // ShipHull/AttachPoints, и при удалении корабля был бы удалён вместе с ним.
@@ -168,25 +441,36 @@ public partial class Ship : RigidBody3D
         }
     }
 
-    /// <summary>Смена авторитета, инициированная сервером (AssignShipAuthority,
-    /// §4 В3 п.3): SetMultiplayerAuthority сам по себе другим пирам НЕ рассылается
-    /// и дочерним узлам не наследуется — поэтому явный RPC на каждый пир, и здесь
-    /// перестраиваются ВСЁ: авторитет узла (рекурсивно — точки крепления внутри
-    /// картинки), Freeze и кнопка импульса.</summary>
-    public void ApplyRemoteAuthority(int peerId)
+    /// <summary>Смена пилота, инициированная сервером (`NetworkManager.SetPilot`,
+    /// §4 В3 п.3 + В14=B): назначаются ПИЛОТЫ, а не авторитет — авторитет корабля
+    /// у сервера не меняется НИКОГДА. Поэтому здесь НЕ вызывается
+    /// SetMultiplayerAuthority: он рассылался бы по пирам и пересаживал бы
+    /// физическую симуляцию на клиента, а сервер принял бы его позицию за факт.
+    /// Меняются только роль пилота, ввод, камера и кнопка импульса.</summary>
+    public void ApplyPilot(int peerId)
     {
         PilotPeerId = peerId;
-        SetMultiplayerAuthority(peerId, recursive: true);
+
+        // Смена пилота: очередь ввода обнуляется, нижняя граница тика поднимается —
+        // опоздавшие кадры прежнего пилота (unreliable-канал) не должны управлять
+        // кораблём после отстёжки (§3.5 п.8; аналог удалённого гейта по SimTick).
+        ResetInputQueue();
+
         ApplyAuthority();
 
-        // §3.1 п.4: при смене авторитета кнопку перерегистрируем вместе с ролью —
-        // иначе у бывшего авторитета остаётся кнопка, шлющая импульс в никуда.
+        // §3.1 п.4: при смене пилота кнопку перерегистрируем вместе с ролью —
+        // иначе у бывшего пилота остаётся кнопка, шлющая импульс в никуда.
         DebugInfoBus.RemoveDebugButton("Nudge Ship");
         if (HasAuthority)
             DebugInfoBus.RegisterDebugButton("Nudge Ship", NudgeShip);
+        // Кнопка интерполяции живёт только у не-авторитета (картинка по снимкам).
+        DebugInfoBus.RemoveDebugButton("Toggle Interpolation");
+        if (!HasAuthority)
+            DebugInfoBus.RegisterDebugButton("Toggle Interpolation", ToggleInterpolation);
 
-        GD.Print($"ship#{Net?.ShipNetId ?? 0}: authority -> {peerId}, " +
-                 $"local = {HasAuthority}, frozen = {Freeze}");
+        GD.Print($"ship#{Net?.ShipNetId ?? 0}: pilot -> {peerId}, " +
+                 $"local pilot = {IsLocalPilot}, auth = {GetMultiplayerAuthority()}, " +
+                 $"frozen = {Freeze}");
     }
 
     /// <summary>
@@ -198,70 +482,676 @@ public partial class Ship : RigidBody3D
     {
         HasAuthority = IsMultiplayerAuthority();
 
-        // Не-авторитет: тело заморожено и не участвует в контактах. Static, а не
-        // Kinematic: кинематическое замороженное тело при перемещении расталкивает
-        // по пути то, чего на авторитете нет (§2.5 п.4).
+        // Шаг 2.3 (В14=B): авторитет корабля навсегда у сервера (id = 1), поэтому
+        // `Freeze = !HasAuthority` = «заморожен у всех, кроме сервера» — ровно
+        // правило Freeze из §3.5 п.8. Пилот-клиент заморожен ОБЯЗАТЕЛЬНО: он
+        // интегрирует только своё предсказание (шаг 2.4), а не истину (§3.5 п.5
+        // плана: забытая заморозка пилота = два интегратора на одном теле).
         Freeze = !HasAuthority;
         FreezeMode = FreezeModeEnum.Static;
 
-        // Авторитет: снимает NetState на физическом шаге (истина).
-        SetPhysicsProcess(HasAuthority);
+        // Страховка: если кто-то вернёт старую схему (авторитет = пилот-клиент),
+        // сервер перестанет быть интегратором, и это молча сломает авторитетную
+        // симуляцию. Такое изменение должно быть видно сразу.
+        if (NetworkManager.Instance is { HasRealPeer: true } nm && nm.IsServer &&
+            GetMultiplayerAuthority() != nm.LocalAuthorityId)
+            GD.PrintErr($"ship#{Net?.ShipNetId ?? 0}: авторитет корабля = " +
+                        $"{GetMultiplayerAuthority()}, а должен быть сервер " +
+                        $"({nm.LocalAuthorityId}) — сервер потерял истину (§3.5 п.8)");
+
+        // Сервер снимает состояние тела в `NetState` на физическом шаге (истина).
+        // Пилоту физический процесс тоже нужен: на каждом своём шаге он отправляет
+        // кадр ввода и ведёт локальный тик (§1.4/§1.6).
+        SetPhysicsProcess(HasAuthority || IsLocalPilot);
         // Не-авторитет: процесс нужен для интерполяции ShipHull (шаг 8 плана);
         // в offline интерполяция не требуется, но и не мешает.
         SetProcess(!HasAuthority);
+
+        // Шаг 2.2 (В14): движение считает FlightModel, а не движок. Флаг
+        // `CustomIntegrator` включает вызов `_IntegrateForces`; включаем его
+        // ТОЛЬКО авторитету, потому что у замороженного тела (`Freeze = true`
+        // у не-авторитета) движок интегратор не зовёт вовсе, а два интегратора
+        // на одном теле дали бы двойной шаг.
+        CustomIntegrator = HasAuthority;
+
+        // Мышь пилота приходит в `_Input`; ввод нужен ТОЛЬКО локальному пилоту
+        // (шаг 2.3): сервер-авторитет читает кадры из очереди, остальные пиры —
+        // тем более нет. Выключение ввода не-пилоту снимает риск, что чужой пир
+        // накопит `_lookDelta` и отправит его в никуда.
+        SetProcessInput(IsLocalPilot);
+        if (!IsLocalPilot)
+        {
+            ReleaseChaseCamera();
+            ReleaseMouseCatcher();
+        }
+        else
+        {
+            // Пилот уже здесь (например, роль сменилась Offline → Host, а корабль
+            // был создан до смены): сборщик мыши и камера нужно и в этом случае.
+            EnsureMouseCatcher();
+            EnsureChaseCamera();
+        }
     }
 
-    /// <summary>Авторитет: снять состояние тела в `NetState` на каждом физическом
-    /// шаге. `MultiplayerSynchronizer` разошлёт снимки по своему интервалу (30 Гц).
-    /// Метод вызывается только там, где включён физический процесс, то есть только
-    /// авторитету (§3.1 п.2).</summary>
+    // ------------------------------------------------------------------
+    // Интегрирование: модель вместо движка (шаг 2.2, В14)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Собственный интегратор. Вызывается только там, где включён
+    /// `CustomIntegrator`, то есть только авторитету (остальные пиры заморожены,
+    /// а у замороженного тела движок `_integrate_forces` не зовёт вовсе).
+    ///
+    /// Порядок шага установлен пробами `tests/probes/probe_ci_order.tscn` и
+    /// `probe_ci_finality.tscn`:
+    ///   1) движок сам сдвигает тело скоростью ПРЕДЫДУЩЕГО шага (explicit Euler:
+    ///      `pos_at_entry = p0 + v0*dt`), угловой скоростью НЕ вращает
+    ///      (`probe_ci_angular.tscn`);
+    ///   2) затем зовёт нас, и то, что мы запишем в `sd`, финально для шага
+    ///      (`pos_after_step` = ровно наша запись).
+    /// Поэтому модель считает шаг ЦЕЛИКОМ сама, а пред-интегрирование движка
+    /// отменяется (`t.Origin -= v0 * dt`) — иначе шаг считается дважды и
+    /// траектория тела разошлась бы с траекторией чистой модели, по которой
+    /// клиент предсказывает и переигрывает (шаг 2.4).
+    /// </summary>
+    public override void _IntegrateForces(PhysicsDirectBodyState3D sd)
+    {
+        if (!HasAuthority)
+            return; // страховка: CustomIntegrator включён только авторитету
+        if (_testStep)
+            return; // шаг ведёт TestStepForTest, физкадры пропускаем (иначе двойной шаг)
+
+        float dt = (float)sd.GetStep();
+        if (dt <= 0f) dt = FlightModel.FixedDt;
+
+        // --- 1. Состояние НАЧАЛА шага: отменяем пред-интегрирование движка ---
+        Vector3 v0 = sd.LinearVelocity;
+        Transform3D start = sd.Transform;
+        start.Origin -= v0 * dt;
+
+        FlightState s = new FlightState
+        {
+            Position = start.Origin,
+            Rotation = start.Basis.GetRotationQuaternion(),
+            LinearVelocity = v0,
+            AngularVelocity = sd.AngularVelocity,
+        };
+
+        // --- 2. Ввод пилота за этот шаг + шаг модели + тик ---
+        // Сервер берёт кадр из очереди пилота (или читает клавиши, если пилот он же);
+        // у offline-игры сервер = локальный пир, и поведение стадии 1 сохраняется.
+        FlightState n = AdvanceFlight(s, FrameForStep(), dt);
+
+        // --- 3. Запись в тело (финальна для шага) ---
+        sd.Transform = new Transform3D(new Basis(n.Rotation), n.Position);
+        sd.LinearVelocity = n.LinearVelocity;
+        sd.AngularVelocity = n.AngularVelocity;
+    }
+
+    /// <summary>Общая часть шага: мышь → ориентация, кадр ввода → тяга, тик.
+    /// И `_IntegrateForces`, и тестовый шаг идут через неё, иначе тест проверял
+    /// бы не тот код, который работает в игре (§3.8).</summary>
+    private FlightState AdvanceFlight(FlightState s, InputFrame frame, float dt)
+    {
+        _localInput = frame;
+        FlightState n = StepPrediction(s, frame, dt);
+        _tick++;
+        return n;
+    }
+
+    /// <summary>Ядро шага без счётика тика: мышь → ориентация, кадр → тяга.
+    /// Вынесено из `AdvanceFlight`, чтобы реконсиляция (шаг 2.4) могла
+    /// ПЕРЕИГРАТЬ уже отправленные кадры, не двигая локальный счётчик `_tick`
+    /// (у переигрываемых кадров тик уже записан в самом кадре).</summary>
+    private FlightState StepPrediction(FlightState s, InputFrame frame, float dt)
+    {
+        // Мышь: прямой доворот носа (не момент) — ДО шага модели, чтобы
+        // ориентация, из которой модель берёт оси тяги, уже была «свежей».
+        // Дельта приходит в кадре УЖЕ в радианах: offline-пилот запекает её в
+        // `CollectInputFrame` из накопленных пикселей, а сервер с внешним
+        // пилотом получает прямо из кадра ввода (`_serverInput`). Интегратор НЕ
+        // читает `_lookDelta`: у сервера-авторитета своей мыши по этому кораблю
+        // нет, и look прилетает только через кадр (шаг 2.3, §3.5 п.8).
+        if (frame.LookYaw != 0f || frame.LookPitch != 0f)
+            s.Rotation = ApplyLookRadians(s.Rotation, frame.LookYaw, frame.LookPitch);
+
+        return FlightModel.Step(s, Flight, frame, dt);
+    }
+    /// <summary>Собрать кадр ввода с реальных клавиш (только пилоту, см.
+    /// `IsLocalPilot`). Дискретная модель: каждое действие — бит, поэтому
+    /// `Input.IsActionPressed`, а не аналоговые оси.</summary>
+    private InputFrame CollectInputFrame()
+    {
+        uint mask = 0;
+        if (Input.IsActionPressed("thrust_f")) mask |= InputMask.ThrustF;
+        if (Input.IsActionPressed("thrust_b")) mask |= InputMask.ThrustB;
+        if (Input.IsActionPressed("thrust_l")) mask |= InputMask.ThrustL;
+        if (Input.IsActionPressed("thrust_r")) mask |= InputMask.ThrustR;
+        if (Input.IsActionPressed("thrust_u")) mask |= InputMask.ThrustU;
+        if (Input.IsActionPressed("thrust_d")) mask |= InputMask.ThrustD;
+        if (Input.IsActionPressed("torque_pitch_up")) mask |= InputMask.TorquePitchUp;
+        if (Input.IsActionPressed("torque_pitch_down")) mask |= InputMask.TorquePitchDown;
+        if (Input.IsActionPressed("torque_yaw_left")) mask |= InputMask.TorqueYawLeft;
+        if (Input.IsActionPressed("torque_yaw_right")) mask |= InputMask.TorqueYawRight;
+        if (Input.IsActionPressed("boost")) mask |= InputMask.Boost;
+
+        // Автопилот headless-стенда (§2.6): в --headless никто не жмёт WASD, поэтому
+        // пилот сам гонит тягу и периодически доворачивает рысканием — иначе
+        // `Prediction Error` и число откатов в логе всегда нулевые и метрики §2.6
+        // нечем измерить.
+        //
+        // ВАЖНО: в космосе нет трения, поэтому «просто жми тягу вперёд» разгоняет
+        // корабль до сотен м/с (стенд улетал на 13 000 м за 16 с, ~190 м/с). При
+        // такой скорости даже субкадровый рассинхрон тиков пилота и сервера даёт
+        // доли метра (1 кадр на 190 м/с = 3,2 м), и критерий §2.6 (а) `predErr <
+        // 0,3 м` становится недостижимым физически, а не из-за бага. Поэтому
+        // автопилот держит ЦЕЛЕВУЮ СКОРОСТЬ: тяга вперёд, пока медленнее цели, и
+        // торможение назад, когда быстрее. Скорость ограничена ~25 м/с → 1 кадр =
+        // 0,42 м, субкадровый дрейф = сантиметры, метрика осмысленна.
+        //
+        // Автопилот считает решение по СКОРОСТИ ПИЛОТА (_predicted.LinearVelocity):
+        // он работает только на пилоте (сервер-авторитет для чужого корабля читает
+        // кадры из очереди, а не крутит автопилот), решение запекается в маску кадра
+        // и сервер интегрирует ровно те же кадры — детерминизм сохраняется.
+        if (NetworkManager.Autopilot)
+        {
+            // Цель 6 м/с. Две планки связывают выбор скорости:
+            //  • критерий (в) §2.6 `maxHullDelta < 0,15 м` меряет смещение hull
+            //    наблюдателя между СОСЕДНИМИ кадрами отрисовки. У плавно летящего
+            //    корабля это просто скорость/частота_отрисовки. Замер в headless-
+            //    демке дал ~50 к/с (не 60): при 8 м/с это 0,16 м — ПОРОГ ПРОБИТ,
+            //    метрика теряет смысл (дёргается даже без «резинга»). Значит
+            //    крейсерская скорость стенда обязана быть < 0,15×50 = 7,5 м/с;
+            //    берём 6 м/с с запасом: 0,12 м при 50 к/с, 0,10 м при 60 к/с.
+            //  • критерии (а)/(б): чем медленнее, тем меньше субкадровый дрейф
+            //    тиков пилот↔сервер (1 кадр = 0,10 м) — заведомо под порогом.
+            // Мёртвая зона
+            // (coast) между «тяга» и «тормоз» гасит чаттер bang-bang: без неё на
+            // границе скорости пилот каждый кадр переключает тягу/тормоз, а это
+            // разрывы ускорения, которые накладываются на фазовый сдвиг тиков и
+            // дают ошибки у порога (зубцы hardRollbacks). Тянем, пока медленнее
+            // цели; тормозим, только когда быстрее цели × 1,6; в промежутке — накат.
+            const float TargetSpeed = 6f;      // м/с — крейсерский ход стенда (см. планку (в) выше)
+            const float BrakeBand = 1.6f;      // тормозим, когда скорость > цели × 1,6
+            float speed = _predicted.LinearVelocity.Length();
+            if (speed < TargetSpeed)
+                mask |= InputMask.ThrustF;
+            else if (speed > TargetSpeed * BrakeBand)
+                mask |= InputMask.ThrustB;
+            // Редкие довороты рысканием — чтобы в метриках жил и вращательный канал
+            // (угловая скорость в снимке, реконсиляция ориентации). Фаза каждые 90
+            // тиков, поворот только на нечётных фазах, чтобы не мешать удержанию курса.
+            int phase = (int)(_tick / 90) % 4;
+            if (phase == 1) mask |= InputMask.TorqueYawRight;
+            else if (phase == 3) mask |= InputMask.TorqueYawLeft;
+        }
+
+        // Оси восстанавливает FromMask: в провод уходит только tick+mask+мышь
+        // (16 байт, §1.3), а сервер, прочитав маску, обязан получить ровно тот
+        // же кадр, что интегрировал клиент, — иначе предсказание (шаг 2.4)
+        // разойдётся с серверной истиной на ровном месте.
+        InputFrame f = InputFrame.FromMask(_tick, mask,
+            yaw: _lookDelta.X * MouseSensitivity,
+            pitch: _lookDelta.Y * MouseSensitivity);
+        // Накопленную мышиную дельту съедаем ровно один раз: иначе следующий
+        // физкадр повторно довернул бы нос теми же пикселями (шаг 2.3: look
+        // теперь применяется из кадра, а не из `_lookDelta` напрямую).
+        _lookDelta = Vector2.Zero;
+        return f;
+    }
+
+    /// <summary>
+    /// Мышиная дельта от сборщика (шаг 2.2.2). Копим до физического шага:
+    /// `InputEventMouseMotion` приходит чаще, чем 60 Гц, и терять её нельзя.
+    ///
+    /// Гейт — НЕ режим мыши: в headless `Input.MouseMode` не меняется (проба
+    /// `tests/probes/ProbeMousePick.tscn`), поэтому гейт по нему нельзя ни
+    /// проверить автотестом, ни использовать как единственный признак. Гейт —
+    /// «курсор смотрит на корабль» (луч камеры проходит ближе `AimRadiusM` к
+    /// центру корпуса): он работает и в `Captured` (виртуальный курсор в центре
+    /// окна, камера смотрит на корпус → прицел активен), и в `Visible` (курсор
+    /// на UI-панели → прицел отключён), и в headless.
+    /// </summary>
+    internal void HandleMouseMotion(InputEventMouseMotion m)
+    {
+        if (!IsLocalPilot || m.Relative == Vector2.Zero)
+            return;
+        if (!AimOnShip(m.Position))
+            return;
+        _lookDelta += m.Relative;
+    }
+
+    /// <summary>Смотрит ли курсор на корабль: расстояние от центра корпуса до
+    /// луча камеры, восстановленного из экранных координат курсора (метры).
+    /// Без камеры гадаем нечем — считаем, что пилот целивается в свой корабль
+    /// (в offline камера есть всегда, так что ветка — только страховка).</summary>
+    private bool AimOnShip(Vector2 screenPos)
+    {
+        Camera3D? cam = GetViewport()?.GetCamera3D();
+        if (cam == null)
+            return true;
+
+        Vector3 o = cam.ProjectRayOrigin(screenPos);
+        Vector3 d = cam.ProjectRayNormal(screenPos);
+        Vector3 w = GlobalPosition - o;
+        float t = w.Dot(d);
+        return (o + d * t - GlobalPosition).Length() <= AimRadiusM;
+    }
+
+    /// <summary>
+    /// Прямой доворот носа мышью (шаг 2.2.2). Мышь — НЕ момент: угловая
+    /// скорость от неё не появляется (иначе демпфирование «догоняло» бы нос, и
+    /// прицел разъезжался бы с курсором). Поворот — локальные оси: тангаж вокруг
+    /// X, рыскание вокруг Y (крен не управляем: мышь в кабине не кренит).
+    ///
+    /// Шаг 2.3: ядро переведено в радианы (`ApplyLookRadians`), потому что в
+    /// кадре ввода мышь летит уже в радианах — offline-пилот запёк пиксели в
+    /// `CollectInputFrame`, а сервер с внешним пилотом получает радианы прямо
+    /// из `RpcSubmitInput`. Пиксельная обёртка осталась для тестов-швов.
+    /// </summary>
+    private Quaternion ApplyLookRadians(Quaternion rot, float yawRad, float pitchRad)
+    {
+        if (yawRad == 0f && pitchRad == 0f)
+            return rot;
+
+        // Знак по Y инвертирован: движение мыши ВВЕРХ (relative.Y < 0) — нос
+        // вверх (положительный тангаж вокруг локальной X).
+        //
+        // Порядок множителей: сначала мировой поворот (рыскание вокруг мировой Y),
+        // затем локальный тангаж (вокруг X уже повёрнутого корпуса) — так мышь
+        // не даёт крена при сводом в вертикаль взгляде (классический gimbal-фикс
+        // для кабели: yaw мировой, pitch локальный).
+        var q = new Basis(Vector3.Up, -yawRad) * new Basis(Vector3.Right, -pitchRad);
+        return (new Basis(rot) * q).GetRotationQuaternion().Normalized();
+    }
+
+    /// <summary>Пиксельная обёртка над `ApplyLookRadians`: переводит дельту
+    /// курсора в радианы через `MouseSensitivity`. Нужна швам теста
+    /// (`TestAddLookDelta`), которые мыслят пикселями, как и реальный ввод.</summary>
+    private Quaternion ApplyLook(Quaternion rot, Vector2 deltaPixels)
+    {
+        Vector2 rad = deltaPixels * MouseSensitivity;
+        return ApplyLookRadians(rot, rad.X, rad.Y);
+    }
+
+    // ==================================================================
+    // Шаг 2.3: кадры ввода от пилота → серверная симуляция (§3.5 п.8, В14=B)
+    // ==================================================================
+
+    /// <summary>Серверная очередь вводов: последний принятый кадр пилота. Он
+    /// применяется на каждом физическом шаге сервера. Держим ровно один кадр, а не
+    /// историю: при `unreliable`-канале пропущенный кадр = один кадр без силы, и при
+    /// 60 Гц ввода это незаметно (в отличие от потерянного снапшота состояния,
+    /// stage2-plan §1.4). Залипание клавиш при этом невозможно: пилот шлёт кадр
+    /// КАЖДЫЙ физшаг, даже с пустой маской.</summary>
+    private InputFrame _serverInput;
+
+    /// <summary>Серверная ОЧЕРЕДЬ принятых кадров пилота (§2.6, фикс расхождения
+    /// предсказания при задержке). Пилот интегрирует ровно один кадр за физшаг;
+    /// чтобы серверная истина совпадала с предсказанием пилота, сервер обязан
+    /// применять кадры в том же порядке и тоже по одному за шаг. При RTT кадры
+    /// приходят пачками — без очереди сервер «схлопывал» бы пачку в один залипший
+    /// кадр и интегрировал бы его многократно, теряя остальные: последовательность
+    /// сдвигов на сервере переставала совпадать с пилотской, и ошибка предсказания
+    /// уходила в сотни метров. Очередь хранит кадры до их применения; если очередь
+    /// пуста (пилот молчит/кадры теряются), шаг берёт последний принятый кадр
+    /// (`_serverInput`) — залипание, как и раньше, чтобы тесты п.7/8 (один кадр на
+    /// много шагов) не сломались.</summary>
+    private readonly Queue<InputFrame> _serverQueue = new();
+
+    /// <summary>Тик кадра, реально применённого сервером на последнем шаге
+    /// (снимается из очереди). Именно он идёт в `Net.AppliedTick`: снимок
+    /// соответствует состоянию «после применения кадра с этим тиком», и пилот,
+    /// сверяя реплику со своим следом предсказаний на этом тике, получает честную
+    /// ошибку предсказания (§2.6 (а)).</summary>
+    private uint _serverAppliedTick;
+
+    // Диагностика §2.6: сколько шагов сервер взял кадр из очереди (dequeue) и
+    // сколько раз залип на последнем кадре (очередь пуста). Если sticky велико,
+    // сервер интегрирует дубликаты кадров, которых пилот не слал → предсказание
+    // расходится. Временная диагностика, убрать после разбора.
+    private int _dbgDequeue, _dbgSticky;
+    private int _dbgReconcile;
+
+    /// <summary>Серверный гейт: от какого пилотского тика начали принимать кадры.
+    /// При смене пилота (или его переподключении) счётчик тика нового пилота
+    /// начинается с нуля, и старые кадры прежнего пилота обязаны отбрасываться —
+    /// иначе «мёртвый» пир продолжал бы управлять кораблём опоздавшими пакетами
+    /// (аналог гейта по SimTick из удалённого RpcReportNetStateToServer).</summary>
+    private uint _minAcceptedPilotTick;
+
+    /// <summary>Последний принятый сервером пилотский тик: кадры старше
+    /// отбрасываются (дубликаты и переупорядоченные пакеты).</summary>
+    private uint _lastAcceptedPilotTick;
+
+    /// <summary>Состояние очереди ввода на сервере (для автотестов и панели
+    /// отладки): последний принятый кадр и нижняя граница тика.</summary>
+    public InputFrame ServerInputFrame => _serverInput;
+    public uint ServerInputMinTick => _minAcceptedPilotTick;
+
+    /// <summary>
+    /// Пилот: отправить серверу кадр ввода за текущий физшаг. Отправка идёт
+    /// КАЖДЫЙ шаг, даже при пустой маске, — иначе отпущенная клавиша залипает на
+    /// сервере и корабль разгоняется без команды (§1.2 плана).
+    ///
+    /// Транспорт — `unreliable` на отдельном канале ввода: потеря кадра ввода
+    /// дешевле, чем задержка, а надёжный канал при плохой сети собрал бы очередь
+    /// из устаревших команд.
+    /// </summary>
+    private void SubmitInputToServer(InputFrame frame)
+    {
+        if (Net == null || Net.ShipNetId == 0)
+            return; // адрес 0 → RPC уходят в никуда (§3.1 п.8)
+        RpcId(1, nameof(RpcSubmitInput), Net.ShipNetId,
+              frame.Tick, frame.Mask, frame.LookYaw, frame.LookPitch);
+        // Бюджет ввода (В6 = C): кадр ввода считается отдельно от репликации,
+        // чтобы метрика (г) «< 50 пакетов/с» читалась по репликации, а не по сумме.
+        NetworkManager.Instance?.CountInputSent();
+    }
+
+    // ------------------------------------------------------- буферы задержки (§2.6)
+    /// <summary>Поставить кадр ввода в буфер исходящих. Без задержки (`TestLatencyMs
+    /// == 0`) отправляем сразу — поведение идентично прежнему. С задержкой кадр
+    /// «дозревает» через N мс и уходит позже (имитация медленного аплинка).</summary>
+    private void EnqueueInputForSend(InputFrame frame)
+    {
+        int lat = NetworkManager.TestLatencyMs;
+        if (lat <= 0)
+        {
+            SubmitInputToServer(frame);
+            return;
+        }
+        _sendBuf.Enqueue(((long)Time.GetTicksMsec() + lat, frame));
+    }
+
+    /// <summary>Отправить все кадры ввода, «дозревшие» к этому моменту.</summary>
+    private void FlushSendBuffer()
+    {
+        long now = (long)Time.GetTicksMsec();
+        while (_sendBuf.Count > 0 && _sendBuf.Peek().DueMs <= now)
+            SubmitInputToServer(_sendBuf.Dequeue().Frame);
+    }
+
+    /// <summary>Скопировать текущий снимок `NetState` в буфер приёма с задержкой.
+    /// `NetState` перезаписывается репликой каждый кадр, поэтому состояние копируем.
+    /// Без задержки снимок обрабатывается сразу (дренаж в том же кадре).</summary>
+    private void EnqueueSnapshotFromNet(double nowSec)
+    {
+        var snap = new NetSnap
+        {
+            SimTick = Net.SimTick,
+            AppliedTick = (uint)Net.AppliedTick,
+            Pos = Net.NetPosition,
+            Rot = Net.NetRotation,
+            Lin = Net.NetLinearVelocity,
+            Ang = Net.NetAngularVelocity,
+        };
+        int lat = NetworkManager.TestLatencyMs;
+        _recvBuf.Enqueue((nowSec + (lat > 0 ? lat / 1000.0 : 0.0), snap));
+    }
+
+    /// <summary>Полётное состояние из задержанного снимка (для реконсиляции).</summary>
+    private static FlightState StateFromSnap(NetSnap s) => new()
+    {
+        Position = s.Pos,
+        Rotation = s.Rot,
+        LinearVelocity = s.Lin,
+        AngularVelocity = s.Ang,
+    };
+
+    /// <summary>Сервер: принять кадр ввода от пилота. Гейты (по образцу
+    /// `Player.IsRequestFromOwner`, §2.3): принимать может только сервер; адрес
+    /// кадра обязан совпасть с адресом этого корабля (RPC адресуются по
+    /// ShipNetId, а не по пути, §4 В4 п.3); отправитель обязан быть пилотом этого
+    /// корабля; тик обязан быть не ниже нижней границы и строго расти.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcSubmitInput(int shipNetId, uint tick, uint mask, float lookYaw, float lookPitch)
+    {
+        // Реальный сетевой приём кадра ввода — в бюджет ввода (В6 = C), а не в
+        // репликацию. Считаем до гейта: кадр дошёл по сети независимо от того,
+        // примет ли его логика (отклонённый кадр всё равно стоил пакет).
+        NetworkManager.Instance?.CountInputRecv();
+        AcceptInputFrom(Multiplayer.GetRemoteSenderId(), shipNetId, tick, mask, lookYaw, lookPitch);
+    }
+
+    /// <summary>Шов автотеста (§3.9 п.15): «кадр пришёл от пира X» без UDP. В
+    /// headless-тесте реального соединения нет, а `Multiplayer.GetRemoteSenderId()`
+    /// вне RPC возвращает 0, поэтому тест зовёт тот же метод гейта, что и RPC, —
+    /// проверяется боевой код, а не его копия (§3.8).</summary>
+    public bool TestSubmitInput(int senderPeer, uint tick, uint mask,
+                                float lookYaw = 0f, float lookPitch = 0f)
+        => AcceptInputFrom(senderPeer, Net?.ShipNetId ?? 0, tick, mask, lookYaw, lookPitch);
+
+    /// <summary>Серверные гейты кадра ввода + приём в очередь. Возвращает true,
+    /// если кадр принят. Счётчики принявших/отклонённых кадров — для assert'ов
+    /// п.7/п.8 автотеста.</summary>
+    private bool AcceptInputFrom(int senderPeer, int shipNetId, uint tick, uint mask,
+                                 float lookYaw, float lookPitch)
+    {
+        if (NetworkManager.Instance is not { IsServer: true })
+            return false; // только сервер интегрирует корабль (В14=B)
+        if (Net == null || Net.ShipNetId != shipNetId)
+            return false; // кадр про другой корабль (адрес важнее пути)
+        if (!HasAuthority)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: кадр ввода пришёл пиру, который не является " +
+                        $"авторитетом корабля (auth = {GetMultiplayerAuthority()}) — отказ");
+            RejectedInputCount++;
+            return false;
+        }
+
+        if (senderPeer != PilotPeerId)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: кадр ввода от пира {senderPeer}, а пилот = " +
+                        $"{PilotPeerId} — отказ (§3.5 п.8)");
+            RejectedInputCount++;
+            return false;
+        }
+
+        if (tick < _minAcceptedPilotTick || tick <= _lastAcceptedPilotTick)
+        {
+            RejectedInputCount++;
+            return false; // устаревший/дублирующийся кадр прежнего пилота
+        }
+
+        _lastAcceptedPilotTick = tick;
+        // В провод летят только tick+mask+мышь (16 байт, §1.3); оси обязан
+        // восстановить сервер — ровно так же, как это делает клиент в
+        // `CollectInputFrame` (через `FromMask`). Иначе `FlightModel.Step`,
+        // читающий оси (AxisF/…), не увидел бы тягу: кадр с ThrustF дал бы
+        // нулевое ускорение (§3.5 п.7).
+        _serverInput = InputFrame.FromMask(tick, mask, lookYaw, lookPitch);
+        // Кладём кадр в очередь: сервер применит его ровно один раз на своём шаге
+        // (в порядке тиков), как пилот применил бы на своём. Так последовательность
+        // сдвигов сервера совпадает с предсказанием пилота при любой задержке.
+        _serverQueue.Enqueue(_serverInput);
+        AcceptedInputCount++;
+        LastAcceptedInputTick = (int)tick;
+        return true;
+    }
+
+    /// <summary>Сколько кадров ввода принял и отклонил сервер (автотесты п.7-п.8).</summary>
+    public int AcceptedInputCount { get; private set; }
+    public int RejectedInputCount { get; private set; }
+
+    /// <summary>Тик последнего принятого кадра (для панели отладки: по нему видно,
+    /// сколько кадров потеряно на unreliable-канале).</summary>
+    public int LastAcceptedInputTick { get; private set; }
+
+    /// <summary>Кадр ввода для очередного шага модели: сервер берёт его из очереди
+    /// пилота, offline-пилот — читает клавиши и мышь напрямую. Разделение нужно
+    /// потому, что сервер физически НЕ имеет доступа к чужой клавиатуре, а
+    /// offline-сервер (он же пилот) не должен гонять ввод через RPC-никуда.</summary>
+    private InputFrame FrameForStep()
+    {
+        // Offline: сервер = локальный пир, ввод читается с реальных клавиш.
+        if (IsLocalPilot)
+            return CollectInputFrame();
+        // Сервер с внешним пилотом: применяем кадры пилота по одному за шаг, в
+        // порядке тиков (очередь) — так серверная последовательность сдвигов
+        // совпадает с предсказанием пилота при любой задержке (§2.6 фикс (а)).
+        // Если очередь пуста (пилот молчит/кадры теряются) — залипаем на последнем
+        // принятом кадре, чтобы молчание не обнуляло тягу мгновенно и тесты п.7/8
+        // (один кадр на много шагов) работали как раньше.
+        if (_serverQueue.Count > 0)
+        {
+            _serverInput = _serverQueue.Dequeue();
+            _serverAppliedTick = _serverInput.Tick;
+            _dbgDequeue++;
+        }
+        else
+            _dbgSticky++;
+        return _serverInput;
+    }
+
+    /// <summary>Сервер: начать принимать кадры пилота с его текущего тика.
+    /// Вызывается при назначении пилота, чтобы счётчик нового пилота не «отсекся»
+    /// гейтом и чтобы кадры прежнего пилота перестали применяться.</summary>
+    private void ResetInputQueue()
+    {
+        _serverInput = default;
+        _serverQueue.Clear();
+        _serverAppliedTick = 0;
+        _lastAcceptedPilotTick = 0;
+        // Нижняя граница: тик серверного корабля. Пилотский счётчик в общем случае
+        // не совпадает с серверным (у пилота свои физкадры), поэтому шаг 2.4
+        // введет единую шкалу тиков; на шаге 2.3 принимаем кадры с любого тика,
+        // кроме заведомо старых (0 = кадр до назначения пилота).
+        _minAcceptedPilotTick = 1;
+    }
+
+
+    /// <summary>
+    /// Физический шаг. С шага 2.3 метод работает для двух ролей (§3.5 п.8):
+    ///   - авторитет (сервер): снимает состояние тела в `NetState`, откуда
+    ///     `MultiplayerSynchronizer` рассылает снапшоты (30 Гц); саму физику тела
+    ///     ведёт `_IntegrateForces`;
+    ///   - пилот-клиент: НЕ трогает тело (оно заморожено) — собирает кадр ввода за
+    ///     свой физшаг, отправляет его серверу и ведёт собственный счётчик тика.
+    ///     Предсказание движения на клиенте — шаг 2.4.
+    /// Offline: сервер = локальный пир, поэтому работает только первая ветка.
+    /// </summary>
     public override void _PhysicsProcess(double delta)
     {
         if (Net == null)
             return;
-        Net.NetPosition = GlobalPosition;
-        // В буфере лежит Quaternion: Basis.Quat() (в C# GlobalRotation — это эйлеровы
-        // углы Vector3, кватернион берётся из базиса глобального трансформ).
-        Net.NetRotation = new Quaternion(GlobalTransform.Basis);
-        Net.NetLinearVelocity = LinearVelocity;
-        Net.NetAngularVelocity = AngularVelocity;
-        Net.SimTick = (int)Engine.GetPhysicsFrames();
 
-        // §3.1 п.5: репорт на сервер (rpc_id(1)) — только авторитету и только если
-        // авторитет НЕ сервер: это единственное место, где позиция летит «снизу
-        // вверх», и только от того, кто её вычислял (§2.3). В offline сервера нет.
-        if (NetworkManager.Instance is { HasRealPeer: true } nm && !nm.IsServer)
-            RpcId(1, nameof(RpcReportNetStateToServer),
-                  Net.ShipNetId, Net.NetPosition, Net.NetRotation,
-                  Net.NetLinearVelocity, Net.NetAngularVelocity, Net.SimTick);
+        if (HasAuthority)
+        {
+            // Шаг 2.6, метрика (г): публикуем сетевой снимок раз в NetPublishEveryN
+            // физшагов (30 Гц), а не каждый шаг (60 Гц). OnChange-репликация уходит
+            // только когда свойство реально меняется, поэтому «реже пишем» = «реже
+            // шлём». Симуляция тела при этом полные 60 Гц (в `_IntegrateForces`),
+            // реже публикуется лишь сетевой слепок. См. `_netPublishPhase`.
+            if (++_netPublishPhase % NetPublishEveryN == 0)
+            {
+                Net.NetPosition = GlobalPosition;
+                // В буфере лежит Quaternion: Basis.Quat() (в C# GlobalRotation — это эйлеровы
+                // углы Vector3, кватернион берётся из базиса глобального трансформ).
+                Net.NetRotation = new Quaternion(GlobalTransform.Basis);
+                Net.NetLinearVelocity = LinearVelocity;
+                Net.NetAngularVelocity = AngularVelocity;
+                Net.SimTick = (int)Engine.GetPhysicsFrames();
+
+                // Шаг 2.4, §1.5: пилоту (не-авторитету, которому Synchronizer шлёт
+                // реплики) мало знать, ГДЕ корабль, — надо знать, какой кадр ввода
+                // сервер применил, чтобы получить это состояние. Иначе реконсиляция
+                // не поймёт, какие кадры из буфера предсказания уже учтены эталоном,
+                // а какие ещё надо переиграть (§1.6).
+                // §2.6 фикс: `_PhysicsProcess` выполняется ДО `_IntegrateForces` этого
+                // шага, значит позиция тела в снимке уже включает все кадры, снятые из
+                // очереди на ПРЕДЫДУЩИХ шагах. Поэтому AppliedTick = `_serverAppliedTick`
+                // (тик последнего реально проинтегрированного кадра), а не
+                // `_lastAcceptedPilotTick` (тик последнего ПРИНЯТОГО, но ещё не применённого).
+                // Пилот, глянув в свой след предсказаний на этом тике, сравнивает
+                // однородные состояния — честная ошибка предсказания без упреждения.
+                Net.AppliedTick = (int)_serverAppliedTick;
+                Net.AppliedMask = _serverInput.Mask;
+            }
+
+            // Диагностика §2.6: dequeue vs sticky на сервере (временная).
+            if (NetworkManager.IsHeadlessCli())
+            {
+                _metricsTimer += (float)delta;
+                if (_metricsTimer >= 1f)
+                {
+                    _metricsTimer = 0f;
+                    GD.Print($"[srv-metrics ship#{Net.ShipNetId}] dequeue={_dbgDequeue} sticky={_dbgSticky} " +
+                             $"q={_serverQueue.Count} accepted={AcceptedInputCount} appliedTick={_serverAppliedTick}");
+                }
+            }
+
+            // Шаг 2.3 (В14=B): репорт «позиция снизу вверх» удалён. Сервер — единственный
+            // интегратор корабля, поэтому принимать чужую позицию ему не от кого: от
+            // пилота приходят кадры ВВОДА (`RpcSubmitInput`), а не состояние (§3.5 п.8).
+            return;
+        }
+
+        // Пилот-клиент (не-авторитет, В14=B): каждый физшаг собирает кадр ввода,
+        // кладёт его в кольцевой буфер, шлёт серверу И тут же интегрирует им своё
+        // предсказание, а тело (вместе с картинкой и камерой — они дети тела)
+        // ставит в это предсказание. Тело заморожено (`Freeze = Static`), поэтому
+        // физически оно никуда не «летит» само: позиция — только то, что мы сами
+        // в него запишем (проба `tests/probes/probe_frozen_move.tscn`: запись в
+        // замороженное тело приживается). Пустая маска тоже отправляется (иначе
+        // отпущенная клавиша залипнет на сервере, §1.2 плана).
+        if (IsLocalPilot)
+        {
+            // Фиксированный шаг, как у сервера (`sd.GetStep()` = 1/60), а НЕ
+            // переменный `delta`: предсказание обязано сходиться с серверной
+            // истиной побитово при одинаковом вводе (риск №1 плана: при нулевом
+            // лаге Prediction Error ≈ 0). Переменный delta (просадки кадров,
+            // первый кадр) ломал бы детерминизм и давал бы метры ложной ошибки.
+            float dt = FlightModel.FixedDt;
+            InputFrame frame = CollectInputFrame();
+
+            // Первое вхождение в пилотство: предсказание стартует из текущего
+            // положения тела (истины, которую сервер уже нарисовал репликой).
+            if (!_hasPrediction)
+            {
+                _predicted = FlightState.FromNode(this, LinearVelocity, AngularVelocity);
+                _hasPrediction = true;
+            }
+
+            // Кадр в кольцо по индексу tick — чтобы переиграть его при расхождении.
+            _pending[frame.Tick & (PendingRingSize - 1)] = frame;
+
+            // Отправка ввода серверу. С швом `TestLatencyMs` (§2.6) кадр кладётся в
+            // буфер исходящих и «дозревает» через N мс — так измеряется поведение
+            // при RTT ≈ 2×N, не трогая ENet. При N=0 буфер пустеет в тот же шаг,
+            // поведение идентично прежнему.
+            EnqueueInputForSend(frame);
+            // Отправить всё, что «дозрело» к этому физшагу (при N=0 — текущий кадр).
+            FlushSendBuffer();
+
+            // Локальное предсказание тем же `FlightModel`, что и сервер (один и тот
+            // же код = сходимость при одинаковом вводе). `AdvanceFlight` двигает и
+            // локальный счётчик `_tick` (кадр уже отправлен с прежним тиком).
+            _predicted = AdvanceFlight(_predicted, frame, dt);
+
+            // Запоминаем предсказанную позицию ПИЛОТА на тике этого кадра ввода.
+            // Сервер, применив кадр с тиком T, вернёт снимок с AppliedTick = T и
+            // позицией «после применения T» — ровно то состояние, что и наше
+            // предсказание сразу после `AdvanceFlight(frame T)`. Сверка по этому
+            // следу даёт истинную ошибку предсказания (§2.6 (а)), без упреждения.
+            _predPosHistory[frame.Tick & (PendingRingSize - 1)] = _predicted.Position;
+            _predPosTick[frame.Tick & (PendingRingSize - 1)] = frame.Tick + 1; // +1 = «слот занят» (тик 0 не путать с пустым)
+            _predVelHistory[frame.Tick & (PendingRingSize - 1)] = _predicted.LinearVelocity;
+            _predAngVelHistory[frame.Tick & (PendingRingSize - 1)] = _predicted.AngularVelocity;
+
+            // Картинка и камера — за предсказанием.
+            SetBodyToPrediction();
+        }
     }
 
-    /// <summary>Приём пилотского репорта на сервере (§3.1 п.5). Сервер — детектор, а
-    /// не корректор: пишет принятый снимок в NetState (оттуда его берёт картинка и
-    /// будущий автопилот), но своё замороженное тело не трогает. Устаревшие снимки
-    /// из окна смены авторитета отбрасываются по SimTick (§4 В3 п.6).</summary>
-    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
-         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
-    public void RpcReportNetStateToServer(int shipNetId, Vector3 position, Quaternion rotation,
-                                          Vector3 linearVelocity, Vector3 angularVelocity, int simTick)
+    /// <summary>Поставить тело (а с ним картинку и камеру — они дети тела) в
+    /// предсказанное состояние пилота. Только позиция/ориентация: скорость у
+    /// замороженного тела не используется, а писать её было бы ложью (истину
+    /// считает сервер).</summary>
+    private void SetBodyToPrediction()
     {
-        if (NetworkManager.Instance is not { IsServer: true })
-            return; // принимать репорты может только сервер
-        if (Net == null || Net.ShipNetId != shipNetId)
-            return; // репорт про другой корабль — игнор (адрес важнее пути, §4 В4 п.3)
-        if (HasAuthority)
-            return; // сервер сам авторитет (автопилот): снизу позицию принимать не от кого
-        if (simTick <= _lastAcceptedReportTick)
-            return; // устаревший снимок (§4 В3 п.6)
-
-        _lastAcceptedReportTick = simTick;
-        Net.NetPosition = position;
-        Net.NetRotation = rotation;
-        Net.NetLinearVelocity = linearVelocity;
-        Net.NetAngularVelocity = angularVelocity;
-        Net.SimTick = simTick;
-        // Серверский Synchronizer (PublicVisibility = true) рассылает принятый снимок
-        // остальным пирам-неавторитетам: картинка сходится через тот же канал.
+        GlobalTransform = new Transform3D(new Basis(_predicted.Rotation), _predicted.Position);
     }
 
     /// <summary>Не-авторитет: интерполяция картинки `ShipHull` по снимкам `NetState`
@@ -276,18 +1166,270 @@ public partial class Ship : RigidBody3D
 
         double now = Time.GetTicksMsec() / 1000.0;
 
-        // Новый снимок (SimTick сдвинулся — Synchronizer принёс обновление)?
+        // Метрики §2.6 в headless-стенде: Prediction Error и число жёстких откатов
+        // (пилот), макс дельта hull (наблюдатель) — раз в секунду в stdout, чтобы
+        // прогон `run-net-demo.sh` читался в логе так же, как дебаг-панель в окне.
+        if (NetworkManager.IsHeadlessCli())
+        {
+            _metricsTimer += (float)delta;
+            if (_metricsTimer >= 1f)
+            {
+                _metricsTimer = 0f;
+                GD.Print($"[metrics ship#{Net.ShipNetId}] role={(IsLocalPilot ? "pilot" : "observer")} " +
+                         $"predErr={PredictionError:F3} hardRollbacks={HardRollbackCount} " +
+                         $"maxHullDelta={MaxHullDelta:F3} interpBuf={_interpBuf.Count}");
+                // Окно метрики (в): за секунду — максимум дельт hull за ЭТУ секунду,
+                // дальше сбрасываем, чтобы разовый стартовый скачок не висел в
+                // каждой следующей строке (сессия-макс не убывает). hardRollbacks
+                // НЕ сбрасываем — это накопительный счётчик, по нему смотрим
+                // среднюю частоту откатов за прогон.
+                MaxHullDelta = 0f;
+            }
+        }
+
+        // Пилот-клиент: картинка и камера идут за ПРЕДСКАЗАНИЕМ (тело ставит в
+        // него `_PhysicsProcess`), поэтому интерполяция ему НЕ нужна — она бы
+        // дралась с предсказанием (двигала бы hull назад, в прошлое). Вместо неё —
+        // реконсиляция: как только пришла новая реплика эталона (`SimTick` сдвинулся),
+        // сверить предсказание с эталоном и при необходимости откатить/переиграть.
+        // Снимок идёт через буфер приёма (`TestLatencyMs`), поэтому сверка происходит
+        // в момент «доставки», а не в момент, когда Synchronizer принёс реплику.
+        if (IsLocalPilot)
+        {
+            // Страж «последний поставленный в буфер SimTick» — не `_lastReconcileTick`
+            // (тот двигается в момент ДОСТАВКИ, а не постановки, иначе с задержкой
+            // один и тот же SimTick попадал бы в буфер каждый кадр).
+            if (Net.SimTick != _lastNetTickSeen)
+            {
+                _lastNetTickSeen = Net.SimTick;
+                // Один сдвиг SimTick = один логический репликационный снимок этого
+                // корабля (порог (г) §2.7 меряется по ним, а не по wire-пакетам ENet).
+                NetworkManager.Instance?.CountReplicationRecv(Net.ShipNetId);
+                EnqueueSnapshotFromNet(now);
+            }
+            DrainRecvBufferForPilot();
+            return;
+        }
+
+        // Наблюдатель (не пилот): интерполяция картинки по снимкам.
+        // Новый снимок (SimTick сдвинулся — Synchronizer принёс обновление)? Кладём
+        // его в буфер приёма; в `_interpBuf` он попадёт в момент «доставки».
         if (Net.SimTick != _lastNetTickSeen)
         {
             _lastNetTickSeen = Net.SimTick;
-            _interpBuf.Add(new Snapshot(now, Net.NetPosition, Net.NetRotation));
-            // Режем старьё: за окном интерполяции снимки уже не нужны.
+            NetworkManager.Instance?.CountReplicationRecv(Net.ShipNetId);
+            EnqueueSnapshotFromNet(now);
+        }
+        DrainRecvBufferForObserver(now);
+
+        InterpolateHull(now);
+
+        // Метрика критерия (в) §2.6: максимальный скачок hull наблюдателя между
+        // соседними кадрами. Если картинка «резинит» (дельта > 0.15 м) — интерполяция
+        // не справляется с лагом/потерями.
+        //
+        // Мерим ТОЛЬКО установившийся полёт, не стартовый снимок: пока буфер
+        // интерполяции не наполнился хотя бы двумя снимками, hull делает ОДИН
+        // скачок из точки спавна в первую «прогретую» позицию сервера (на стенде
+        // при RTT≈200 мс это ~10 м). Это не «резинг», а появление корабля там, где
+        // его видит сервер; критерий (в) про плавность В ПОЛЁТЕ. Поэтому счёт
+        // дельт включаем, когда `_interpBuf.Count >= 2` (интерполяция уже работает).
+        // Значение за секунду — окно, сбрасываемое при печати метрик (см.
+        // `_metricsTimer`), чтобы разовый стартовый скачок не «засветился» на всех
+        // последующих секундах (сессия-макс никогда не убывает).
+        var hullNode = GetNodeOrNull<Node3D>("ShipHull");
+        if (hullNode != null && _interpBuf.Count >= 2)
+        {
+            var hp = hullNode.GlobalPosition;
+            if (_haveHullPos)
+            {
+                float d = hp.DistanceTo(_lastHullPos);
+                if (d > MaxHullDelta)
+                    MaxHullDelta = d;
+            }
+            _lastHullPos = hp;
+            _haveHullPos = true;
+        }
+    }
+
+    /// <summary>Дренаж буфера приёма для пилота: каждый «дозревший» снимок — кадр
+    /// реконсиляции (откат/переигровка). Снимки, пришедшие задним числом (несколько
+    /// дозрели за кадр), обрабатываются по порядку SimTick.</summary>
+    private void DrainRecvBufferForPilot()
+    {
+        double nowSec = Time.GetTicksMsec() / 1000.0;
+        while (_recvBuf.Count > 0 && _recvBuf.Peek().DueSec <= nowSec)
+        {
+            var s = _recvBuf.Dequeue().Snap;
+            if (s.SimTick == _lastReconcileTick)
+                continue; // дубликат того же тика — сверяться нечем
+            _lastReconcileTick = s.SimTick;
+            ReconcileWith(StateFromSnap(s), s.AppliedTick);
+        }
+    }
+
+    /// <summary>Дренаж буфера приёма для наблюдателя: «дозревшие» снимки попадают в
+    /// буфер интерполяции по местному времени приёма; старьё за окном режется.</summary>
+    private void DrainRecvBufferForObserver(double now)
+    {
+        while (_recvBuf.Count > 0 && _recvBuf.Peek().DueSec <= now)
+        {
+            var s = _recvBuf.Dequeue().Snap;
+            _interpBuf.Add(new Snapshot(now, s.Pos, s.Rot));
             const double window = InterpDelay * 4.0;
             while (_interpBuf.Count > 2 && now - _interpBuf[0].Time > window)
                 _interpBuf.RemoveAt(0);
         }
+    }
 
-        InterpolateHull(now);
+    /// <summary>Ядро реконсиляции против переданного эталона (`server`) и тика,
+    /// который сервер применил (`appliedTick`). Вынесено из `Reconcile`, чтобы
+    /// автотесты п.9-11 могли подать эталон напрямую, без настоящего
+    /// `NetState`/Synchronizer (шов `TestReconcile`).</summary>
+    private void ReconcileWith(FlightState server, uint appliedTick)
+    {
+        // Предсказания ещё нет (первая реплика раньше первого физшага) — принять
+        // эталон как истину и стартовать от него.
+        if (!_hasPrediction)
+        {
+            _predicted = server;
+            _hasPrediction = true;
+            SetBodyToPrediction();
+            return;
+        }
+
+        // ЧЕСТНАЯ метрика предсказания (§2.6 критерий (а), < 0.3 м). Серверный снимок
+        // соответствует состоянию «после применения кадра с AppliedTick». Сравнивать
+        // его с ТЕКУЩИМ предсказанием пилота (которое ушло вперёд на скорость×RTT) —
+        // значит мерить «упреждение», а не ошибку: при 100 мс RTT и десятках м/с это
+        // сотни метров ложной ошибки и жёсткий откат на каждом снимке. Поэтому сверяем
+        // эталон с тем предсказанием, что пилот ДЕРЖАЛ ровно на AppliedTick (след
+        // _predPosHistory). Если такого следа нет (тесты п.9-11 сеют предсказание
+        // напрямую, без истории) — откатываемся к прежней мере |текущее − эталон|.
+        float err;
+        bool hit = TryGetPredictedAt(appliedTick, out Vector3 predAtTick);
+        if (hit)
+            err = predAtTick.DistanceTo(server.Position);
+        else
+            err = _predicted.Position.DistanceTo(server.Position);
+        PredictionError = err;
+
+        // Диагностика §2.6 (временная): пишем только крупные расхождения (>0.3),
+        // чтобы поймать природу пиков в установившемся режиме.
+        if (NetworkManager.IsHeadlessCli() && err > 0.3f && _dbgReconcile++ < 30)
+            GD.Print($"[recon ship#{Net.ShipNetId}] appliedTick={appliedTick} pilotTick={_tick} " +
+                     $"hit={hit} err={err:F3} serverPos={server.Position} curPred={_predicted.Position} " +
+                     $"predAtTick={(hit ? predAtTick : Vector3.Zero)}");
+
+        if (err > ReconcileThreshold)
+        {
+            // Жёсткий откат к эталону + переигровка неподтверждённых кадров.
+            _predicted = server;
+            ReplayInputsAfter(appliedTick);
+            // Метрика критерия (б) §2.6: считаем каждый жёсткий откат-телепорт.
+            HardRollbackCount++;
+        }
+        else
+        {
+            // Мягкая синхронизация: позиция остаётся предсказанной (она уже в
+            // пределах порога от эталона). Скорости снимка относятся к AppliedTick,
+            // а _predicted ушёл вперёд на RTT/2 кадров — подставлять серверную
+            // скорость как АБСОЛЮТ нельзя: это выбрасывает прирост скорости за эти
+            // кадры, пилот отстаёт, ошибка нарастает до порога и каждый снимок даёт
+            // жёсткий откат (зубчатый hardRollbacks). Берём РАЗНОСТЬ скоростей на
+            // AppliedTick (сервер минус пилот) и докладываем в текущую предсказанную
+            // скорость: при детерминизме разница ≈ 0 (зубцов нет), реальный дрейф
+            // корректируется. Если следа скорости на AppliedTick нет (тесты п.9-11
+            // сеют только позицию) — падаемся на абсолют, как раньше.
+            if (hit && TryGetPredictedVelAt(appliedTick, out Vector3 predVelAtTick, out Vector3 predAngAtTick))
+            {
+                _predicted.LinearVelocity += server.LinearVelocity - predVelAtTick;
+                _predicted.AngularVelocity += server.AngularVelocity - predAngAtTick;
+            }
+            else
+            {
+                _predicted.LinearVelocity = server.LinearVelocity;
+                _predicted.AngularVelocity = server.AngularVelocity;
+            }
+            // Кадры не переигрывались — сбрасываем счётчик, иначе он остался бы
+            // от прошлой жёсткой сверки и автотест п.10 прочитал бы мусор.
+            LastReplayedCount = 0;
+        }
+
+        SetBodyToPrediction();
+    }
+
+    /// <summary>Найти предсказанную позицию пилота на тике `tick` (след истории).
+    /// В кольце хранится `tick+1` как признак валидности (0 = слот пуст), чтобы
+    /// тик 0 не совпадал с пустым слотом. Возвращает false, если следа нет (кольцо
+    /// перемололось или предсказание на этом тике не строилось) — тогда вызывающий
+    /// мерит ошибку по-старому.</summary>
+    private bool TryGetPredictedAt(uint tick, out Vector3 pos)
+    {
+        int idx = (int)(tick & (uint)(PendingRingSize - 1));
+        if (_predPosTick[idx] == tick + 1)
+        {
+            pos = _predPosHistory[idx];
+            return true;
+        }
+        pos = Vector3.Zero;
+        return false;
+    }
+
+    /// <summary>То же, что `TryGetPredictedAt`, но возвращает линейную и угловую
+    /// скорости предсказания пилота на тике `tick` (след `_predVelHistory` /
+    /// `_predAngVelHistory`, валидность по `_predPosTick`). Нужен для мягкой
+    /// синхронизации по РАЗНОСТИ скоростей.</summary>
+    private bool TryGetPredictedVelAt(uint tick, out Vector3 vel, out Vector3 angVel)
+    {
+        int idx = (int)(tick & (uint)(PendingRingSize - 1));
+        if (_predPosTick[idx] == tick + 1)
+        {
+            vel = _predVelHistory[idx];
+            angVel = _predAngVelHistory[idx];
+            return true;
+        }
+        vel = Vector3.Zero;
+        angVel = Vector3.Zero;
+        return false;
+    }
+
+    /// <summary>Собрать `FlightState` из принятой реплики `NetState` (эталона).</summary>
+    private FlightState SnapshotToFlightState() => new()
+    {
+        Position = Net.NetPosition,
+        Rotation = Net.NetRotation,
+        LinearVelocity = Net.NetLinearVelocity,
+        AngularVelocity = Net.NetAngularVelocity,
+    };
+
+    /// <summary>Переиграть из кольца все кадры с `Tick > appliedTick` и `Tick <
+    /// _tick` (последний отправленный кадр = `_tick - 1`). Каждый переигранный кадр
+    /// двигает `_predicted` тем же `StepPrediction`, что и обычный шаг. Пустые или
+    /// перезаписанные кольцом слоты пропускаются (`f.Tick != t`) — потерянный на
+    /// unreliable-канале кадр = дыра, её нечем переиграть, и это нормально (§1.4).</summary>
+    private void ReplayInputsAfter(uint appliedTick)
+    {
+        LastReplayedCount = 0;
+        // `_tick` после шага = следующий тик; последний отправленный кадр = _tick-1.
+        for (uint t = appliedTick + 1; t < _tick; t++)
+        {
+            InputFrame f = _pending[t & (PendingRingSize - 1)];
+            if (f.Tick != t)
+                continue; // слот пуст или перезаписан кольцом — дыра, пропускаем
+            _predicted = StepPrediction(_predicted, f, FlightModel.FixedDt);
+            // ОБЯЗАТЕЛЬНО обновляем след истории на переигранном тике: он теперь
+            // отражает ИСПРАВЛЕННОЕ предсказание (после отката к эталону). Без этого
+            // кольцо хранит СТАРОЕ (дооткатное) предсказание, и следующий снимок
+            // сверяется с ним → ложная большая ошибка → ещё один жёсткий откат →
+            // автоколебание `hardRollbacks` (зубцы ~10/сек при RTT≈0).
+            int idx = (int)(t & (uint)(PendingRingSize - 1));
+            _predPosHistory[idx] = _predicted.Position;
+            _predPosTick[idx] = t + 1;
+            _predVelHistory[idx] = _predicted.LinearVelocity;
+            _predAngVelHistory[idx] = _predicted.AngularVelocity;
+            LastReplayedCount++;
+        }
     }
 
     /// <summary>Поставить `ShipHull` в интерполированное глобальное состояние на
@@ -299,6 +1441,15 @@ public partial class Ship : RigidBody3D
         var hull = GetNodeOrNull<Node3D>("ShipHull");
         if (hull == null || _interpBuf.Count == 0)
             return;
+
+        // Интерполяция выключена (кнопка `Toggle Interpolation`): картинка идёт
+        // прямо в ПОСЛЕДНИЙ принятый снимок, без сдвига на InterpDelay и без
+        // смешивания. Дискретно, но совпадает с сетью по времени (автотест п.13).
+        if (!_interpolationEnabled)
+        {
+            ApplyHull(hull, _interpBuf[^1]);
+            return;
+        }
 
         double render = now - InterpDelay;
 
@@ -389,4 +1540,242 @@ public partial class Ship : RigidBody3D
         // Скорость обновится только на следующем шаге физики, поэтому печатаем импульс.
         GD.Print($"ship nudged, impulse = {impulse.Length():F1} Н*с (ожидается |v| ≈ 5 м/с)");
     }
+
+    // ==================================================================
+    // Шаг 2.2.3: камера-преследование и захват мыши
+    // ==================================================================
+
+    /// <summary>
+    /// Камера от третьего лица за кормой (шаг 2.2.3). Камера обязана быть
+    /// ДОЧЕРНЕЙ узлом тела: тогда её позиция и ориентация берутся из трансформа
+    /// тела автоматически, и писать её каждый кадр не нужно (а писать пришлось
+    /// бы, потому что картинка `ShipHull` для не-авторитета интерполируется, а
+    /// камера обязана смотреть туда, куда летит ИСТИНА).
+    ///
+    /// Чужую камеру (обычно `Player/Camera3D`) глушим: две current-камеры в одном
+    /// viewport дают случайный вид, а не «последняя победила».
+    /// </summary>
+    private void EnsureChaseCamera()
+    {
+        if (_chaseCam == null)
+        {
+            _chaseCam = new Camera3D
+            {
+                Name = "ChaseCamera",
+                // Смещение назад по -Z корпуса = за кормой (вперёд у Godot = -Z).
+                Position = new Vector3(0f, CameraHeight, CameraDistance),
+                Current = true,
+                // Дальность видимости: без неё корабль улетает за far plane и
+                // «исчезает» — выглядит как падение физики.
+                Far = 4000f,
+            };
+            AddChild(_chaseCam);
+        }
+        else
+        {
+            _chaseCam.Position = new Vector3(0f, CameraHeight, CameraDistance);
+            _chaseCam.Current = true;
+        }
+
+        // Камера игрока: гасим, чтобы она не спорила с камерой корабля.
+        if (_silencedCam == null || !GodotObject.IsInstanceValid(_silencedCam))
+            _silencedCam = GetViewport()?.GetCamera3D() == _chaseCam
+                ? null
+                : GetViewport()?.GetCamera3D();
+        if (_silencedCam != null && _silencedCam != _chaseCam)
+            _silencedCam.Current = false;
+
+        // Захват мыши: режим ставим ТОЛЬКО когда его ещё не перехватывали, и
+        // обязательно возвращаем прежний при освобождении (иначе после выхода из
+        // корабля курсор исчезнет навсегда).
+        if (!_capturedInput)
+        {
+            _capturedInput = true;
+            _prevMouseMode = Input.MouseMode;
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+    }
+
+    /// <summary>Отдать камеру и мыши обратно: корабль перестал пилотироваться
+    /// (пассажир, выход, смена авторитета, удаление узла).</summary>
+    private void ReleaseChaseCamera()
+    {
+        if (_chaseCam != null && GodotObject.IsInstanceValid(_chaseCam))
+        {
+            _chaseCam.Current = false;
+            _chaseCam.QueueFree();
+            _chaseCam = null;
+        }
+        if (_silencedCam != null && GodotObject.IsInstanceValid(_silencedCam))
+            _silencedCam.Current = true;
+        _silencedCam = null;
+
+        if (_capturedInput)
+        {
+            _capturedInput = false;
+            Input.MouseMode = _prevMouseMode;
+        }
+        _lookDelta = Vector2.Zero;
+    }
+
+    // ==================================================================
+    // Шаг 2.2.2: сборщик мыши пилота
+    // ==================================================================
+
+    /// <summary>
+    /// Завести узел-сборщик мыши (шаг 2.2.2). Он нужен потому, что `Ship` — это
+    /// `RigidBody3D`, то есть `CollisionObject3D`: у таких узлов метод `_input`
+    /// вызывается только когда вьюпорт пикирует именно это тело, и мышиные
+    /// события в живой прогон к кораблю не приходят (проба
+    /// `tests/probes/ProbeInputHeadless.tscn`: событие дошло до корня сцены и до
+    /// дочернего `Node3D`, но не до корабля, даже при `input_ray_pickable = true`).
+    /// Обычный `Node3D`-потомок мышь получает всегда, поэтому ввод мыши собирает
+    /// он и передаёт кораблю напрямую.
+    ///
+    /// Узел создаётся один раз и живёт, пока корабль пилотируется; при освобождении
+    /// удаляется, чтобы чужой пир не копил дельты.
+    /// </summary>
+    private ShipMouseCatcher? _mouseCatcher;
+
+    private void EnsureMouseCatcher()
+    {
+        if (_mouseCatcher != null && GodotObject.IsInstanceValid(_mouseCatcher))
+            return;
+        _mouseCatcher = new ShipMouseCatcher(this) { Name = "MouseCatcher" };
+        AddChild(_mouseCatcher);
+    }
+
+    /// <summary>Убрать сборщик мыши (корабль перестал пилотироваться локально).</summary>
+    private void ReleaseMouseCatcher()
+    {
+        if (_mouseCatcher != null && GodotObject.IsInstanceValid(_mouseCatcher))
+            _mouseCatcher.QueueFree();
+        _mouseCatcher = null;
+        _lookDelta = Vector2.Zero;
+    }
+
+    /// <summary>
+    /// Держатель мыши пилота: обычный `Node3D`, чей `_input` вьюпорт вызывает без
+    /// пикинга. Отдаёт дельту кораблю и больше ничего — вся логика (гейт прицела,
+    /// накопление, применение) живёт в `Ship`, чтобы тест п.6 проверял её, а не
+    /// обёртку.
+    /// </summary>
+    private partial class ShipMouseCatcher : Node3D
+    {
+        private readonly Ship _ship;
+
+        public ShipMouseCatcher(Ship ship) => _ship = ship;
+
+        public override void _Input(InputEvent @event)
+        {
+            if (@event is InputEventMouseMotion m)
+                _ship.HandleMouseMotion(m);
+        }
+    }
+
+    // ==================================================================
+    // Швы автотестов шага 2.2 (п.4-п.6)
+    // ==================================================================
+
+    /// <summary>Подать кораблю кадр ввода без клавиатуры (headless-тест). Ввод
+    /// проходит тот же путь, что и реальный: шаг берёт его как «кадр шага» и
+    /// передаёт в `FlightModel.Step`. Мышь задаётся прямо в кадре (yaw/pitch в
+    /// радианах), чтобы не зависеть от транспорта `InputEventMouseMotion`.
+    ///
+    /// `manualSteps` — вести ли шаг вручную через `TestStepForTest`. Если true,
+    /// реальные физкадры пропускаются: иначе один и тот же шаг был бы посчитан
+    /// и движком, и тестом (двойная тяга).</summary>
+    public void TestSetInputForTest(InputFrame frame, bool manualSteps = true)
+    {
+        _testInput = true;
+        _testFrame = frame;
+        _testStep = manualSteps;
+    }
+
+    /// <summary>Выключить тестовый ввод/тестовые шаги и вернуть управление
+    /// реальным клавишам и реальным физкадрам.</summary>
+    public void TestClearInput()
+    {
+        _testInput = false;
+        _testFrame = default;
+        _testStep = false;
+    }
+
+    /// <summary>Явный шаг модели (для теста, где физкадров нет): ровно один шаг
+    /// `FlightModel` из текущего состояния тела с записью обратно — тот же код,
+    /// что и `_IntegrateForces`.</summary>
+    public void TestStepForTest(float dt = 0f)
+    {
+        if (!HasAuthority)
+            return;
+        if (dt <= 0f) dt = FlightModel.FixedDt;
+
+        FlightState s = new FlightState
+        {
+            Position = GlobalPosition,
+            Rotation = GlobalTransform.Basis.GetRotationQuaternion().Normalized(),
+            LinearVelocity = LinearVelocity,
+            AngularVelocity = AngularVelocity,
+        };
+
+        // Шаг 2.3: ввод берётся из того же источника, что и боевой шаг
+        // (`FrameForStep`): offline/локальный пилот — реальные клавиши
+        // (`CollectInputFrame`), сервер с внешним пилотом — очередь принятых
+        // кадров (`_serverInput`). Так тест п.7 гоняет настоящий серверный путь,
+        // а не его копию (§3.8).
+        FlightState n = AdvanceFlight(s, FrameForStep(), dt);
+
+        GlobalTransform = new Transform3D(new Basis(n.Rotation), n.Position);
+        LinearVelocity = n.LinearVelocity;
+        AngularVelocity = n.AngularVelocity;
+    }
+
+    /// <summary>Собрать кадр ввода так, как это делает реальный шаг (клавиши или
+    /// тестовый кадр + накопленная мышь). Публично — чтобы тест мог проверить
+    /// «клавиша → бит маски» без физического шага.</summary>
+    public InputFrame TestCollectInputFrame() => CollectInputFrame();
+
+    /// <summary>Добавить мышиную дельту в пикселях напрямую, не посылая события
+    /// мыши (тест п.6 проверяет и транспорт, и накопление).</summary>
+    public void TestAddLookDelta(Vector2 pixels) => _lookDelta += pixels;
+
+    /// <summary>Состояние гейта прицела для данной экранныой точки. Шов нужен,
+    /// чтобы тест мог проверить сам гейт, а не только следствие: если гейт
+    /// сломан и всегда возвращает false, проверка «мышь вне прицела не крутит»
+    /// прошла бы молча.</summary>
+    public bool TestAimOnShip(Vector2 screenPos) => AimOnShip(screenPos);
+
+    // ------------------------------------------------------------------
+    // Швы реконсиляции (стадия 2, шаг 2.4, тесты п.9-11)
+    // ------------------------------------------------------------------
+    //
+    // Реконсиляция в бою вызывается из `_Process` по новой реплике `NetState`.
+    // В автотесте настоящего Synchronizer'а нет, поэтому тест сеет предсказание
+    // и кольцо вводов напрямую и дёргает ядро `ReconcileWith` с эталоном. Так
+    // проверяется именно алгоритм (порог / откат / число переигранных кадров),
+    // а не транспорт реплик (его покрывает NetTest).
+
+    /// <summary>Задать предсказание пилота напрямую — посев перед сверкой.</summary>
+    public void TestSeedPrediction(FlightState p)
+    {
+        _predicted = p;
+        _hasPrediction = true;
+    }
+
+    /// <summary>Записать кадр ввода в кольцевой буфер по его тикку — посев
+    /// неподтверждённых кадров для проверки числа переигровок (п.9).</summary>
+    public void TestSeedPending(InputFrame frame)
+    {
+        _pending[frame.Tick & (PendingRingSize - 1)] = frame;
+    }
+
+    /// <summary>Задать локальный счётчик тика: граница `t < _tick` в переигровке
+    /// определяет, какие кадры считаются «ещё не подтверждёнными».</summary>
+    public void TestSetTick(uint t) => _tick = t;
+
+    /// <summary>Дёргнуть ядро реконсиляции против эталона и применённого тика.
+    /// После — можно читать `GlobalPosition` (картинка/камера идут за телом),
+    /// `PredictionError` и `LastReplayedCount`.</summary>
+    public void TestReconcile(FlightState server, uint appliedTick)
+        => ReconcileWith(server, appliedTick);
 }

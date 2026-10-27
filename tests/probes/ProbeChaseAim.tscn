@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeChaseAim.cs" id="1_probe"]
+
+; Проба камеры-преследователя и гейта прицела мыши (перед шагом 2.2.3 / тестом п.6.2).
+; Корень — Node3D: нужен 3D-мир, чтобы Ship поставил свою камеру и работало ProjectRay*.
+[node name="ProbeChaseAim" type="Node3D"]
+script = ExtResource("1_probe")

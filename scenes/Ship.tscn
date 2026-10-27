@@ -26,9 +26,13 @@ size = Vector3(2, 1, 4)
 ;
 ; Коллизия корпуса и Muzzle остаются НА теле: столкновения и ствол привязаны к
 ; истинному трансформу, а не к интерполированной оболочке.
+; Масса 1200 кг (шаг 2.2, В14): FlightModel берёт ускорение как Тяга/Mасса, и
+; тяги 90 кН / 40 кН·м подобраны именно под неё (75 м/с²). Без явной массы Godot
+; даёт 1.0 кг, и 90 кН дали бы 90000 м/с² — корабль улетал бы за кадр.
 [node name="Ship" type="RigidBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -6)
 script = ExtResource("1_ship")
+mass = 1200.0
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("BoxShape3D_hull")

@@ -382,19 +382,21 @@ public partial class Player : CharacterBody3D
         int pilotPeer = GetMultiplayerAuthority();
 
         AttachTo(point);
-        // §3.5 п.8: вход в кабину = смена авторитета корабля на пилота. Сервер
-        // уже валидировал точку; владелец игрока (GetMultiplayerAuthority) становится
-        // пилотом. Если владелец точки — не корабль (станция на этапе 6), авторитет
-        // не меняем: у станции его назначает сервер навсегда (§3.4 п.2).
+        // §3.5 п.8 + В14=B: вход в кабину = НАЗНАЧЕНИЕ ПИЛОТА, а не смена
+        // авторитета. Авторитет корабля навсегда остаётся у сервера (id = 1):
+        // только так сервер интегрирует физику сам, а не принимает чужую позицию
+        // как факт. Владелец игрока (GetMultiplayerAuthority) становится пилотом —
+        // он шлёт серверу кадры ввода. Если владелец точки — не корабль (станция
+        // на этапе 6), пилота не назначаем: у станции его назначает сервер навсегда (§3.4 п.2).
         if (NetworkManager.Instance is { IsServer: true } nm)
         {
             if (nm.FindShip(ownerNetId) is { } ship)
-                nm.AssignShipAuthority(shipNetId: ownerNetId, peerId: pilotPeer);
+                nm.SetPilot(shipNetId: ownerNetId, peerId: pilotPeer);
             // Прежний корабль освобождаем от пилота только если этот игрок был
-            // его пилотом (иначе это наблюдатель, и авторитет A не был его).
+            // его пилотом (иначе это наблюдатель, и пилотом A он не был).
             if (prevShip != null && prevShip.Net?.ShipNetId != ownerNetId &&
                 prevShip.PilotPeerId == pilotPeer)
-                nm.AssignShipAuthority(shipNetId: prevShip.Net!.ShipNetId, peerId: 1);
+                nm.SetPilot(shipNetId: prevShip.Net!.ShipNetId, peerId: 1);
         }
         if (NetworkManager.Instance is { HasRealPeer: true })
             Rpc(nameof(ApplyAttach), ownerNetId, pointNetId);
@@ -404,9 +406,9 @@ public partial class Player : CharacterBody3D
     private void DetachServerSide()
     {
         // §3.5 п.8: если этот игрок был пилотом корабля, из которого он отстёгивается,
-        // авторитет возвращается серверу (автопилот, peerId = 1). Пилот определяется
+        // пилот возвращается серверу (автопилот, peerId = 1). Пилот определяется
         // по PilotPeerId корабля-владельца точки, а не по тому, кто где сидел:
-        // PilotPeerId обновляется на сервере при каждой смене (§4 В3 п.3).
+        // PilotPeerId обновляется на сервере при каждой смене (§4 В3 п.3, В14=B).
         var ship = AttachedTo != null
             ? NetworkManager.Instance?.FindShip(AttachedTo.OwnerNetId)
             : null;
@@ -414,7 +416,7 @@ public partial class Player : CharacterBody3D
         Detach();
         if (ship != null && ship.PilotPeerId == playerPeer &&
             NetworkManager.Instance is { IsServer: true } nm)
-            nm.AssignShipAuthority(shipNetId: ship.Net!.ShipNetId, peerId: 1);
+            nm.SetPilot(shipNetId: ship.Net!.ShipNetId, peerId: 1);
         if (NetworkManager.Instance is { HasRealPeer: true })
             Rpc(nameof(ApplyDetach));
     }

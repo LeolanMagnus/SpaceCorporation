@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeInputHeadless.cs" id="1_probe"]
+
+; Проба транспорта ввода и физики в headless (перед тестами п.4-п.6 шага 2.2).
+; Корень — Node3D: нужен 3D-мир, чтобы физический шаг вообще существовал.
+[node name="ProbeInputHeadless" type="Node3D"]
+script = ExtResource("1_probe")

@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/Stage2Test.cs" id="1_test"]
+
+; Тест стадии 2 (сетевое пилотирование). Корень — Node3D: тесту нужен реальный
+; физический шаг с живым RigidBody3D (проба п.2), а физика работает только внутри
+; 3D-мира. Камера и свет создаются кодом в _Ready, чтобы сцена оставалась одной
+; строкой на узел и не требовала ручных правок в редакторе.
+[node name="Stage2Test" type="Node3D"]
+script = ExtResource("1_test")

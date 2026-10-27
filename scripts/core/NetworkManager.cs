@@ -36,6 +36,18 @@ public partial class NetworkManager : Node
     public const int MaxPlayers = 8;
     public const int ReplicationHz = 30;
 
+    /// <summary>Искусственная задержка, мс (шов `TestLatencyMs`, §2.6). Ставится из
+    /// CLI `-- --latency N` или напрямую. Каждый процесс задерживает исходящее
+    /// (ввод пилота, снимки `NetState`) на столько миллисекунд, поэтому эффективный
+    /// RTT ≈ 2×latency. 0 = без задержки (дефолт, автотесты не деградируют).</summary>
+    public static int TestLatencyMs { get; set; }
+
+    /// <summary>Автопилот для headless-стенда (§2.6): если включён (CLI `--autopilot`),
+    /// пилот-клиент сам генерирует осмысленный ввод (тяга вперёд + периодический рыск),
+    /// потому что в headless никто не жмёт WASD. Без него `Prediction Error` и число
+    /// откатов в логе стенда всегда нулевые — метрики не измеряются.</summary>
+    public static bool Autopilot { get; set; }
+
     /// <summary>Три канала ENet: 0 = снимки (unreliable), 1 = ввод/события (reliable),
     /// 2 = редкие крупные (спавн-данные). См. §2.1.</summary>
     public const int ChannelCount = 3;
@@ -97,7 +109,12 @@ public partial class NetworkManager : Node
     /// меняет — адрес привязан к объекту, а не к дереву (§4 В4 п.3).</summary>
     public void AssignNetIdIfUnset(NetState state)
     {
-        if (Role != NetRole.Offline || state.ShipNetId != 0)
+        // Адрес выдаёт авторитет: сервер (Dedicated/Host) или offline. Клиент
+        // спавнит корабль через MultiplayerSpawner и адрес получает с репликой,
+        // поэтому на клиенте метод не вызывается вовсе (спавнер не работает).
+        // §4 В4 п.3: сервер обязан выдать адрес ДО AddChild — иначе первый снимок
+        // уйдёт с ShipNetId = 0 и RPC корабля потеряются.
+        if (Role == NetRole.Client || state.ShipNetId != 0)
             return;
         state.ShipNetId = NextNetId();
     }
@@ -144,8 +161,8 @@ public partial class NetworkManager : Node
     // ------------------------------------------------- реестр кораблей (§4 В4 п.3)
 
     /// <summary>Реестр кораблей: ShipNetId → узел. Все RPC про корабль
-    /// (AssignShipAuthority, репорт NetState) адресуются по ShipNetId, а не по
-    /// NodePath: пути спавненых узлов расходятся между пирами.</summary>
+    /// (назначение пилота) адресуются по ShipNetId, а не по NodePath: пути
+    /// спавненых узлов расходятся между пирами (§4 В4 п.3).</summary>
     private readonly Dictionary<int, Ship> _ships = new();
 
     public void RegisterShip(Ship ship)
@@ -174,7 +191,7 @@ public partial class NetworkManager : Node
 
     /// <summary>Сколько кораблей считают пилотом этого пира (по PilotPeerId).
     /// Инвариант §3.9 п.17: пир не может пилотировать два корабля сразу —
-    /// инвариант проверяется и как рантайм-гейт в AssignShipAuthority, и assert'ом
+    /// инвариант проверяется и как рантайм-гейт в SetPilot, и assert'ом
     /// автотеста.</summary>
     public int CountShipsPilotedBy(int peerId)
     {
@@ -187,39 +204,49 @@ public partial class NetworkManager : Node
 
     public IReadOnlyDictionary<int, Ship> Ships => _ships;
 
-    // ------------------------------------------- авторитет кораблей (§4 В3 п.3)
+    // ------------------------------------------- пилот кораблей (§4 В3 п.3, В14=B)
+    //
+    // С шага 2.3 сервер назначает только ПИЛОТА — того, кто шлёт входные кадры
+    // этого корабля. Физический авторитет корабля навсегда остаётся за сервером
+    // (id = 1): если отдать его клиенту, клиент интегрирует физику у себя, а
+    // сервер примет его позицию как факт (§3.5 п.8, В14=B).
 
-    /// <summary>Отложенные назначения авторитета: shipNetId → peerId. RPC
-    /// AssignShipAuthority может прийти раньше, чем спавнер создаст у пира узел
-    /// корабля; пир кладёт пару сюда и применяет в Ship._Ready (§4 В4 п.2).</summary>
-    private readonly Dictionary<int, int> _pendingAuthority = new();
+    /// <summary>Отложенные назначения пилота: shipNetId → peerId. RPC SetPilot
+    /// может прийти раньше, чем спавнер создаст у пира узел корабля; пир кладёт
+    /// пару сюда и применяет в Ship._Ready (§4 В4 п.2).</summary>
+    private readonly Dictionary<int, int> _pilots = new();
 
     /// <summary>Шов для автотестов (§3.9 п.15): дополнительные «существующие» пиры,
     /// которых нет в реальном соединении. Живой сети в headless-тесте нет
     /// (ENet-пиры в одном процессе к себе не подключаются, §3.10 шаг 6), а assert
-    /// про смену авторитета на id=2 требует, чтобы валидация пира его пропускала.
+    /// про смену пилота на id=2 требует, чтобы валидация пира его пропускала.
     /// Пустое множество = боевое поведение: только реальные GetPeers().</summary>
     public static readonly System.Collections.Generic.HashSet<int> TestExtraPeers = new();
 
-    public void AssignShipAuthority(int shipNetId, int peerId)
+    private bool PeerExists(int peerId) =>
+        System.Array.IndexOf(Multiplayer.GetPeers(), peerId) >= 0 ||
+        TestExtraPeers.Contains(peerId);
+
+    /// <summary>Назначить пилота корабля (только сервер). peerId = 1 — сервер:
+    /// корабль летает по входным кадрам серверного пилота (offline-режим) либо
+    /// стоит замороженным, если кадров ни от кого нет (правило Freeze, §3.5 п.8).</summary>
+    public void SetPilot(int shipNetId, int peerId)
     {
         if (!IsServer)
         {
-            GD.PrintErr($"NetworkManager.AssignShipAuthority({shipNetId}, {peerId}): " +
-                        "авторитет назначает только сервер");
+            GD.PrintErr($"NetworkManager.SetPilot({shipNetId}, {peerId}): " +
+                        "пилота назначает только сервер");
             return;
         }
-        if (peerId == 0 || (peerId != 1 &&
-                            System.Array.IndexOf(Multiplayer.GetPeers(), peerId) < 0 &&
-                            !TestExtraPeers.Contains(peerId)))
+        if (peerId == 0 || (peerId != 1 && !PeerExists(peerId)))
         {
-            GD.PrintErr($"NetworkManager.AssignShipAuthority: пир {peerId} не существует — отказ");
+            GD.PrintErr($"NetworkManager.SetPilot: пир {peerId} не существует — отказ");
             return;
         }
 
-        // §3.9 п.17 (рантайм-гейт): пилот уже пилотирует другой корабль — сначала
-        // освобождаем прежний, иначе между двумя назначениями висит состояние
-        // «один пир — два авторитета», и он шлёт импульсы за оба корабля.
+        // §3.9 п.17 (рантайм-гейт): пир не может пилотировать два корабля сразу —
+        // иначе между двумя назначениями висит состояние «один пир — два входа»,
+        // и он шлёт кадры за оба. Освобождаем прежний ДО назначения нового.
         if (peerId != 1)
             foreach (var other in _ships.Values)
                 if (GodotObject.IsInstanceValid(other) && other.Net != null &&
@@ -227,56 +254,56 @@ public partial class NetworkManager : Node
                 {
                     GD.Print($"NetworkManager: пир {peerId} уже пилотирует " +
                              $"ship#{other.Net.ShipNetId} — освобождаю прежний (§3.9 п.17)");
-                    ReleaseShipAuthority(other.Net.ShipNetId);
+                    ReleasePilot(other.Net.ShipNetId);
                 }
 
-        _pendingAuthority[shipNetId] = peerId; // и для себя: запись единого источника правды
+        _pilots[shipNetId] = peerId; // единый источник правды, в т.ч. для отложенных
 
         var ship = FindShip(shipNetId);
         if (ship != null)
-            ship.ApplyRemoteAuthority(peerId);
+            ship.ApplyPilot(peerId);
         else
-            GD.PrintErr($"NetworkManager.AssignShipAuthority({shipNetId}, {peerId}): " +
+            GD.PrintErr($"NetworkManager.SetPilot({shipNetId}, {peerId}): " +
                         "корабля с таким адресом на сервере нет — назначение отложено");
 
         if (HasRealPeer)
-            Rpc(nameof(RpcApplyShipAuthority), shipNetId, peerId);
+            Rpc(nameof(RpcSetPilot), shipNetId, peerId);
     }
 
-    /// <summary>Освободить корабль от пилота (автопилот, peerId = 1) без рассылки
-    /// (рассылка — внутри AssignShipAuthority). Отдельный метод нужен, чтобы
-    /// освобождение прежнего корабля не запускало рекурсивный обход.</summary>
-    private void ReleaseShipAuthority(int shipNetId)
+    /// <summary>Снять пилота (корабль уходит серверу, peerId = 1) без рассылки:
+    /// рассылка — внутри SetPilot. Отдельный метод нужен, чтобы освобождение
+    /// прежнего корабля не запускало рекурсивный обход.</summary>
+    private void ReleasePilot(int shipNetId)
     {
-        _pendingAuthority[shipNetId] = 1;
+        _pilots[shipNetId] = 1;
         var ship = FindShip(shipNetId);
         if (ship != null)
-            ship.ApplyRemoteAuthority(1);
+            ship.ApplyPilot(1);
         if (HasRealPeer)
-            Rpc(nameof(RpcApplyShipAuthority), shipNetId, 1);
+            Rpc(nameof(RpcSetPilot), shipNetId, 1);
     }
 
-    /// <summary>Серверная рассылка нового авторитета. Едет через autoload, а не через
+    /// <summary>Серверная рассылка нового пилота. Едет через autoload, а не через
     /// узел Ship: у пира узла ещё может не быть (спавнер асинхронный), и RPC по пути
     /// к несуществующему узлу теряется без следа (§4 В4 п.2).</summary>
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
          TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
-    public void RpcApplyShipAuthority(int shipNetId, int peerId)
+    public void RpcSetPilot(int shipNetId, int peerId)
     {
         if (Multiplayer.GetRemoteSenderId() != 1)
-            return; // рассылку авторитета делает только сервер (id = 1)
+            return; // рассылку пилота делает только сервер (id = 1)
 
-        _pendingAuthority[shipNetId] = peerId;
+        _pilots[shipNetId] = peerId;
         var ship = FindShip(shipNetId);
         if (ship != null)
-            ship.ApplyRemoteAuthority(peerId);
-        // иначе — применится в Ship._Ready через ConsumePendingAuthority
+            ship.ApplyPilot(peerId);
+        // иначе — применится в Ship._Ready через ConsumePendingPilot
     }
 
-    /// <summary>Последний известный авторитет корабля по адресу (0 = не назначался).
-    /// Нужен, чтобы пир, создавший узел позже RPC, не остался с авторитетом 1.</summary>
-    public bool TryGetPendingAuthority(int shipNetId, out int peerId) =>
-        _pendingAuthority.TryGetValue(shipNetId, out peerId);
+    /// <summary>Последний известный пилот корабля по адресу (0 = не назначался).
+    /// Нужен, чтобы пир, создавший узел позже RPC, не остался без пилота.</summary>
+    public bool TryGetPilot(int shipNetId, out int peerId) =>
+        _pilots.TryGetValue(shipNetId, out peerId);
 
     // -------------------------------------------------- идентичность (§4 В2)
     //
@@ -488,7 +515,31 @@ public partial class NetworkManager : Node
             DebugInfoBus.Report($"attach[{playerKey[..System.Math.Min(8, playerKey.Length)]}] " +
                                 $"отложено до точки ({d.Owner},{d.Point}) (§2.4 п.4)");
         }
+        else if (Autopilot && !player.IsAttached)
+        {
+            // Headless-стенд §2.6: автопилот-демо без UI, игрок сам не пристёгивается.
+            // Сажаем его в свободную кабину (корабль без реального пилота), чтобы
+            // сервер назначил ему пилота и метрики предсказания/откатов стало чем мерить.
+            AutoAttachToFreeSeat(player);
+        }
         return player;
+    }
+
+    /// <summary>Только для headless-стенда (§2.6): посадить игрока в первую кабину
+    /// (Kind.Seat) корабля, у которого нет реального пилота (PilotPeerId == 1 =
+    /// сервер/автопилот). AttachServerSide сам назначит пилота (§3.5 п.8, В14=B).</summary>
+    private void AutoAttachToFreeSeat(Player player)
+    {
+        foreach (var (key, point) in _attachPoints)
+        {
+            if (point.Kind != AttachPoint.KindOf.Seat)
+                continue;
+            var ship = FindShip(key.Owner);
+            if (ship == null || ship.PilotPeerId != 1)
+                continue; // кабина уже занята реальным пилотом
+            player.AttachServerSide(key.Owner, key.Point);
+            return;
+        }
     }
 
     /// <summary>Спавн игрока ХОСТА (авторитет 1 = id сервера, стадия 0-rework):
@@ -685,6 +736,27 @@ public partial class NetworkManager : Node
                     if (i + 1 < args.Length && int.TryParse(args[++i], out int p))
                         port = p;
                     break;
+                case "--latency":
+                    // Искусственная задержка, мс (шов §2.6). Применяется к каждому
+                    // процессу (и сервер, и клиент задерживают исходящее), поэтому
+                    // эффективный RTT ≈ 2×latency.
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out int lat))
+                        TestLatencyMs = lat;
+                    break;
+                case "--autopilot":
+                    // Пилот-клиент сам жмёт тягу/рыск (headless-стенд §2.6).
+                    Autopilot = true;
+                    break;
+                case "--key":
+                    // Явный playerKey для headless-стенда (§2.6): несколько клиентов
+                    // в одном прогоне читают общий user://identity.cfg и получили бы
+                    // один ключ → вытесняли бы друг друга на сервере. Каждому стенду
+                    // даём уникальный ключ, чтобы они сосуществовали как разные игроки.
+                    if (i + 1 < args.Length)
+                        _playerKey = args[++i];
+                    else
+                        GD.PrintErr("NetworkManager: после --key ожидается значение");
+                    break;
             }
         }
 
@@ -870,6 +942,41 @@ public partial class NetworkManager : Node
 
     private long _pktsSent, _pktsRecv, _bytesSent, _bytesRecv;
 
+    // Разделение трафика на «репликацию» и «ввод» (решение В6 = C, §2.7/§2.9).
+    // Порог «< 50 пакетов/с на игрока» в prototype-plan считался БЕЗ учёта ввода:
+    // он про репликационные снимки. Кадры ввода пилота (RpcSubmitInput) — отдельный
+    // бюджет 60/с.
+    //
+    // ВАЖНО про метрику. Хостовый счётчик ENet (PopStatistic) считает ВСЕ пакеты
+    // транспорта, включая ACK надёжного канала и фрагментацию — это НЕ «логическая
+    // репликация», а обвязка соединения. Порог (г) про ЛОГИЧЕСКИЕ снимки состояния,
+    // поэтому репликацию считаем ЯВНО: Ship-не-авторитет зовёт CountReplicationRecv
+    // ровно когда получает НОВЫЙ снимок (сдвиг Net.SimTick — тот же признак, по
+    // которому идёт реконсиляция/интерполяция). Ввод считаем ЯВНО на отправке и
+    // приёме (CountInputSent/Recv). Хостовые ENet-счётчики оставляем как
+    // «wire»-диагностику (сколько реально ушло пакетов с учётом ACK), но метрика
+    // (г) читается по логическим repl/s и input/s, а не по wire.
+    private long _inputPktsSent, _inputPktsRecv;
+    private long _replRecv;
+    // Какие ShipNetId дали сдвиг SimTick за текущую секунду — чтобы посчитать
+    // репликацию НА ИГРОКА (порог §2.7 «< 50 пакетов/с на игрока»): клиент видит
+    // все корабли (N × 30/с), но бюджет меряется на одного игрока = 30/с.
+    private readonly System.Collections.Generic.HashSet<int> _replShipsThisSec = new();
+
+    /// <summary>Пилот отправил кадр ввода — учесть в бюджете ввода (не репликации).</summary>
+    public void CountInputSent() => _inputPktsSent++;
+
+    /// <summary>Сервер принял кадр ввода — учесть в бюджете ввода.</summary>
+    public void CountInputRecv() => _inputPktsRecv++;
+
+    /// <summary>Пир получил НОВЫЙ снимок состояния корабля `shipNetId` (сдвиг
+    /// SimTick) — один логический репликационный пакет по порогу (г).</summary>
+    public void CountReplicationRecv(int shipNetId)
+    {
+        _replRecv++;
+        _replShipsThisSec.Add(shipNetId);
+    }
+
     private void UpdateTrafficStats()
     {
         if (Multiplayer.MultiplayerPeer is not ENetMultiplayerPeer enet || enet.Host == null)
@@ -885,9 +992,25 @@ public partial class NetworkManager : Node
         _bytesRecv = (long)host.PopStatistic(ENetConnection.HostStatistic.ReceivedData);
     }
 
+    /// <summary>Снимок логических счётчиков за секунду: их печатает GetNetInfoLine,
+    /// затем накопители обнуляются — в тот же момент, что и PopStatistic.
+    /// Возвращает (всего снимков, число разных кораблей, ввод отправл, ввод принят).</summary>
+    public (long replRecv, int replShips, long inputSent, long inputRecv) TakeLogicalTraffic()
+    {
+        var snap = (_replRecv, _replShipsThisSec.Count, _inputPktsSent, _inputPktsRecv);
+        _replRecv = 0;
+        _replShipsThisSec.Clear();
+        _inputPktsSent = 0;
+        _inputPktsRecv = 0;
+        return snap;
+    }
+
     private void ResetTrafficStats()
     {
         _pktsSent = _pktsRecv = _bytesSent = _bytesRecv = 0;
+        _inputPktsSent = _inputPktsRecv = 0;
+        _replRecv = 0;
+        _replShipsThisSec.Clear();
     }
 
     /// <summary>RTT по каждому пиру, мс (ENetPacketPeer.GetStatistic, §2.7).
@@ -924,11 +1047,23 @@ public partial class NetworkManager : Node
         int players = IsServer ? peers.Length + (IsHost ? 1 : 0) : (IsClient ? 1 : 0);
         long packets = _pktsSent + _pktsRecv;
         long bytes = _bytesSent + _bytesRecv;
+        // Логические счётчики за секунду (см. TakeLogicalTraffic). Порог (г) §2.7
+        // «< 50 пакетов/с на игрока» меряется по РЕПЛИКАЦИОННЫМ СНИМКАМ (решение
+        // В6 = C), а не по wire-пакетам ENet (в них входят ACK надёжного канала и
+        // фрагментация — обвязка соединения, не состояние). Ввод пилота — отдельный
+        // бюджет 60/с (Unreliable), в порог (г) не входит (§2.9).
+        var (replRecv, replShips, inputSent, inputRecv) = TakeLogicalTraffic();
+        // Репликация НА ИГРОКА: клиент видит все корабли (N × 30/с), но бюджет
+        // §2.9 выведен «на игрока» = 30 снимков/с. Делим принятые снимки на число
+        // разных кораблей, давших сдвиг SimTick за секунду. replShips==0 → 0.
+        long replPerPlayer = replShips > 0 ? replRecv / replShips : 0;
         string key = PlayerKey;
         return $"net: role = {Role.ToString().ToLower()}, self = {SelfId}, " +
                $"key = {key[..System.Math.Min(8, key.Length)]}, " +
                $"peers = [{string.Join(",", peers)}], players = {players}, " +
-               $"pkts/s = {packets} (tx {_pktsSent}/rx {_pktsRecv}), " +
+               $"repl/player/s = {replPerPlayer} (всего снимков {replRecv} по {replShips} кораблям), " +
+               $"input/s = {inputSent}/{inputRecv}, " +
+               $"wire pkts/s = {packets} (tx {_pktsSent}/rx {_pktsRecv}), " +
                $"KB/s = {bytes / 1024f:F1}, {BuildRttString()}, err = {LastError}";
     }
 
@@ -945,7 +1080,14 @@ public partial class NetworkManager : Node
         _statsTimer = 0f;
 
         UpdateTrafficStats();
-        if (Role == NetRole.Dedicated)
+        // В headless-стенде (§2.6) печатаем трафик/RTT в любом процессе, не только
+        // на Dedicated-сервере: критерий (г) «< 50 пакетов/с на игрока» меряется и
+        // на клиенте, а в окне (не headless) строка и так идёт в дебаг-панель.
+        if (Role == NetRole.Dedicated || IsHeadlessCli())
             GD.Print(GetNetInfoLine());
     }
+
+    /// <summary>Запущены ли в headless-CLI (стенд/CI), а не просто без окна.</summary>
+    public static bool IsHeadlessCli() =>
+        DisplayServer.GetName().ToLowerInvariant().Contains("headless");
 }

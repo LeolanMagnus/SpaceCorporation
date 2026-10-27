@@ -49,3 +49,14 @@ properties/4/replication_mode = 2
 properties/5/path = NodePath("NetState:ShipNetId")
 properties/5/spawn = true
 properties/5/replication_mode = 2
+
+; Шаг 2.3, §1.5 плана: какой кадр ввода сервер применил к этому снимку. Пилоту
+; (не-авторитету, которому Synchronizer шлёт реплики) без этих полей реконсиляция
+; не нужна, а с ними шаг 2.4 может откатить предсказание к эталону и переиграть
+; только кадры с Tick > AppliedTick. Дешевле, чем отдельный RpcShipSnapshot.
+properties/6/path = NodePath("NetState:AppliedTick")
+properties/6/spawn = true
+properties/6/replication_mode = 2
+properties/7/path = NodePath("NetState:AppliedMask")
+properties/7/spawn = true
+properties/7/replication_mode = 2

@@ -234,3 +234,54 @@
   `NetTest checks=84 failures=0`, `Stage1Test checks=104 failures=0` (инерция корабля
   снова зелёная), в логе нет `ObjectDisposedException`, «источник … упал» и
   «просит переместить чужого игрока».
+
+---
+
+## BUG-006 — Тупик модели В3=B: серверное тело корабля заморожено, этапы 4 и 5 невозможны
+
+- **Статус:** in progress — решается в стадии 2, шаг 2.3 (переход на В3=A,
+  см. `stage2-plan.md` §0, В14). Пока код не изменён.
+- **Компонент:** `scripts/core/Ship.cs` (`ApplyAuthority`, `RpcReportNetStateToServer`),
+  `scripts/core/NetworkManager.cs` (`AssignShipAuthority`)
+- **Симптом:** при живом пилоте сервер НЕ интегрирует корабль: `Ship.ApplyAuthority`
+  ставит `FreezeMode = Static` всем, кто не авторитет, а авторитет при В3=B — пир-пилот,
+  то есть на сервере тело заморожено всегда, кроме момента, когда пилота нет.
+  Позиция корабля на сервере живёт только в `NetState` (её присылает пилот через
+  `RpcReportNetStateToServer`).
+- **Причина:** выбор В3=B из rework-плана §4. Он корректен сам по себе, но делает
+  сервер наблюдателем, а не симулятором. Дальше по плану идут этапы, которым нужен
+  именно симулятор: этап 4 (сервер сам считает урон от столкновений — нужен контакт
+  на теле, которое сервер интегрирует) и этап 5 (пружина стыковки через
+  `CustomIntegrator` — физически не работает на замороженном теле).
+  Второе следствие: канал `RpcReportNetStateToServer` противоречит
+  `prototype-plan.md` §0 («Сервер никогда не доверяет клиентским позициям») —
+  клиент шлёт позицию напрямую.
+- **Исправление (стадия 2):** авторитет тела `Ship` всегда `1`; сервер интегрирует
+  из входных кадров пилота; `AssignShipAuthority` → `SetPilot` (меняет только
+  `PilotPeerId`, авторитет не трогает); `RpcReportNetStateToServer` и гейт по
+  `_lastAcceptedReportTick` удаляются; отзывчивость пилота обеспечивается
+  предсказанием и reconciliation, а не передачей авторитета тела.
+- **Проверка:** `tests/Stage2Test.tscn` (детерминизм интегратора, сервер применяет
+  ввод пилота и отклоняет чужой, откат/переигровка), `NetTest` (после `SetPilot`
+  `PilotPeerId` меняется, а авторитет тела остаётся `1`).
+
+---
+
+## BUG-007 — NetTest: ERROR «Unable to auto-spawn node with reserved name: @CharacterBody3D@N»
+
+- **Статус:** open (шум, на результаты assert'ов не влияет; починить в стадии 2,
+  попутно с правками спавна)
+- **Компонент:** `scripts/core/WorldSpawner.cs` (`SpawnPlayerAt`), `MultiplayerSpawner`
+- **Симптом:** в логе `NetTest` (фазы п.8) трижды печатается
+  `ERROR: Unable to auto-spawn node with reserved name: @CharacterBody3D@10. Make sure
+  to add your replicated scenes via 'add_child(node, true)' to produce valid names.`
+  со стек-трейсом; при этом все assert'ы фазы зелёные.
+- **Причина:** `SpawnPlayerAt` делает `AddChild(player)` (без `force_readable_name`)
+  и не задаёт узлу человекочитаемое имя, в отличие от спавна корабля, где есть
+  `ship.Name = nameOverride`. `MultiplayerSpawner` при автоспавне на удалённой стороне
+  не может дать узлу безымянного корня сцен-обёртки валидное имя и резервирует
+  `@CharacterBody3D@N`.
+- **Исправление:** задавать игроку имя до `AddChild` (по аналогии с кораблём:
+  `Player#{peerId}` или по `playerKey`), либо `AddChild(player, true)`.
+- **Проверка (когда будет сделано):** в логе `./run-tests.sh res://tests/NetTest.tscn`
+  нет строки `reserved name`; `checks=84 failures=0` не деградирует.

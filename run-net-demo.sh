@@ -16,8 +16,17 @@ set -euo pipefail
 GODOT="${GODOT:-/f/Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stable_mono_win64_console.exe}"
 CLIENTS="${1:-2}"
 PORT="${PORT:-24567}"
+# Искусственная задержка, мс (шов §2.6 `TestLatencyMs`): LATENCY=100 → RTT ≈ 200 мс.
+LATENCY="${LATENCY:-0}"
+# Автопилот: в headless пилот сам жмёт тягу/рыск, иначе метрики §2.6 нечем мерить.
+AUTOPILOT="${AUTOPILOT:-1}"
 
 cd "$(dirname "$0")"
+
+# Собираем общие флаги процессов после `--`.
+EXTRA=""
+if [ "$LATENCY" != "0" ]; then EXTRA="$EXTRA --latency $LATENCY"; fi
+if [ "$AUTOPILOT" != "0" ]; then EXTRA="$EXTRA --autopilot"; fi
 
 echo "### dotnet build"
 dotnet build -v q --nologo
@@ -35,8 +44,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "### сервер: --headless -- --server --port $PORT"
-"$GODOT" --headless --path . -- --server --port "$PORT" >"$LOGDIR/server.log" 2>&1 &
+echo "### сервер: --headless -- --server --port $PORT $EXTRA"
+"$GODOT" --headless --path . -- --server --port "$PORT" $EXTRA >"$LOGDIR/server.log" 2>&1 &
 SRV=$!
 PIDS+=("$SRV")
 
@@ -54,19 +63,21 @@ for _ in $(seq 1 40); do
 done
 
 for i in $(seq 1 "$CLIENTS"); do
-    echo "### клиент #$i: --headless -- --join 127.0.0.1 --port $PORT"
-    "$GODOT" --headless --path . -- --join 127.0.0.1 --port "$PORT" >"$LOGDIR/client$i.log" 2>&1 &
+    echo "### клиент #$i: --headless -- --join 127.0.0.1 --port $PORT $EXTRA --key client$i"
+    "$GODOT" --headless --path . -- --join 127.0.0.1 --port "$PORT" $EXTRA --key "client$i" >"$LOGDIR/client$i.log" 2>&1 &
     PIDS+=("$!")
 done
 
 # Дём-прогон: даём пирам обменяться пакетами и напечатать строку net: (раз в секунду).
-sleep 4
+# RUN_SECONDS — сколько гонять стенд (для метрик §2.6 нужен ≥10 с полёта).
+RUN_SECONDS="${RUN_SECONDS:-4}"
+sleep "$RUN_SECONDS"
 
 echo "================ СЕРВЕР ================"
-grep -E 'net: role|PeerConnected|PeerDisconnected|spawn =' "$LOGDIR/server.log" | tail -20 || true
+grep -E 'net: role|PeerConnected|PeerDisconnected|spawn =|\[metrics' "$LOGDIR/server.log" | tail -20 || true
 for i in $(seq 1 "$CLIENTS"); do
     echo "================ КЛИЕНТ #$i ================"
-    grep -E 'net: role|ConnectedToServer|ConnectionFailed|spawn =' "$LOGDIR/client$i.log" | tail -10 || true
+    grep -E 'net: role|ConnectedToServer|ConnectionFailed|spawn =|\[metrics' "$LOGDIR/client$i.log" | tail -12 || true
 done
 
 # Критерий стадии 0: сервер видит подключившихся пиров.
