@@ -305,6 +305,33 @@ public partial class Ship : RigidBody3D
     private Input.MouseModeEnum _prevMouseMode = Input.MouseModeEnum.Visible;
     private bool _capturedInput;
 
+    /// <summary>
+    /// Режим управления локальным пилотом (фича «режим пилотирования / режим
+    /// взаимодействия»). Правая кнопка мыши (действие `toggle_interaction`)
+    /// переключает:
+    ///   `Pilot`        — мышь захвачена (`MouseModeEnum.Captured`), дельта мыши
+    ///                    крутит нос (тангаж/рыскание), клавиши тангажа/рыскания
+    ///                    работают;
+    ///   `Interaction`  — курсор виден (`MouseModeEnum.Visible`), мышь НИЧЕГО не
+    ///                    доворачивает, клавиши тангажа/рыскания вырезаны из
+    ///                    кадра ввода, и игрок может кликать элементы интерфейса
+    ///                    (в `Captured` курсор «пришит» к центру окна и UI
+    ///                    недостижим).
+    /// Тяга (WASD/boost) в обоих режимах живёт: взаимодействие — это не «стоп-кран»,
+    /// а освобождение мыши.
+    ///
+    /// Флаг живёт у корабля, а не у слоя UI: весь путь мыши (сборщик, гейт
+    /// прицела, кадр ввода) уже сосредоточен в `Ship`, и переключателю достаточно
+    /// одного места, чтобы влиять и на курсор, и на кадр ввода.
+    /// </summary>
+    public enum ControlMode { Pilot, Interaction }
+
+    /// <summary>Текущий режим локального пилота (для панели отладки и тестов).</summary>
+    public ControlMode Mode { get; private set; } = ControlMode.Pilot;
+
+    /// <summary>Играет ли локальный пир в режиме взаимодействия (курсор свободен).</summary>
+    public bool IsInteractionMode => Mode == ControlMode.Interaction;
+
     /// <summary>Текущий тик корабля (для автотестов и шага 2.4).</summary>
     public uint Tick => _tick;
 
@@ -371,6 +398,7 @@ public partial class Ship : RigidBody3D
             $"mass = {Mass:F1}, " +
             // Без auth/frozen/|err| реконсиляцию и смену пилота отлаживать нечем (§3.1 п.6).
             $"auth = {GetMultiplayerAuthority()}, pilot = {PilotPeerId}, " +
+            $"mode = {(IsInteractionMode ? "INTERACT" : "PILOT")}, " +
             $"frozen = {Freeze}, " +
             $"netid = {Net?.ShipNetId ?? 0}, " +
             // Показатели stage2-plan §2.5: Server Tick (тикет серверной физики из
@@ -629,10 +657,17 @@ public partial class Ship : RigidBody3D
         if (Input.IsActionPressed("thrust_r")) mask |= InputMask.ThrustR;
         if (Input.IsActionPressed("thrust_u")) mask |= InputMask.ThrustU;
         if (Input.IsActionPressed("thrust_d")) mask |= InputMask.ThrustD;
-        if (Input.IsActionPressed("torque_pitch_up")) mask |= InputMask.TorquePitchUp;
-        if (Input.IsActionPressed("torque_pitch_down")) mask |= InputMask.TorquePitchDown;
-        if (Input.IsActionPressed("torque_yaw_left")) mask |= InputMask.TorqueYawLeft;
-        if (Input.IsActionPressed("torque_yaw_right")) mask |= InputMask.TorqueYawRight;
+        // Режим взаимодействия: корабль перестаёт управляться по тангажу/рысканью
+        // (и мышью — см. `HandleMouseMotion`, и клавишами Z/X/Q/E — здесь). Тяга
+        // (WASD/boost) остаётся: игрок освобождает мышь для интерфейса, а не глушит
+        // двигатели.
+        if (!IsInteractionMode)
+        {
+            if (Input.IsActionPressed("torque_pitch_up")) mask |= InputMask.TorquePitchUp;
+            if (Input.IsActionPressed("torque_pitch_down")) mask |= InputMask.TorquePitchDown;
+            if (Input.IsActionPressed("torque_yaw_left")) mask |= InputMask.TorqueYawLeft;
+            if (Input.IsActionPressed("torque_yaw_right")) mask |= InputMask.TorqueYawRight;
+        }
         if (Input.IsActionPressed("boost")) mask |= InputMask.Boost;
 
         // Автопилот headless-стенда (§2.6): в --headless никто не жмёт WASD, поэтому
@@ -715,6 +750,10 @@ public partial class Ship : RigidBody3D
     internal void HandleMouseMotion(InputEventMouseMotion m)
     {
         if (!IsLocalPilot || m.Relative == Vector2.Zero)
+            return;
+        // Режим взаимодействия: мышь свободна и кликает по интерфейсу — она НЕ
+        // должна доворачивать нос, даже если курсор случайно проходит над кораблём.
+        if (IsInteractionMode)
             return;
         if (!AimOnShip(m.Position))
             return;
@@ -890,6 +929,47 @@ public partial class Ship : RigidBody3D
         _recvBuf.Enqueue((nowSec + (lat > 0 ? lat / 1000.0 : 0.0), snap));
     }
 
+    /// <summary>
+    /// §2.4 (R4): запись принятого из батча снимка в `NetState`. Это ЕДИНСТВЕННЫЙ
+    /// путь поставки эталона для кораблей, снятых с `MultiplayerSynchronizer`:
+    /// батч (`SnapshotBroadcaster`) декодирует запись и вызывает этот метод, а
+    /// дальнейшая доставка идёт по уже существующему конвейеру: страж
+    /// `SimTick != _lastNetTickSeen` в `_Process` замечает сдвиг и вызывает
+    /// `EnqueueSnapshotFromNet` — тот же код, что работал с репликами
+    /// Synchronizer, поэтому реконсиляция/интерполяция не меняются.
+    ///
+    /// Монотонность: пишем только если снимок НОВЕЕ уже лежащего (`SimTick`
+    /// строго больше). Нестабильный порядок unreliable-пакетов не должен
+    /// откатывать состояние назад; просроченный снимок просто игнорируется.
+    /// </summary>
+    public void ApplyBatchRecord(in SpaceCorporation.Net.ShipSnapshotQ s)
+    {
+        if (HasAuthority)
+            return; // авторитет сам пишет NetState каждый физический шаг (§1088)
+        if (s.SimTick <= Net.SimTick)
+            return; // дубликат/просрочка: порядок на wire не гарантирован
+
+        Net.NetPosition = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
+        Net.NetRotation = new Quaternion(s.Rotation.X, s.Rotation.Y, s.Rotation.Z, s.Rotation.W);
+        if (!s.FarTier)
+        {
+            // Дальний тир скоростей не несёт (14 байт на запись, §2.1): оставляем
+            // прежние — наблюдателю они нужны лишь для экстраполяции на ~0.25 с.
+            Net.NetLinearVelocity = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
+            Net.NetAngularVelocity = new Vector3(s.AngularVelocity.X, s.AngularVelocity.Y, s.AngularVelocity.Z);
+        }
+        if (s.ForPilot)
+        {
+            // Реконсиляция пилота: эталон обязан нести тик/маску применённого
+            // ввода, иначе переигрывание стартует не оттуда, откуда надо (§1.5).
+            Net.AppliedTick = s.AppliedTick;
+            Net.AppliedMask = s.AppliedMask;
+        }
+        Net.SimTick = s.SimTick; // ПИШЕМ ПОСЛЕДНИМ: страж `_Process` читает его
+        // и по сдвигу забирает снимок в буфер приёма; до этого момента поля
+        // позы должны быть уже целыми (в одном потоке между кадрами — да).
+    }
+
     /// <summary>Полётное состояние из задержанного снимка (для реконсиляции).</summary>
     private static FlightState StateFromSnap(NetSnap s) => new()
     {
@@ -904,8 +984,13 @@ public partial class Ship : RigidBody3D
     /// кадра обязан совпасть с адресом этого корабля (RPC адресуются по
     /// ShipNetId, а не по пути, §4 В4 п.3); отправитель обязан быть пилотом этого
     /// корабля; тик обязан быть не ниже нижней границы и строго расти.</summary>
+    // Шаг R8: кадр ввода идёт unreliable на канале 2 (тот же канал, что и
+    // репликационные снимки). Причина: надёжный канал при потерях собрал бы
+    // очередь устаревших команд — задержка важнее потерянного кадра, а следующий
+    // кадр ввода перекрывает предыдущий (состояние корабля интегрируется по
+    // тикам, потерянный кадр = один пропущенный шаг, не рассинхрон).
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
-         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+         TransferMode = MultiplayerPeer.TransferModeEnum.Unreliable, TransferChannel = 2)]
     public void RpcSubmitInput(int shipNetId, uint tick, uint mask, float lookYaw, float lookPitch)
     {
         // Реальный сетевой приём кадра ввода — в бюджет ввода (В6 = C), а не в
@@ -1592,6 +1677,10 @@ public partial class Ship : RigidBody3D
         {
             _capturedInput = true;
             _prevMouseMode = Input.MouseMode;
+            // Свежая посадка в пилотское кресло — всегда режим пилотирования
+            // (мышь захвачена), даже если в прошлой сессии игрок ушёл в
+            // взаимодействие.
+            Mode = ControlMode.Pilot;
             Input.MouseMode = Input.MouseModeEnum.Captured;
         }
     }
@@ -1656,9 +1745,8 @@ public partial class Ship : RigidBody3D
 
     /// <summary>
     /// Держатель мыши пилота: обычный `Node3D`, чей `_input` вьюпорт вызывает без
-    /// пикинга. Отдаёт дельту кораблю и больше ничего — вся логика (гейт прицела,
-    /// накопление, применение) живёт в `Ship`, чтобы тест п.6 проверял её, а не
-    /// обёртку.
+    /// пикинга. Отдаёт дельту кораблю и ловит переключатель режимов (правая кнопка
+    /// мыши, действие `toggle_interaction`).
     /// </summary>
     private partial class ShipMouseCatcher : Node3D
     {
@@ -1668,9 +1756,51 @@ public partial class Ship : RigidBody3D
 
         public override void _Input(InputEvent @event)
         {
+            // Правая кнопка мыши: пилотирование ↔ взаимодействие. Ловим именно
+            // здесь, а не в `Ship._Input`: `Ship` — `RigidBody3D`, и его `_input`
+            // вьюпорт вызывает только при пикинге тела (проба
+            // `tests/probes/ProbeInputHeadless.tscn`), а этот узел получает всё.
+            if (@event.IsActionPressed("toggle_interaction"))
+            {
+                _ship.ToggleInteractionMode();
+                return;
+            }
             if (@event is InputEventMouseMotion m)
                 _ship.HandleMouseMotion(m);
         }
+    }
+
+    /// <summary>
+    /// Переключить режим пилотирования/взаимодействия (правая кнопка мыши).
+    /// Публично — чтобы режим мог переключать не только мышь, но и UI-кнопка
+    /// или тест. Работает только у локального пилота: у остальных пилотов мышь
+    /// и курсор их окна к этому кораблю отношения не имеют.
+    /// </summary>
+    public void ToggleInteractionMode() => SetInteractionMode(!IsInteractionMode);
+
+    /// <summary>Явно задать режим (шов тестов и UI-кнопок).</summary>
+    public void SetInteractionMode(bool on)
+    {
+        if (!IsLocalPilot)
+            return;
+        if ((Mode == ControlMode.Interaction) == on)
+            return;
+
+        Mode = on ? ControlMode.Interaction : ControlMode.Pilot;
+
+        // Накопленную мышь выбрасываем в обе стороны: в Interaction она не
+        // нужна, а при возврате в Pilot старые пиксели (протасканные курсором
+        // по UI) довернули бы нос в момент переключения.
+        _lookDelta = Vector2.Zero;
+
+        // Курсор: в Captured он «пришит» к центру окна и физически не дотягивается
+        // до элементов интерфейса — поэтому взаимодействиеPossible только с Visible.
+        // Ставим режим только если мышь вообще перехватывали (иначе нечего и
+        // переключать: окно не наше).
+        if (_capturedInput)
+            Input.MouseMode = on ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+
+        GD.Print($"ship#{Net?.ShipNetId ?? 0}: режим {(on ? "взаимодействия (курсор свободен)" : "пилотирования (мышь захвачена)")}");
     }
 
     // ==================================================================

@@ -285,3 +285,96 @@
   `Player#{peerId}` или по `playerKey`), либо `AddChild(player, true)`.
 - **Проверка (когда будет сделано):** в логе `./run-tests.sh res://tests/NetTest.tscn`
   нет строки `reserved name`; `checks=84 failures=0` не деградирует.
+
+---
+
+## BUG-008 — Второй корабль реагирует на ввод игрока, хотя игрок к нему не пристёгнут
+
+- **Статус:** open (зафиксирован, исправляется отдельно)
+- **Компонент:** `scripts/core/Ship.cs` (`IsLocalPilot`, `ApplyAuthority`,
+  `CollectInputFrame`), `scripts/core/Player.cs` (`AttachServerSide`),
+  `scripts/core/NetworkManager.cs` (`SetPilot`, `SelfId`)
+- **Симптом:** в offline-сцене (`Main.tscn`, два корабля) игрок пристёгнут только к
+  одному кораблю, но WASD/мышь двигают ОБА корабля одновременно.
+- **Причина:** право пилотировать определяется как `Ship.IsLocalPilot =>
+  PilotPeerId == NetworkManager.SelfId`. Значение по умолчанию у каждого корабля —
+  `PilotPeerId = 1` (автопилот/сервер), а в offline `SelfId == 1`
+  (`NetworkManager.LocalAuthorityId` возвращает 1 без peer'а). Значит
+  `IsLocalPilot == true` для ВСЕХ кораблей сразу: каждый вызывает
+  `SetProcessInput(true)` и в `_IntegrateForces`/`FrameForStep` читает один и тот же
+  глобальный клавиатурный ввод (`CollectInputFrame` → `Input.IsActionPressed`).
+  Пристёжка к кабине в offline НЕ меняет `PilotPeerId`: ветка `nm.SetPilot(...)` в
+  `Player.AttachServerSide` обёрнута в `if (NetworkManager.Instance is { IsServer: true })`,
+  а offline-роль — НЕ `IsServer` (`IsServer => Dedicated || Host`). Поэтому право
+  управления вообще не привязано к факту «игрок сидит в этом кресле».
+- **Исправление (предлагаемое):** в offline привязывать пилота к кораблю по факту
+  пристёжки игрока, а не держать `PilotPeerId = 1` у всех. Варианты:
+  - в `AttachServerSide`/`DetachServerSide` вызывать смену пилота и для offline
+    (расширить гейт с `IsServer` на «авторитетная сторона = сервер ИЛИ offline»,
+    тот же признак `authoritySide`, что в `Player._PhysicsProcess` и
+    `OnButtonAttach/Detach`), при этом различать «офлайн-игрок» и «автопилот»,
+    например отдельным значением `PilotPeerId = 0` для «никто не пилотирует»;
+  - и/или гейт `IsLocalPilot` дополнить условием «к этому кораблю пристёгнут
+    локальный игрок», чтобы `SetProcessInput` включался только у пристёгнутого.
+- **Проверка (когда будет сделано):** в `Main.tscn` (offline, 2 корабля) WASD
+  двигает только пристёгнутый корабль; второй стоит/дрейфует. В `Stage1Test`/`NetTest`
+  не деградирует.
+
+---
+
+## BUG-009 — После открепления от корабля игрок продолжает им управлять (корабль должен дрейфовать)
+
+- **Статус:** open (зафиксирован, исправляется отдельно; общий корень с BUG-008)
+- **Компонент:** `scripts/core/Player.cs` (`DetachServerSide`),
+  `scripts/core/Ship.cs` (`IsLocalPilot`, `ApplyPilot`)
+- **Симптом:** игрок открепляется (`Detach Player`) от корабля, но продолжает
+  гонять его WASD/мышью; корабль не переходит в свободный дрейф.
+- **Причина:** `Player.DetachServerSide` возвращает пилота автопилоту
+  (`nm.SetPilot(shipNetId, peerId: 1)`) только внутри
+  `if (ship != null && ship.PilotPeerId == playerPeer && NetworkManager.Instance is
+  { IsServer: true } nm)`. В offline роль НЕ `IsServer`, поэтому `SetPilot` не
+  вызывается. Более того, в offline `PilotPeerId` корабля и так всегда `1`
+  (пристёжка его не меняла — см. BUG-008), а `SelfId == 1`, поэтому
+  `IsLocalPilot` остаётся `true` и после отстёжки: управление не снимается.
+  Отстёжка в offline меняет только дерево (`Detach()` → Reparent в мировой корень),
+  но не право пилотировать.
+- **Исправление (предлагаемое):** то же, что в BUG-008 — в offline при отстёжке
+  снимать пилота с корабля (переводить в «никто не пилотирует» / автопилот), и
+  `IsLocalPilot` должен становиться `false`, чтобы `SetProcessInput(false)` и
+  `SetPhysicsProcess` убрали локальный ввод; замороженное/автопилотное тело тогда
+  просто дрейфует по инерции.
+- **Проверка (когда будет сделано):** в offline: пристегнуться → корабль
+  слушается; открепиться → `IsLocalPilot == false`, WASD не действует, корабль
+  движется по инерции (`|v|` сохраняется, тяга = 0). Регресс в `Stage1Test`.
+
+---
+
+## BUG-010 — Q/E вращают корабль вокруг вертикальной оси Y (рыскание), а нужен крен вокруг продольной оси Z
+
+- **Статус:** open (зафиксирован, исправляется отдельно)
+- **Компонент:** `project.godot` (`[input]` `torque_yaw_left/right` = Q/E),
+  `scripts/core/InputFrame.cs` (`InputMask.TorqueYawLeft/Right`,
+  `AxisYawLeft/Right`), `scripts/core/FlightModel.cs` (`Step`, `localTorque`)
+- **Симптом:** клавиши Q/E заставляют корабль вращаться вокруг мировой вертикали
+  (рыскание, ось Y), тогда как по замыслу Q/E — это крен вокруг продольной оси
+  корабля (локальная ось Z, направление «вперёд» = −Z).
+- **Причина:** раскладка и модель задают Q/E как РЫСКАНИЕ по оси Y. В
+  `project.godot` Q=`torque_yaw_left`, E=`torque_yaw_right`. В
+  `FlightModel.Step` момент собирается так:
+  `localTorque = (AxisPitchUp−AxisPitchDown, AxisYawRight−AxisYawLeft, 0f)` —
+  то есть X = тангаж, Y = рыскание, а **Z (крен) всегда 0**. Отдельного действия и
+  битов под крен (`torque_roll_*`, `InputMask.TorqueRoll*`, `AxisRoll*`) в проекте
+  нет вовсе. Поэтому Q/E физически не могут дать вращение вокруг Z.
+- **Исправление (предлагаемое):** либо переназначить Q/E на крен и завести
+  отдельные клавиши под рыскание, либо (минимально) переименовать/переназначить
+  действия так, чтобы Q/E управляли компонентом Z в `localTorque`:
+  - добавить в `InputMask` биты `TorqueRollLeft/Right` и оси `AxisRollLeft/Right`
+    (+ `FromMask`/`Merge`/сериализация, тест п.3 на размер кадра),
+  - в `FlightModel.Step` поставить крен в Z: `localTorque.Z = AxisRollRight −
+    AxisRollLeft` (знак — под «вперёд = −Z»),
+  - в `project.godot` привязать Q/E к действиям крена, а рыскание — на другие
+    клавиши; обновить гейт `IsInteractionMode` в `Ship.CollectInputFrame`.
+- **Проверка (когда будет сделано):** проба/тест: удержание Q/E даёт
+  `AngularVelocity` вдоль локальной Z корпуса (продольной), а не мировой Y;
+  тангаж (Z/X) и рыскание (новые клавиши) работают по своим осям. `dotnet build`
+  без ошибок, тесты стадии не деградируют.

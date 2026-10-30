@@ -17,46 +17,66 @@
 ; парсер отвечает "Expected '['", и ресурс не грузится вовсе (проверено прогоном).
 ;
 ; replication_mode: 0 = Never, 1 = Always, 2 = OnChange.
-; Везде OnChange. По исходнику движка (modules/multiplayer/scene_replication_config.cpp,
-; _update): mode==Always -> sync_props, mode==OnChange -> watch_props, и те, и другие
-; уходят в дельта-обновления; ключи sync/watch в .tres — deprecated-алиасы mode
-; (sync=true <=> Always, watch=true <=> OnChange), в _get_property_list их нет,
-; поэтому в файле их писать не нужно (проверено пробом tests/probes/probe_syncflag3.gd:
-; вручную написанный sync=true игнорируется, mode решает).
-; OnChange выбран вместо Always: значения меняются каждый физический шаг, слать их
-; «всегда» — платить дельтой за то, что дельта и так есть (§2.9).
 ;
-; spawn = true обязательно для NetPosition/NetRotation/ShipNetId: корабль спавнится
-; в рантайме, и пир, зашедший позже, обязан получить снимок вместе с узлом (§4 В4=B).
-; Для скоростей и SimTick снимок при спавне тоже безвреден и полезен: картинка у
-; поздно зашедшего пира не должна стартовать с нулевой скорости.
+; ─────────────────────────────────────────────────────────────────────────────
+; ШАГ R6 — УБРАТЬ ДУБЛИРУЮЩИЙ ТРАНСПОРТ (net-refactor-plan.md §1 п.3, шаг R6).
+;
+; Дельты состояния корабля теперь идут ТОЛЬКО упакованным батчем
+; SnapshotBroadcaster (RpcSnapshotBatch, канал 2) — один пакет на репликационный
+; тик на клиента вместо отдельного RPC на каждый корабль (см. §2.1, DEVELOPMENT.md
+; «Этап 2.5»). Если синхронизатор продолшит слать OnChange-дельты по тем же полям
+; (NetPosition/NetRotation/скорости/SimTick), два транспорта будут драться за одно
+; поле — тот же класс конфликта, что «реплика в трансформ RigidBody3D» (§1.11):
+; мигание позы, гонка записи в NetState, лишние wire-пакеты.
+;
+; Поэтому у ВСЕХ сетевых свойств корабля replication_mode = 0 (Never): синхронизатор
+; НЕ шлёт дельт. Он остаётся только как ХОЛОДНЫЙ ПУТЬ — спавн-снимок для поздно
+; зашедшего пира:
+;
+;   • spawn = true остаётся у NetPosition / NetRotation / ShipNetId: поздно зашедший
+;     пир обязан получить позу и идентификатор ОДИН РАЗ вместе с узлом корабля
+;     (§4 В4=B, §2 «поздно зашедший пир»). Дальше позу ведёт батч.
+;   • у скоростей / SimTick / AppliedTick / AppliedMask spawn снят: батч даёт их с
+;     первой же записи (первый батч приходит в течение репликационного тика), а
+;     спавн-снимок с нулевой скоростью бесполезен и только раздувает пакет спавна.
+;
+; Спавн-снимок НЕ зависит от replication_mode: движок (SceneReplicator::_send_spawn)
+; берёт в снимок спавна свойства по флагу spawn, а replication_mode гейтит только
+; дельта-обновления (_update). Проверено по §1 п.3 плана и подтверждается прогоном
+; стенда (пир, зашедший в середине боя, получает позу до первого батча).
+;
+; Метрика repl/player/s (CountReplicationRecv) уже читается по батчу: Ship зовёт её
+; при сдвиге Net.SimTick, а SimTick после R4 пишет именно запись батча — синхронизатор
+; на неё не влияет. Порог «< 50 пакетов/с на игрока» для поля боя пересмотрен в §2.2
+; (он считался для стенда из 3 кораблей); для поля боя читаем batch/s и rec/s.
+; ─────────────────────────────────────────────────────────────────────────────
 
 properties/0/path = NodePath("NetState:NetPosition")
 properties/0/spawn = true
-properties/0/replication_mode = 2
+properties/0/replication_mode = 0
 properties/1/path = NodePath("NetState:NetRotation")
 properties/1/spawn = true
-properties/1/replication_mode = 2
+properties/1/replication_mode = 0
 properties/2/path = NodePath("NetState:NetLinearVelocity")
-properties/2/spawn = true
-properties/2/replication_mode = 2
+properties/2/spawn = false
+properties/2/replication_mode = 0
 properties/3/path = NodePath("NetState:NetAngularVelocity")
-properties/3/spawn = true
-properties/3/replication_mode = 2
+properties/3/spawn = false
+properties/3/replication_mode = 0
 properties/4/path = NodePath("NetState:SimTick")
-properties/4/spawn = true
-properties/4/replication_mode = 2
+properties/4/spawn = false
+properties/4/replication_mode = 0
 properties/5/path = NodePath("NetState:ShipNetId")
 properties/5/spawn = true
-properties/5/replication_mode = 2
+properties/5/replication_mode = 0
 
 ; Шаг 2.3, §1.5 плана: какой кадр ввода сервер применил к этому снимку. Пилоту
-; (не-авторитету, которому Synchronizer шлёт реплики) без этих полей реконсиляция
-; не нужна, а с ними шаг 2.4 может откатить предсказание к эталону и переиграть
-; только кадры с Tick > AppliedTick. Дешевле, чем отдельный RpcShipSnapshot.
+; реконсиляция нужна, но теперь эти поля приходят в ЗАПИСИ БАТЧА для корабля его
+; пилота (шаг R4), а не репликой синхронизатора. Дельты синхронизатором не шлём
+; (Never), спавн-снимок этих полей не нужен (первый батч придёт сразу).
 properties/6/path = NodePath("NetState:AppliedTick")
-properties/6/spawn = true
-properties/6/replication_mode = 2
+properties/6/spawn = false
+properties/6/replication_mode = 0
 properties/7/path = NodePath("NetState:AppliedMask")
-properties/7/spawn = true
-properties/7/replication_mode = 2
+properties/7/spawn = false
+properties/7/replication_mode = 0

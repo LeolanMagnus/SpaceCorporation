@@ -5,5 +5,17 @@
     <RootNamespace>SpaceCorporation</RootNamespace>
     <Nullable>enable</Nullable>
     <LangVersion>12</LangVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <!-- Godot генерирует AssemblyInfo/AssemblyAttributes в .godot/mono/temp/obj.
+       При сборке обычным `dotnet build` дефолтный glob **/*.cs подхватывает эти
+       файлы и они конфликтуют с автосгенерированными SDK (CS0579). Godot сам
+       их исключает; собираем список исходников явно, чтобы standalone-сборка
+       работала так же чисто, как сборка внутри Godot. -->
+  <ItemGroup>
+    <Compile Include="scripts/**/*.cs" />
+    <Compile Include="tests/**/*.cs" />
+  </ItemGroup>
 </Project>

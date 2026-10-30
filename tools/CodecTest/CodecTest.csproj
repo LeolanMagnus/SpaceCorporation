@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Тесты кодека снапшотов (шаг R1 плана net-refactor-plan.md).
+       Кодек намеренно не зависит от Godot, поэтому собирается обычным
+       консольным проектом и гоняется без движка: dotnet run. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>CodecTest</AssemblyName>
+    <RootNamespace>CodecTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Debug.cs" />
+    <Compile Include="..\..\scripts\core\NetTypes.cs" />
+    <Compile Include="..\..\scripts\core\ShipRecordCodec.cs" />
+  </ItemGroup>
+
+</Project>

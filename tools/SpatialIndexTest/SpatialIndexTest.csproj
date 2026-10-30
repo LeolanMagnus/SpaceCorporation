@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Тесты серверного SpatialIndex (шаг R2 плана net-refactor-plan.md).
+       Индекс намеренно не зависит от Godot, поэтому собирается обычным
+       консольным проектом и гоняется без движка: dotnet run. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>SpatialIndexTest</AssemblyName>
+    <RootNamespace>SpatialIndexTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\scripts\core\NetTypes.cs" />
+    <Compile Include="..\..\scripts\core\SpatialIndex.cs" />
+  </ItemGroup>
+
+</Project>

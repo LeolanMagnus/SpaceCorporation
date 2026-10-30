@@ -302,6 +302,37 @@ public partial class NetTest : Node
         Check(cfg.HasProperty(nr) && cfg.PropertyGetSpawn(nr),
               "п.14: spawn == true для NetState:NetRotation");
 
+        // ── Шаг R6: дублирующий транспорт убран ──────────────────────────────
+        // Дельты корабля идут только батчем SnapshotBroadcaster; синхронизатор
+        // остаётся холодным путём (спавн-снимок). Значит у ВСЕХ свойств
+        // replication_mode = Never (иначе два транспорта дерутся за одно поле),
+        // а spawn = true только у позы и id (NetPosition/NetRotation/ShipNetId) —
+        // поздно зашедший пир получает их один раз; у скоростей/SimTick/Applied*
+        // спавн снят (первый батч даёт их сразу).
+        var shipNetId = new NodePath("NetState:ShipNetId");
+        var linVel = new NodePath("NetState:NetLinearVelocity");
+        var angVel = new NodePath("NetState:NetAngularVelocity");
+        var simTick = new NodePath("NetState:SimTick");
+        var appliedTick = new NodePath("NetState:AppliedTick");
+        var appliedMask = new NodePath("NetState:AppliedMask");
+
+        // Все свойства — Never (нет дельт от синхронизатора).
+        foreach (var p in new[] { np, nr, shipNetId, linVel, angVel, simTick, appliedTick, appliedMask })
+        {
+            Check(cfg.HasProperty(p) &&
+                  cfg.PropertyGetReplicationMode(p) == SceneReplicationConfig.ReplicationMode.Never,
+                  $"R6: replication_mode == Never для {p} (иначе дубль-транспорт дерётся за поле)");
+        }
+
+        // Спавн-снимок — только поза + id.
+        Check(cfg.PropertyGetSpawn(shipNetId),
+              "R6: spawn == true для NetState:ShipNetId (поздно зашедший пир получает id)");
+        foreach (var p in new[] { linVel, angVel, simTick, appliedTick, appliedMask })
+        {
+            Check(!cfg.PropertyGetSpawn(p),
+                  $"R6: spawn == false для {p} (даёт первый батч, спавн-снимок не нужен)");
+        }
+
         // Спавн-снимок в offline: сервер (он же мы) меняет NetPosition корабля —
         // значение остаётся изменённым (второй пир без UDP недоступен, §3.10 шаг 6;
         // живая проверка снимка — в сетевом стенде, шаг 7).

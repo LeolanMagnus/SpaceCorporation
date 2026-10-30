@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Стенд шага R9 плана net-refactor-plan.md: 4 клиента / 400 кораблей /
+       600 целей. Ядро BroadcasterCore и SpatialIndex не зависят от Godot,
+       поэтому стенд гоняется без движка: dotnet run. Метрики сверяются с
+       нормативным бюджетом §4 (тот же, что печатает traffic_estimate.py). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>StandTest</AssemblyName>
+    <RootNamespace>StandTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\scripts\core\NetTypes.cs" />
+    <Compile Include="..\..\scripts\core\ShipRecordCodec.cs" />
+    <Compile Include="..\..\scripts\core\SpatialIndex.cs" />
+    <Compile Include="..\..\scripts\core\BroadcasterCore.cs" />
+  </ItemGroup>
+
+</Project>

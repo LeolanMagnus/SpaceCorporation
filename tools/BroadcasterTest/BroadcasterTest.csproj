@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Тесты серверного SnapshotBroadcaster (шаг R3 плана net-refactor-plan.md).
+       Ядро BroadcasterCore не зависит от Godot, поэтому стенд с 400 фиктивными
+       объектами гоняется без движка: dotnet run. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>BroadcasterTest</AssemblyName>
+    <RootNamespace>BroadcasterTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\scripts\core\NetTypes.cs" />
+    <Compile Include="..\..\scripts\core\ShipRecordCodec.cs" />
+    <Compile Include="..\..\scripts\core\SpatialIndex.cs" />
+    <Compile Include="..\..\scripts\core\BroadcasterCore.cs" />
+  </ItemGroup>
+
+</Project>

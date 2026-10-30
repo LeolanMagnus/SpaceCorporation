@@ -648,6 +648,63 @@ public partial class Stage2Test : Node3D
                     "п.6b: угол экрана = прицел отключён");
 
                 Check(_ship.LocalInput.Mask != 0u || true, "п.6b: кадр ввода снят");
+
+                // --- шаг «режим пилотирования / режим взаимодействия» ---
+                // Правая кнопка мыши (действие toggle_interaction) переводит в
+                // режим взаимодействия: мышь и клавиши тангажа/рыскания перестают
+                // крутить нос. Проверяем на том же AimShip (он в режиме пилота).
+                Check(!_ship.IsInteractionMode, "п.6c: по умолчанию режим пилотирования");
+                _ship.SetInteractionMode(true);
+                Check(_ship.IsInteractionMode, "п.6c: переключение в режим взаимодействия");
+
+                _mRot = _ship.GlobalTransform.Basis.GetRotationQuaternion();
+                _mYawBefore = _ship.GlobalTransform.Basis.GetEuler().Y;
+                // Мышь в центре (гейт прицела бы пропустил) + удерживаемая клавиша
+                // рыскания — в режиме взаимодействия НИЧТО не доворачивает нос.
+                Input.ParseInputEvent(KeyEvt(Key.Q, true));
+                PushLook(120f, 0f, AimCenter());
+                _pilotFrames = 0;
+                _pilotStep = 8;
+                return;
+
+            case 8:
+                // Механизм фичи виден в кадре ввода: в режиме взаимодействия нет
+                // ни битов тангажа/рыскания (клавиши), ни дельты мыши. Проверяем
+                // именно кадр, а не физический поворот: после предыдущей фазы у
+                // корпуса ещё есть остаточная |w|, и она по инерции доворачивала бы
+                // нос независимо от режима (демпфирование 0.5 гаснет не за 3 кадра).
+                // Дельту мыши смотрим в ПЕРВОМ кадре — дальше кадр пустой anyway.
+                if (_pilotFrames == 1)
+                    Check(Mathf.Abs(_ship.LocalInput.LookYaw) < 1e-6f &&
+                          Mathf.Abs(_ship.LocalInput.LookPitch) < 1e-6f,
+                          "п.6c: в кадре взаимодействия нет дельты мыши");
+                if (_pilotFrames < 3) return;
+
+                Check((_ship.LocalInput.Mask & InputMask.AngularBits) == 0u,
+                    "п.6c: в кадре взаимодействия нет битов тангажа/рыскания");
+                Check((_ship.LocalInput.Mask & InputMask.TorqueYawLeft) == 0u,
+                    "п.6c: удерживаемая Q не попала в кадр взаимодействия");
+
+                // Возврат в режим пилотирования: та же удерживаемая Q и мышь
+                // снова попадают в кадр.
+                _ship.SetInteractionMode(false);
+                Check(!_ship.IsInteractionMode, "п.6c: возврат в режим пилотирования");
+                PushLook(120f, 0f, AimCenter());
+                _pilotFrames = 0;
+                _pilotStep = 9;
+                return;
+
+            case 9:
+                // Дельта мыши живёт только в ПЕРВОМ кадре после PushLook
+                // (дальше шаг приносит пустой кадр) — как в п.6b.
+                if (_pilotFrames == 1)
+                    Check(Mathf.Abs(_ship.LocalInput.LookYaw) > 1e-6f,
+                        "п.6c: в режиме пилотирования мышь вернулась в кадр");
+                if (_pilotFrames < 3) return;
+                Input.ParseInputEvent(KeyEvt(Key.Q, false));
+
+                Check((_ship.LocalInput.Mask & InputMask.TorqueYawLeft) != 0u,
+                    "п.6c: в режиме пилотирования Q вернулась в кадр (бит рыскания)");
                 FinishPilotTest();
                 return;
         }

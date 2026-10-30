@@ -55,8 +55,12 @@ public partial class NetworkManager : Node
     /// <summary>Радиус свободной сферы при выборе стартовой точки (§3.6).</summary>
     public const float SpawnClearance = 2.5f;
 
-    /// <summary>Частота валидации/репорта NetState (не картинки), §2.9.</summary>
-    public const int ReportHz = 15;
+    /// <summary>Частота валидации/репорта NetState (не картинки), §2.9.
+    /// С шага R4 основной путь — батч SnapshotBroadcaster; репорт остаётся
+    /// только аварийным каналом реконструкции после пропадания батча (шаг R5),
+    /// поэтому частота снижена 15 → 4 Гц (фактически репорт больше не шлётся
+    /// по таймеру — реконструкцию инициирует клиент запросом RpcRequestFullSnapshot).</summary>
+    public const int ReportHz = 4;
 
     // -------------------------------------------------------------- синглтон
     public static NetworkManager? Instance { get; private set; }
@@ -223,7 +227,7 @@ public partial class NetworkManager : Node
     /// Пустое множество = боевое поведение: только реальные GetPeers().</summary>
     public static readonly System.Collections.Generic.HashSet<int> TestExtraPeers = new();
 
-    private bool PeerExists(int peerId) =>
+    public bool PeerExists(int peerId) =>
         System.Array.IndexOf(Multiplayer.GetPeers(), peerId) >= 0 ||
         TestExtraPeers.Contains(peerId);
 
@@ -265,6 +269,10 @@ public partial class NetworkManager : Node
         else
             GD.PrintErr($"NetworkManager.SetPilot({shipNetId}, {peerId}): " +
                         "корабля с таким адресом на сервере нет — назначение отложено");
+
+        // §2.4 (R4): якорь интереса и адрес пилотской записи этого клиента.
+        if (peerId >= 2)
+            _broadcaster?.SetOwnShip(peerId, shipNetId);
 
         if (HasRealPeer)
             Rpc(nameof(RpcSetPilot), shipNetId, peerId);
@@ -586,6 +594,9 @@ public partial class NetworkManager : Node
     /// как шов автотеста; реальный сигнал PeerDisconnected зовёт этот же метод.</summary>
     public void OnPeerLeft(int peerId)
     {
+        // §2.4 (R4): снять адресата из вещания ДО удаления слота (в т.ч. если
+        // пир ушёл ещё до спавна — early-return ниже иначе пропустил бы чистку).
+        _broadcaster?.RemoveClient(peerId);
         if (!_peerPlayers.TryGetValue(peerId, out var player))
             return; // слота нет (например, пир отвалился до RequestSpawn)
         if (_peerKeys.TryGetValue(peerId, out var key))
@@ -675,7 +686,15 @@ public partial class NetworkManager : Node
         SubscribeSignals();
         RegisterDebugEntries();
         ApplyCmdlineArgs();
+        // §2.4 (R4): вещатель батчей живёт под autoload, чтобы путь узла
+        // `/NetworkManager/SnapshotBroadcaster` совпадал на сервере и клиенте
+        // (RPC по имени метода резолвятся по пути узла, §4 В4 п.3). Сам узел
+        // решает, работать или молчать, по роли в `_Process`.
+        _broadcaster = new SnapshotBroadcaster { Name = "SnapshotBroadcaster" };
+        AddChild(_broadcaster);
     }
+
+    private SnapshotBroadcaster? _broadcaster;
 
     /// <summary>
     /// Кнопки сети и строка `Net` в дебаг-панели (§3.7). Регистрирует их сам
@@ -922,6 +941,10 @@ public partial class NetworkManager : Node
     private void OnPeerConnected(long id)
     {
         GD.Print($"NetworkManager: PeerConnected id = {id}, пиров = {Multiplayer.GetPeers().Length}");
+        // §2.4 (R4): вещатель батчей ведёт список адресатов с этого момента;
+        // до спавна клиент получает все тиры с якорем в начале мира.
+        if (IsServer && id >= 2)
+            _broadcaster?.AddClient((int)id);
     }
 
     private void OnPeerDisconnected(long id)
@@ -958,6 +981,10 @@ public partial class NetworkManager : Node
     // (г) читается по логическим repl/s и input/s, а не по wire.
     private long _inputPktsSent, _inputPktsRecv;
     private long _replRecv;
+    // Счётчики батчей снапшотов (шаг R3): пакеты и записи репликационного
+    // батча на клиента. Пороги §4: ≤ 150 пакетов/с и ≤ 5300 записей/с.
+    private long _batchPktsSent, _batchPktsRecv;
+    private long _batchRecsSent, _batchRecsRecv;
     // Какие ShipNetId дали сдвиг SimTick за текущую секунду — чтобы посчитать
     // репликацию НА ИГРОКА (порог §2.7 «< 50 пакетов/с на игрока»): клиент видит
     // все корабли (N × 30/с), но бюджет меряется на одного игрока = 30/с.
@@ -968,6 +995,21 @@ public partial class NetworkManager : Node
 
     /// <summary>Сервер принял кадр ввода — учесть в бюджете ввода.</summary>
     public void CountInputRecv() => _inputPktsRecv++;
+
+    /// <summary>Сервер отправил один wire-пакет батча снапшотов с `records`
+    /// записями — учесть в бюджете репликации (§4: пакеты/с и записи/с).</summary>
+    public void CountBatchSent(int records)
+    {
+        _batchPktsSent++;
+        _batchRecsSent += records;
+    }
+
+    /// <summary>Клиент принял один wire-пакет батча с `records` записями.</summary>
+    public void CountBatchRecv(int records)
+    {
+        _batchPktsRecv++;
+        _batchRecsRecv += records;
+    }
 
     /// <summary>Пир получил НОВЫЙ снимок состояния корабля `shipNetId` (сдвиг
     /// SimTick) — один логический репликационный пакет по порогу (г).</summary>
@@ -995,13 +1037,19 @@ public partial class NetworkManager : Node
     /// <summary>Снимок логических счётчиков за секунду: их печатает GetNetInfoLine,
     /// затем накопители обнуляются — в тот же момент, что и PopStatistic.
     /// Возвращает (всего снимков, число разных кораблей, ввод отправл, ввод принят).</summary>
-    public (long replRecv, int replShips, long inputSent, long inputRecv) TakeLogicalTraffic()
+    public (long replRecv, int replShips, long inputSent, long inputRecv,
+            long batchPkts, long batchRecs) TakeLogicalTraffic()
     {
-        var snap = (_replRecv, _replShipsThisSec.Count, _inputPktsSent, _inputPktsRecv);
+        var snap = (_replRecv, _replShipsThisSec.Count, _inputPktsSent, _inputPktsRecv,
+                    _batchPktsSent + _batchPktsRecv, _batchRecsSent + _batchRecsRecv);
         _replRecv = 0;
         _replShipsThisSec.Clear();
         _inputPktsSent = 0;
         _inputPktsRecv = 0;
+        _batchPktsSent = 0;
+        _batchPktsRecv = 0;
+        _batchRecsSent = 0;
+        _batchRecsRecv = 0;
         return snap;
     }
 
@@ -1011,6 +1059,8 @@ public partial class NetworkManager : Node
         _inputPktsSent = _inputPktsRecv = 0;
         _replRecv = 0;
         _replShipsThisSec.Clear();
+        _batchPktsSent = _batchPktsRecv = 0;
+        _batchRecsSent = _batchRecsRecv = 0;
     }
 
     /// <summary>RTT по каждому пиру, мс (ENetPacketPeer.GetStatistic, §2.7).
@@ -1052,7 +1102,7 @@ public partial class NetworkManager : Node
         // В6 = C), а не по wire-пакетам ENet (в них входят ACK надёжного канала и
         // фрагментация — обвязка соединения, не состояние). Ввод пилота — отдельный
         // бюджет 60/с (Unreliable), в порог (г) не входит (§2.9).
-        var (replRecv, replShips, inputSent, inputRecv) = TakeLogicalTraffic();
+        var (replRecv, replShips, inputSent, inputRecv, batchPkts, batchRecs) = TakeLogicalTraffic();
         // Репликация НА ИГРОКА: клиент видит все корабли (N × 30/с), но бюджет
         // §2.9 выведен «на игрока» = 30 снимков/с. Делим принятые снимки на число
         // разных кораблей, давших сдвиг SimTick за секунду. replShips==0 → 0.
@@ -1062,6 +1112,7 @@ public partial class NetworkManager : Node
                $"key = {key[..System.Math.Min(8, key.Length)]}, " +
                $"peers = [{string.Join(",", peers)}], players = {players}, " +
                $"repl/player/s = {replPerPlayer} (всего снимков {replRecv} по {replShips} кораблям), " +
+               $"batch/s = {batchPkts}, rec/s = {batchRecs}, " +
                $"input/s = {inputSent}/{inputRecv}, " +
                $"wire pkts/s = {packets} (tx {_pktsSent}/rx {_pktsRecv}), " +
                $"KB/s = {bytes / 1024f:F1}, {BuildRttString()}, err = {LastError}";
