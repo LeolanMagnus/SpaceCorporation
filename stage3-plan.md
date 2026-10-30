@@ -117,7 +117,7 @@
 
 ## 2. Шаги (каждый — проверяемый инкремент)
 
-- [ ] **3.0 — Подготовка: зафиксировать В15/В16/В17 в документации.**
+- [x] **3.0 — Подготовка: зафиксировать В15/В16/В17 в документации.**
       Правки: `DEVELOPMENT.md` (раздел «Этап 3» + перенос headless-экспорта в
       Этап 7 — `prototype-plan.md:140-143` относит его к Этапу 7, а
       `DEVELOPMENT.md:233` перечисляет его в «осталось на стадию 3»; в плане
@@ -126,7 +126,7 @@
       канал 2 и `Reliable`-ввод.
       Проверка: `./run-tests.sh` даёт ровно те же 104 assert'а, что и до правок.
 
-- [ ] **3.1 — `Target.tscn` + `TargetState` + `TargetReplication.tres` + реестр.**
+- [x] **3.1 — `Target.tscn` + `TargetState` + `TargetReplication.tres` + реестр.**
       Файлы: `scenes/Target.tscn`, `scripts/core/TargetState.cs`,
       `scenes/TargetReplication.tres`, методы `RegisterTarget`/`UnregisterTarget`/
       `FindTarget` в `NetworkManager`.
@@ -143,7 +143,7 @@
       доходит до не-авторитетного экземпляра в том же процессе (шов, как в
       `NetTest` п.14 `CheckSpawnSnapshot`).
 
-- [ ] **3.2 — Кнопки `Spawn Target` / `Clear Targets` (только сервер).**
+- [x] **3.2 — Кнопки `Spawn Target` / `Clear Targets` (только сервер).**
       `DebugInfoBus.RegisterDebugButton("Spawn Target", ...)` — внутри гейт
       `if (!nm.IsServer) return;`; позиция — `SpawnPoints/Spawn<i>` (обход по
       имени, как в `SpawnShipAtSpawnPoint`, `WorldSpawner.cs:268`), с смещением
@@ -154,7 +154,7 @@
       после `Clear Targets` — 0; у не-сервера (`Role == Client`) вызов не создаёт
       мишеней.
 
-- [ ] **3.3 — Визуал луча на клиенте (предсказание картинки).**
+- [x] **3.3 — Визуал луча на клиенте (предсказание картинки).**
       `fire` (ЛКМ) в `project.godot [input]`; ловит `ShipMouseCatcher`
       (`RigidBody3D._input` вьюпорт зовёт только при пикинге — вывод стадии 2,
       `stage2-plan` 2.2, отклонение 1). Гейты: `IsLocalPilot && !IsInteractionMode
@@ -165,7 +165,7 @@
       Проверка: п.17 — после шва `TestFireRequest()` у корабля есть живой узел
       луча, и через 0.2 с он удалён; в `Interaction`-режиме луч не появляется.
 
-- [ ] **3.4 — `RpcRequestFire` + серверная авторизация выстрела.**
+- [x] **3.4 — `RpcRequestFire` + серверная авторизация выстрела.**
       `Ship.RpcRequestFire(int shipNetId, uint tick, Vector3 aimPoint)`
       — `RpcId(1, nameof(RpcRequestFire), ...)` по образцу `SubmitInputToServer`
       (`Ship.cs:884-885`); атрибут —
@@ -179,7 +179,7 @@
       п.20 — `aimPoint` вдоль серверного `shipForward` принят, а `aimPoint` с
       угловым отклонением 1 рад от него — отклонён (`RejectedFireCount == 1`).
 
-- [ ] **3.5 — Серверный хитскан: `IntersectRay` из `Muzzle` по `LaserMask`.**
+- [x] **3.5 — Серверный хитскан: `IntersectRay` из `Muzzle` по `LaserMask`.**
       `PhysicsDirectSpaceState3D.IntersectRay(from, to, result, exclude: [корабельное
       тело])`, `collision_mask = CollisionLayers.LaserMask` (`Station | Target`,
       `CollisionLayers.cs` — маска объявлена и до этой стадии не использовалась).
@@ -194,7 +194,7 @@
       (слой `Station`) не наносит урона мишени, но и не считается попаданием;
       п.23 — выстрел в пустоту: `OnHitConfirmed` не отправлен.
 
-- [ ] **3.6 — Урон и `RpcOnHitConfirmed`.**
+- [x] **3.6 — Урон и `RpcOnHitConfirmed`.**
       Сервер: `Hp -= FireDamage` (только сервер, `FireDamage = 25`, `MaxHp = 100`),
       затем `Rpc(nameof(RpcOnHitConfirmed), targetNetId, damage, hitPoint,
       shooterNetId, tick)` — `Authority = 1` (`AnyPeer` для отправки не нужен:
@@ -206,14 +206,14 @@
       (после реплики), узел удалён; п.25 — 5-е попадание по уже удалённой мишени
       не роняет процесс (`FindTarget` вернул `null` → `GD.PushWarning`, не exception).
 
-- [ ] **3.7 — Дебаг: `Server-side hit logs` + строка панели.**
+- [x] **3.7 — Дебаг: `Server-side hit logs` + строка панели.**
       `DebugInfoBus.RegisterInfoSource("fire", () => $"Fire: shots={…} hits={…} " +
       $"rejected={…} targets={…}")` — источник регистрируется на сервере;
       `GD.Print` каждого попадания на сервере (строка с id стрелка/мишени/HP).
       Проверка: п.26 — после выстрела `DebugInfoBus.BuildInfoText()` содержит
       строку `Fire:` с ненулевым счётчиком выстрелов.
 
-- [ ] **3.8 — Долг стадии 2: `RpcSubmitInput` → `Unreliable, Channel 2`.**
+- [x] **3.8 — Долг стадии 2: `RpcSubmitInput` → `Unreliable, Channel 2`.**
       Правка атрибута (`Ship.cs:946-947`) + снятие замечания в `DEVELOPMENT.md:185`
       (там устаревшая ссылка `Ship.cs:908` — поправить на фактическую строку).
       **Порядок внутри шага:** этот шаг (3.8) выполняется **до** шага 3.4
@@ -228,15 +228,43 @@
       0 провалов; `LATENCY=100 ./run-net-demo.sh 2` — `predErr` не хуже, чем в
       таблице `DEVELOPMENT.md` §2.6, и `LastAcceptedInputTick` растёт (кадры идут).
 
-- [ ] **3.9 — Голодание наблюдателя при ≥3 кораблях (долг из §2.7).**
-      Адаптивный `InterpDelay` (минимум 2 снимка в буфере, иначе — ждать) и/или
-      квантование снапшотов. **Решение принимается по замеру, не заранее:**
-      сначала `LATENCY=100 ./run-net-demo.sh 3` с новой метрикой `maxHullDelta`
-      и `interpBuf` в панели, потом — что чинить.
-      Проверка: `maxHullDelta` у стороннего наблюдателя < 0.15 м (тот же порог,
-      что критерий §2.6 (в)), `interpBuf >= 2` устойчиво.
+- [x] **3.9 — Голодание наблюдателя при ≥3 кораблях (долг из §2.7).**
+      *(готово: адаптивный `InterpDelay`; квантование не понадобилось — замера
+      «не сходится» не было.)*
+      **Решение принято по замеру:** `LATENCY=100 ./run-net-demo.sh 3` показал
+      период приёма снимков ~0.25 с на корабль (3 игрока делят пропускную
+      способность) — фиксированный `InterpDelay = 0.1` стал МЕНЬШЕ периода,
+      render-момент `now − delay` выезжал за самый свежий снимок → картинка мёрзнет
+      и прыгает на весь пройденный за голодный зазор путь (скачок 1.0–1.9 м,
+      критерий (в) был провален: `maxHullDelta` до 3 м, `interpBuf` до 3 — долг
+      §2.7). Лечение (в `Ship.cs`, см. `AdaptInterpDelay` /
+      `DrainRecvBufferForObserver`): (1) снимок штампуется ЖУРНАЛЬНЫМ временем
+      доставки `DueSec`, а не `now` — пачка «дозревших» за кадр снимков сохраняет
+      ровный шаг, вырожденные сегменты и скачок пачки исчезают; (2) задержка
+      адаптивна: `target = 2 × наихудший недавний зазор` (пик-холд + EMA периода
+      приёма), кламп [0.1; 0.6], первый замер — bootstrap сразу в цель, дальше
+      гистерезис с мёртвой зоной (вверх реагирует на 50 мс раньше, чем вниз) —
+      дрожание EMA само не двигает картинку; пересчёт ОДИН раз за кадр, не за
+      снимок. Шов `TestPushSnapshot` (NetTest) кладёт снапшот мимо дренажа →
+      адаптив не включается, `InterpDelaySec` остаётся 0.1, тесты п.13/п.18 целы.
+      **Замер (после фикса):** `LATENCY=100 ./run-net-demo.sh 3` (24 с): у
+      стороннего наблюдателя `maxHullDelta = 0.066…0.125 м` (< 0.15, порог §2.6
+      (в)); `interpBuf = 6` устойчиво (≥ 2, буфер не опустошается); `interpDelay`
+      сходится к 0.57–0.58, `snapPeriod ≈ 0.25`. Пилот: `hardRollbacks`
+      кумулятивный 22→23 за 24 с (≤ 1/с, критерий (б)), `predErr` в таблице §2.6.
+      Регресс 2 игроков не ухудшился: `maxHullDelta ≈ 0.06`, `interpBuf = 6`
+      (раньше проседал до 3 — §2.7 «иногда вырастает» закрыт и на 2 игроках).
+      Крейсерская скорость автопилота стенда = 6 м/с (гейт скорости в `Ship.cs`,
+      OBS-002) — иначе `maxHullDelta` мерял бы гладкое движение на ~27 м/с
+      (0.9 м/кадр) и порог 0.15 был бы недостижим без «резинга».
 
-- [ ] **3.10 — Итоговая проверка и фиксация.**
+- [x] **3.10 — Итоговая проверка и фиксация.** *(готово: все наборы зелёные —
+      Stage1 104/0, Stage2 82/0, Stage3 78/0, NetTest 123/0; CodecTest 103046/0
+      (R1), BroadcasterTest 27/0 (R3), SpatialIndexTest 25/0 (R2), StandTest R9
+      11/0. `LATENCY=100 ./run-net-demo.sh 2` — 4 критерия §2.6 PASS;
+      `./run-net-demo.sh 3` — наблюдатель `maxHullDelta 0.066…0.125` (<0.15),
+      `interpBuf=6` (долг §2.7 закрыт). Критерии Этапа 3 (а/б/в) — Stage3Test
+      п.17 / п.18+п.24-25 / п.19-20. `DEVELOPMENT.md` Этап 3 → ✅.)*
       `./run-tests.sh` (Stage1Test), `./run-tests.sh res://tests/Stage2Test.tscn`,
       `./run-tests.sh res://tests/NetTest.tscn`, `./run-tests.sh res://tests/Stage3Test.tscn`,
       `LATENCY=100 ./run-net-demo.sh 2`, `./run-net-demo.sh 3`.

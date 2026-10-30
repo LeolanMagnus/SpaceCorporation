@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Godot;
 
 namespace SpaceCorporation;
@@ -68,6 +69,10 @@ public partial class WorldSpawner : Node3D
             // Спавнер повторяет узлы у всех пиров; пути — res://, а не пути дерева.
             _spawner.AddSpawnableScene("res://scenes/Ship.tscn");
             _spawner.AddSpawnableScene("res://scenes/Player.tscn");
+            // Учебная мишень (этап 3 §3.2): спавнит ТОЛЬКО сервер (кнопка Spawn
+            // Target гейтится IsServer), спавнер повторяет её у всех пиров;
+            // удаление тоже только сервером (QueueFree → спавнер сам удалит у пира).
+            _spawner.AddSpawnableScene("res://scenes/Target.tscn");
         }
         else
         {
@@ -91,6 +96,13 @@ public partial class WorldSpawner : Node3D
         // Offline (в т.ч. тесты стадии 1): мир из одного процесса — корабли + игрок.
         if (nm == null || nm.Role == NetworkManager.NetRole.Offline)
             StartSinglePlayerWorld();
+
+        // Кнопки мишеней (этап 3 §3.2, В17): регистрируются на всех ролях, но
+        // ГЕЙТ «только сервер» сидит ВНУТРИ обработчика (OnSpawnTargetButton /
+        // OnClearTargetsButton) — у клиента нажатие должно быть пустоп, иначе клиент
+        // породит у себя мишень, которую спавнер не повторяет (сервер-спавн).
+        DebugInfoBus.RegisterDebugButton("Spawn Target", OnSpawnTargetButton);
+        DebugInfoBus.RegisterDebugButton("Clear Targets", OnClearTargetsButton);
     }
 
     public override void _ExitTree()
@@ -301,6 +313,132 @@ public partial class WorldSpawner : Node3D
         if (position is { } pos)
             ship.GlobalPosition = pos;
         return ship;
+    }
+
+    /// <summary>Спавн УЧЕБНОЙ МИШЕНИ (этап 3 §3.2). Спавнит ТОЛЬКО авторитет
+    /// (гейт IsServer на кнопке, шаг 3.2/п.16; и здесь страховка): у спавн-сцены
+    /// путь на пирах генерирует спавнер, поэтому идентификатор — TargetNetId,
+    /// а не путь. Адрес выдаётся ДО AddChild (то же правило, что у кораблей
+    /// §3.1 п.8), иначе первый снимок уйдёт с TargetNetId = 0 и RPC урона (шаг 3.6)
+    /// не найдут цель. Позиция — после AddChild (§3.6: вне дерева get_global_transform
+    /// печатает ERROR). Контейнер — сам WorldSpawner (spawn_path = «..» = GameRoot):
+    /// узлы, добавленные сюда, MultiplayerSpawner повторяет у всех пиров (как корабли).</summary>
+    public TargetState? SpawnTarget(Vector3 position)
+    {
+        var nm = NetworkManager.Instance;
+        if (nm == null || !nm.IsServer)
+        {
+            GD.PushWarning("WorldSpawner: SpawnTarget вызван не на сервере — " +
+                           "спавн мишеней разрешён только авторитету (§3.2, В17).");
+            return null;
+        }
+        var scene = GD.Load<PackedScene>("res://scenes/Target.tscn");
+        if (scene == null)
+        {
+            GD.PushError("WorldSpawner: не удалось загрузить res://scenes/Target.tscn");
+            return null;
+        }
+        var body = scene.Instantiate<RigidBody3D>();
+        // Адрес мишени из общего счётчика — ДО AddChild (цель узла TargetState
+        // берём из инстанса: Net у TargetState заполняется в _Ready/_EnterTree).
+        NetworkManager.Instance?.AssignTargetNetIdIfUnset(body.GetNode<TargetState>("TargetState"));
+        body.Name = UniqueChildName("Target");
+        AddChild(body);
+        body.GlobalPosition = position;
+        return body.GetNodeOrNull<TargetState>("TargetState");
+    }
+
+    /// <summary>Удалить ВСЕ мишени (кнопка Clear Targets, этап 3 §3.2/п.16).
+    /// Удаляет только сервер: `QueueFree` на сервере → MultiplayerSpawner сам
+    /// удаляет узел у каждого пира; вручную RPC-удаление слать НЕЛЬЗЯ (§3.2, таблица
+    /// «Clear Targets должен удалять узлы у всех»).</summary>
+    public int ClearTargets()
+    {
+        var nm = NetworkManager.Instance;
+        if (nm == null || !nm.IsServer)
+        {
+            GD.PushWarning("WorldSpawner: ClearTargets вызван не на сервере — " +
+                           "удалять мишени может только авторитет (§3.2).");
+            return 0;
+        }
+        int removed = 0;
+        // Снимаем копию списка: QueueFree помечает узел, и если идти по живому
+        // GetChildren(), итератор пропустит соседей (узлы помечены на удаление).
+        var bodies = new List<RigidBody3D>();
+        foreach (var node in GetChildren())
+            if (node is RigidBody3D b && b.GetNodeOrNull<TargetState>("TargetState") != null)
+                bodies.Add(b);
+        foreach (var b in bodies)
+        {
+            b.QueueFree();
+            removed++;
+        }
+        return removed;
+    }
+
+    // ────────────────────────── кнопки мишеней (§3.2, п.16) ─────────────────────
+    //
+    // Обработчики кнопок ВСЕГДА вызываются (кнопка видна на любой роли), но внутри
+    // стоит гейт IsServer: SpawnTarget/ClearTargets сами возвращают null/0 у не-
+    // сервера и печатают предупреждение. Так клиент, нажавший кнопку, НЕ создаёт
+    // у себя мишень — сервер-спавн остаётся единственным источником (§3.2, В17).
+
+    /// <summary>Кнопка «Spawn Target»: ставит одну мишень на стартовую точку
+    /// (см. TargetSpawnPosition) — только если мы сервер.</summary>
+    private void OnSpawnTargetButton()
+    {
+        Vector3 pos = TargetSpawnPosition();
+        SpawnTarget(pos);
+    }
+
+    /// <summary>Кнопка «Clear Targets»: снимает все мишени — только если мы сервер.</summary>
+    private void OnClearTargetsButton()
+    {
+        ClearTargets();
+    }
+
+    /// <summary>Позиция спавна мишени по кнопке: стартовая точка Main/SpawnPoints
+    /// по круговому счётчику, чуть выше точки, чтобы мишень не слиплась с
+    /// кораблём/игроком на той же точке. Если точек нет — запасная точка в стороне.
+    /// Не завязан на занятость (в отличие от игроков): мишени можно ставить
+    /// сколько угодно, счётчик просто раскладывает их по точкам по кругу.</summary>
+    private int _targetPointCursor;
+    private Vector3 TargetSpawnPosition()
+    {
+        var set = WorldRoot?.GetNodeOrNull<Node3D>("SpawnPoints");
+        if (set == null)
+            return new Vector3(0, 0, 25); // запас: перед камерой, но в стороне от кораблей
+        var point = set.GetNodeOrNull<Node3D>($"Spawn{_targetPointCursor}");
+        if (point == null)
+        {
+            _targetPointCursor = 0;
+            point = set.GetNodeOrNull<Node3D>("Spawn0");
+            if (point == null) return new Vector3(0, 0, 25);
+        }
+        _targetPointCursor++;
+        return point.GlobalPosition + Vector3.Up * 2.0f;
+    }
+
+    /// <summary>Имя узла, не сталкивающееся с уже занятыми в этом контейнере
+    /// (Godot сам делает имена уникальными, но тестам нужен предсказуемый вид
+    /// `Target`, `Target2`, `Target3` — как корабли `Ship`, `Ship2`).</summary>
+    private string UniqueChildName(string baseName)
+    {
+        bool Taken(string n)
+        {
+            foreach (var node in GetChildren())
+                if (node.Name == n)
+                    return true;
+            return false;
+        }
+        if (!Taken(baseName))
+            return baseName;
+        for (int i = 2; ; i++)
+        {
+            string candidate = baseName + i;
+            if (!Taken(candidate))
+                return candidate;
+        }
     }
 
     /// <summary>Offline-мир стадии 1: корабли + одиночный игрок с авторитетом 1.</summary>

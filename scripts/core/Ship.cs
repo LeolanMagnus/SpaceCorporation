@@ -56,8 +56,49 @@ public partial class Ship : RigidBody3D
     // поэтому откатывать нечего — достаточно интерполяции.
 
     /// <summary>Задержка интерполяции, сек. Больше 2×ReplicationInterval (1/30),
-    /// чтобы кадр всегда попадал внутрь окна двух снимков.</summary>
+    /// чтобы кадр всегда попадал внутрь окна двух снимков. Это БАЗА/минимум:
+    /// реальная задержка адаптивна (§3.9, долг §2.7) — см. `_interpDelay`.</summary>
     private const double InterpDelay = 0.1;
+
+    // §3.9 (долг §2.7): адаптивная задержка интерполяции. При ≥3 кораблях
+    // пропускная способность на корабль падает: период приёма снимков растёт до
+    // ~0,25 с (на замере LATENCY=100 3 игрока). Фиксированный `InterpDelay = 0,1`
+    // становится МЕНЬШЕ периода снимков → render-момент (`now - delay`) выезжает
+    // за самый свежий снимок: картинка мёрзнет в последнем снимке, а когда приходит
+    // следующий — прыгает назад в сегмент с α≈0,6 (скачок 1,0–1,9 м, критерий (в)
+    // §2.6 провален). Лечение: задержка = 2×измеренного периода снимков (кадр
+    // всегда внутри окна), буфер держим достаточно глубоким, чтобы окно накрывало
+    // задержку. Период меряем EMA по моментам постановки снимков в `_interpBuf`.
+    private double _interpDelay = InterpDelay;
+    private double _snapPeriodEma = -1.0;   // <0 — период ещё не измерен
+    // Пик-холд межприходного зазора: render-цель должна накрывать ХУДШИЙ недавний
+    // зазор ( jitter/потеря пакета), иначе в «голодный» промежуток render=now-delay
+    // выезжает за самый свежий снимок → картинка мёрзнет, а со следующим снимком
+    // прыгает на весь пройденный за зазор путь (скачок больше шагового). Пик
+    // держим с медленным спадом, чтобы единичный выброс не задрал задержку навсегда.
+    private double _snapGapPeak = -1.0;
+    private const double SnapPeriodMin = 1.0 / 30.0;  // физ. потолок частоты снимков
+    private const double SnapPeriodMax = 1.0;         // защитный потолок (потеря пакетов)
+    private const double AdaptiveDelayFactor = 2.0;   // delay = factor × период
+    private const double AdaptiveDelayMax = 0.6;      // верхняя граница задержки
+    // Максимум, на который задержка сдвигается за один принятый снимок: скачок
+    // задержки сдвигает render-цель и сам даёт скачок hull (v×Δdelay), поэтому
+    // адаптация идёт плавно, а не рывком (риск: лечение вносит новый артефакт).
+    private const double MaxDelayStepPerSnap = 0.02;  // 20 мс за кадр (спад)
+    private const double MaxDelayStepUpPerFrame = 0.06; // 60 мс за кадр (рост — лечить голодание сразу)
+    // Мёртвая зона гистерезиса: пока |target-current| в этих пределах — задержку
+    // не трогаем (дрожание EMA не двигает картинку). Вверх реагируем на 50 мс
+    // раньше, чем вниз: голодание лечим быстро, перерасход снимаем осторожно.
+    private const double DelayRampUpBand = 0.05;
+    private const double DelayReleaseBand = 0.15;
+
+    /// <summary>Текущая (возможно адаптивная) задержка интерполяции — для панели
+    /// и автотеста (§3.9).</summary>
+    public double InterpDelaySec => _interpDelay;
+
+    /// <summary>Измеренный период приёма снимков, сек (<0 — ещё не измерялся).</summary>
+    public double SnapPeriodSec => _snapPeriodEma;
+
 
     /// <summary>Включена ли интерполяция картинки не-авторитета. Выключена — hull
     /// ставится прямо в ПОСЛЕДНИЙ принятый снимок (без сдвига на `InterpDelay` и без
@@ -125,6 +166,66 @@ public partial class Ship : RigidBody3D
     /// <summary>Плечо мыши: радианы поворота носа на 1 пиксель движения мыши.</summary>
     [Export] public float MouseSensitivity = 0.0025f;
 
+    // ── Шаг 3.3: визуал луча прицела (только картинка, без попадания) ──────────
+    //
+    // Луч рисуется ЛОКАЛЬНО локальному пилоту сразу при нажатии ЛКМ — картинка не
+    // знает, было ли попадание (хитскан считает сервер, шаг 3.5). Поэтому узел
+    // луча живёт фиксированную длину времени и удаляется сам, независимо от сети.
+    /// <summary>Сколько секунд живёт визуальный луч (потом узел удаляется).</summary>
+    [Export] public float AimingBeamLifetime = 0.2f;
+    /// <summary>Длина отрисовки луча до точки прицела (м), если камера/мишень не дали
+    /// closer точку. Реальный хитскан сервера использует свою дальность (LaserRange).</summary>
+    [Export] public float AimingBeamLength = 200f;
+    /// <summary>Толщина луча (м).</summary>
+    [Export] public float AimingBeamRadius = 0.06f;
+
+    private MeshInstance3D? _aimBeam;
+    // Ствол из сцены — начало луча; null, если в сцене нет узла Muzzle (тогда
+    // луч рисуется от центра корпуса).
+    private Node3D? _muzzle;
+
+    // ─── Шаг 3.4: серверная авторизация выстрела (В17) ──────────────────────
+    // Гейты В17: (1) стреляющий = пилот корабля (тот же гейт, что у ввода);
+    // (2) не чаще FireCooldownSec (иначе спам RPC = флуд); (3) присланный
+    // aimPoint согласован с СЕРВЕРНЫМ лучом носа (-Basis.Z) по углу в допуске
+    // AimToleranceM. Состояние гейтов существует только на авторитете.
+    /// <summary>Минимальный интервал между принятыми выстрелами (сек), гейт
+    /// В17 п.2. Сервер отсчитывает от момента последнего ПРИНЯТОго выстрела.</summary>
+    [Export] public float FireCooldownSec = 0.2f;
+    /// <summary>Угловой допуск (рад) сверки клиентского `aimPoint` с серверным
+    /// лучом носа (В17 п.3): точка обязана лежать в конусе AimToleranceM вокруг
+    /// серверного `-Basis.Z`. По умолчанию 0.15 рад ≈ 8.6°.</summary>
+    [Export] public float AimToleranceM = 0.15f;
+
+    private double _lastFireTimeSec;      // время последнего принятого выстрела
+    private bool _hasLastFireTime;        // был ли хотя бы один принятый выстрел
+    private uint _lastAcceptedFireTick;   // монотонность тика выстрела (как тик ввода)
+    private bool _hasAcceptedFireTick;    // задан ли уже эталонный тик выстрела
+
+    // ─── Шаг 3.5: серверный хитскан (В17 п.3, §3.5 п.3 — НЕ в обработчике RPC) ──
+    /// <summary>Дальность хитскан-луча (м). Конец луча = серверный `Muzzle` +
+    /// серверный `shipForward (-Basis.Z) * LaserRange`. Риск №3 плана: хитскан
+    /// обязан читаться ПОСЛЕ шага физики — поэтому принятый выстрел кладётся в
+    /// очередь и исполняется в `_PhysicsProcess` авторитета, а не в `AcceptFireFrom`.</summary>
+    [Export] public float LaserRange = 400f;
+
+    /// <summary>Урон лазера по мишени (шаг 3.6): Hp -= FireDamage при каждом
+    /// подтверждённом сервером попадании. Единственный источник истины по урону —
+    /// сервер; `Hp` уходит пирам ТОЛЬКО репликой (риск №5: второй источник истины
+    /// запрещён — в `RpcOnHitConfirmed` `damage` нужен картинке, не счёту HP).</summary>
+    [Export] public int FireDamage = 25;
+
+    /// <summary>Принятые, но ещё не исполненные запросы выстрела: тик + мировая
+    /// точка прицела (она уже прошла угловую сверку В17 п.3). Исполняются и
+    /// очищаются только авторитетом в `_PhysicsProcess`.</summary>
+    private readonly Queue<(uint tick, Vector3 aimPoint)> _pendingFires = new();
+
+    /// <summary>Событие «попадание в мишень подтверждено сервером» (шаг 3.5):
+    /// `(targetNetId, tick, hitPoint)`. Шов автотеста п.21-п.23; в шаге 3.6 его
+    /// же сервер превратит в `RpcOnHitConfirmed` + урон. Станция (слой Station)
+    /// попаданием в мишень НЕ считается — событие не стреляет.</summary>
+    public event System.Action<int, uint, Vector3>? HitConfirmed;
+
     /// <summary>Дистанция камеры-преследования за кормой (шаг 2.2.3).</summary>
     [Export] public float CameraDistance = 12f;
 
@@ -137,6 +238,9 @@ public partial class Ship : RigidBody3D
     /// <summary>Дельта мыши, накопленная между физшагами: `InputEventMouseMotion`
     /// приходит в `_Input`, а симуляция считается в `_IntegrateForces`.</summary>
     private Vector2 _lookDelta;
+    // Шаг 3.3: последний экранный курсор — по нему восстанавливаем луч прицела
+    // для визуала (RequestFire вызывается между движениями мыши).
+    private Vector2 _lastMousePos;
 
     /// <summary>Счётчик физических шагов этого процесса = номер тика в кадрах
     /// ввода. Шаг 2.3 добавит серверную сверку тиков, здесь счётчик локальный.</summary>
@@ -376,6 +480,8 @@ public partial class Ship : RigidBody3D
         CollisionMask = CollisionLayers.ShipMask;
 
         Net = GetNodeOrNull<NetState>("NetState");
+        // Шаг 3.3: ствол — начало визуального луча (Ship.tscn: Muzzle, pos (0,0,-2)).
+        _muzzle = GetNodeOrNull<Node3D>("Muzzle");
 
         // §3.1 п.8: корабль с нулевым адресом физически живёт в сцене, но все его
         // RPC (RequestAttach, рассылка NetState, кадры ввода) уходят в никуда,
@@ -688,7 +794,20 @@ public partial class Ship : RigidBody3D
         // он работает только на пилоте (сервер-авторитет для чужого корабля читает
         // кадры из очереди, а не крутит автопилот), решение запекается в маску кадра
         // и сервер интегрирует ровно те же кадры — детерминизм сохраняется.
-        if (NetworkManager.Autopilot)
+        // ГАТ ПО РОЛИ (фикс OBS-002): автопилот — это стендовый пилот, он
+        // имеет право крутить тягу ТОЛЬКО там, где локальный пир реально ведёт
+        // предсказание и шлёт кадры (Offline, Host, Client). На dedicated-
+        // сервере локальный пир (SelfId=1) никогда не является целевым пилотом:
+        // у нового корабля PilotPeerId=1 по умолчанию (строка 42), поэтому до
+        // пристёгивания клиента `IsLocalPilot` ложно == true, и без этого гейта
+        // сервер гонял `ThrustF` каждый физшаг ~8 с (в космосе трения нет) —
+        // корабль улетал на ~950 м к моменту attach, первая же реконсиляция
+        // давала `err ≈ 955 м` → жёсткий откат и резонанс bang-bang-регулятора
+        // с частотой снимков (hardRollbacks 21…79/22 с, метрики §2.6 нерабочи).
+        // Сервер-авторитет обязан брать ввод из очереди кадров пилота
+        // (`FrameForStep`), а не из автопилота. См. bugs.md OBS-002.
+        if (NetworkManager.Autopilot &&
+            NetworkManager.Instance?.Role != NetworkManager.NetRole.Dedicated)
         {
             // Цель 6 м/с. Две планки связывают выбор скорости:
             //  • критерий (в) §2.6 `maxHullDelta < 0,15 м` меряет смещение hull
@@ -749,6 +868,10 @@ public partial class Ship : RigidBody3D
     /// </summary>
     internal void HandleMouseMotion(InputEventMouseMotion m)
     {
+        // Шаг 3.3: запоминаем экранный курсор ДО гейтов — выстрел (RequestFire)
+        // восстанавливает луч по последней позиции курсора, даже если в момент
+        // клика мышь не двигалась.
+        _lastMousePos = m.Position;
         if (!IsLocalPilot || m.Relative == Vector2.Zero)
             return;
         // Режим взаимодействия: мышь свободна и кликает по интерфейсу — она НЕ
@@ -775,6 +898,396 @@ public partial class Ship : RigidBody3D
         Vector3 w = GlobalPosition - o;
         float t = w.Dot(d);
         return (o + d * t - GlobalPosition).Length() <= AimRadiusM;
+    }
+
+    // ───────────────────────── Шаг 3.3: выстрел (визуал) ──────────────────────
+    //
+    // Точка входа выстрела. Пока (шаг 3.3) только визуал: луч от ствола до точки
+    // прицела, картинка живёт AimingBeamLifetime секунд и удаляется сама. Реального
+    // подсчёта попадания здесь НЕТ (хитскан — шаг 3.5, урон/подтверждение — шаг 3.6).
+    // Гейты ровно те же, что у доворота носа: локальный пилот + режим пилотирования
+    // + «курсор смотрит на корабль». Иначе ЛКМ, например в режиме взаимодействия
+    // (клики по UI), породила бы ложные лучи.
+
+    /// <summary>Гейты выстрела, НЕ связанные с прицельным лучом камеры:
+    /// «локальный пилот» + «не режим взаимодействия». Разделены с AimOnShip
+    /// именно для шва п.17: в headless камера есть (current=true у камеры
+    /// игрока/фолбэка), и экранный курсор (0,0) в неё не целится, поэтому
+    /// aim-гейт блокировал бы seam. AimOnShip — тот же гейт, что у доворота
+    /// носа, его корректность покрыта стадией 2; здесь проверяем сам луч.</summary>
+    private bool FireGatesNonAim() => IsLocalPilot && !IsInteractionMode;
+
+    /// <summary>Запрос выстрела локального пилота (ЛКМ через ShipMouseCatcher).
+    /// Гейты + визуал луча. Публично — чтобы тест мог позвать тот же путь кода
+    /// без эмуляции клика (шов <see cref="TestFireRequest"/>).</summary>
+    public void RequestFire()
+    {
+        if (!FireGatesNonAim())
+            return;
+        if (!AimOnShip(_lastMousePos))
+            return;
+        ShowAimingBeam();
+    }
+
+    /// <summary>Тот же путь кода, что у ЛКМ, но БЕЗ aim-гейта (шов п.17): мышь
+    /// в headless эмулировать нельзя, а current-камера перехватывает прицел по
+    /// пикселю. Seam оставляет гейты «локальный пилот» и «взаимодействие» —
+    /// именно их и проверяет п.17 (в Interaction луча нет).</summary>
+    public void TestFireRequest()
+    {
+        if (!FireGatesNonAim())
+            return;
+        ShowAimingBeam();
+    }
+
+    // ─── Шаг 3.4: RPC выстрела + серверная авторизация (В15 п.1, В17) ────────
+
+    /// <summary>Клиент-пилот: послать серверу намерение выстрелить в мировую
+    /// точку `aimPoint` (та, куда смотрит прицел). Сервер проверит намерение и
+    /// сам решит, был ли выстрел (хитскан — шаг 3.5). Адресуется по ShipNetId.</summary>
+    private void SubmitFireToServer(Vector3 aimPoint)
+    {
+        if (Net == null || Net.ShipNetId == 0)
+            return; // нет адреса — выстрел адресовать нечем
+        uint tick = (uint)Mathf.Max(0, Net.SimTick);
+        RpcId(1, nameof(RpcRequestFire), Net.ShipNetId, tick, aimPoint);
+    }
+
+    /// <summary>Шов автеста (по образцу `TestSubmitInput`, §3.9 п.15): «запрос
+    /// выстрела пришёл от пира X» без UDP. Тест зовёт тот же серверный гейт
+    /// `AcceptFireFrom`, что и боевой RPC — проверяется боевой код, а не копия.
+    /// `shipNetId` берётся из адреса этого корабля (RPC адресуются по адресу).</summary>
+    public bool TestFire(int senderPeer, uint tick, Vector3 aimPoint)
+        => AcceptFireFrom(senderPeer, Net?.ShipNetId ?? 0, tick, aimPoint);
+
+    /// <summary>Серверный приём запроса выстрела от пилота (гейты В17). Атрибут
+    /// как у `SubmitInputToServer` (В15 п.1): AnyPeer, CallLocal=false, надёжный,
+    /// канал 1 — выстрелы редки и терять их нельзя, в отличие от кадров ввода.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcRequestFire(int shipNetId, uint tick, Vector3 aimPoint)
+    {
+        AcceptFireFrom(Multiplayer.GetRemoteSenderId(), shipNetId, tick, aimPoint);
+    }
+
+    /// <summary>Серверные гейты выстрела + учёт. Возвращает true, если выстрел
+    /// принят. Гейты (В17): только сервер и авторитет; адрес корабля; отправитель
+    /// = пилот; монотонность тика; кулдаун `FireCooldownSec`; угловая сверка
+    /// `aimPoint` с СЕРВЕРНЫМ лучом носа (`-Basis.Z`) в допуске `AimToleranceM`.
+    /// Счётчики принявших/отклонённых — для assert'ов п.18-п.20.</summary>
+    private bool AcceptFireFrom(int senderPeer, int shipNetId, uint tick, Vector3 aimPoint)
+    {
+        if (NetworkManager.Instance is not { IsServer: true })
+            return false; // только сервер авторизует выстрел (В14=B)
+        if (Net == null || Net.ShipNetId != shipNetId)
+            return false; // выстрел про другой корабль (адрес важнее пути)
+        if (!HasAuthority)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: запрос выстрела пришёл пиру, который не " +
+                        $"является авторитетом корабля (auth = {GetMultiplayerAuthority()}) — отказ");
+            RejectedFireCount++;
+            return false;
+        }
+
+        if (senderPeer != PilotPeerId)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: запрос выстрела от пира {senderPeer}, а пилот " +
+                        $"= {PilotPeerId} — отказ (В17 п.1)");
+            RejectedFireCount++;
+            return false;
+        }
+
+        // Монотонность тика по образцу ввода: устаревший/дубликат выстрела — отказ.
+        if (_hasAcceptedFireTick && tick <= _lastAcceptedFireTick)
+        {
+            RejectedFireCount++;
+            return false;
+        }
+
+        // Гейт В17 п.2 — кулдаун: не чаще FireCooldownSec от последнего ПРИНЯТОго.
+        // Отсчёт от серверных часов (одни часы у авторитета), поэтому тест
+        // укладывается в допуск, чередуя тики и кадры.
+        if (_hasLastFireTime)
+        {
+            double now = Time.GetTicksMsec() / 1000.0;
+            if (now - _lastFireTimeSec < FireCooldownSec)
+            {
+                RejectedFireCount++;
+                return false;
+            }
+        }
+
+        // Гейт В17 п.3 — сверка намерения с СЕРВЕРНЫМ лучом носа. Сервер стреляет
+        // по своему `-Basis.Z`, а чужая точка годится лишь подтвердить намерение:
+        // если вектор к aimPoint вне конуса AimToleranceM вокруг носа — отказ.
+        Vector3 serverForward = -GlobalTransform.Basis.Z;
+        Vector3 toAim = aimPoint - BeamOriginGlobal();
+        if (toAim.LengthSquared() < 1e-6f ||
+            serverForward.AngleTo(toAim.Normalized()) > AimToleranceM)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: aimPoint вне допуска {AimToleranceM:F3} рад " +
+                        $"от серверного носа — отказ (В17 п.3)");
+            RejectedFireCount++;
+            return false;
+        }
+
+        // Все гейты пройдены — выстрел принят. Кладём в очередь хитскана (риск
+        // №3 плана: сам луч исполнится в `_PhysicsProcess` авторитета, а не здесь),
+        // урон и RPC подтверждения добавит шаг 3.6.
+        _lastAcceptedFireTick = tick;
+        _hasAcceptedFireTick = true;
+        _lastFireTimeSec = Time.GetTicksMsec() / 1000.0;
+        _hasLastFireTime = true;
+        AcceptedFireCount++;
+        ShotsFired++;
+        _pendingFires.Enqueue((tick, aimPoint));
+        return true;
+    }
+
+    /// <summary>Сколько выстрелов принял/отклонил сервер (автотесты п.18-п.20) и
+    /// сколько выстрелов вообще засчитано (счётчик для дебаг-строки шага 3.7).</summary>
+    public int AcceptedFireCount { get; private set; }
+    public int RejectedFireCount { get; private set; }
+    public int ShotsFired { get; private set; }
+    /// <summary>Число подтверждений попадания (счётчик для строки «Fire: shots/hits/rejected», шаг 3.7).</summary>
+    public int HitsRegistered { get; private set; }
+    /// <summary>Хитскан нашёл тело с `TargetState`, но его НЕТ в реестре мишеней —
+    /// попадание проигнорировано (п.25, риск №7: «мишень удалили, пока луч летел»).
+    /// Счётчик — детерминированный шов теста (ловля warning'а хрупка).</summary>
+    public int GhostHitsIgnored { get; private set; }
+
+    /// <summary>Начало луча — ствол (Muzzle), если он есть в сцене; иначе корпус.</summary>
+    private Vector3 BeamOriginGlobal()
+        => (_muzzle ?? (Node3D)this).GlobalPosition;
+
+    /// <summary>Серверный хитскан принятых выстрелов (шаг 3.5, риск №3 плана).
+    /// Вызывается из `_PhysicsProcess` авторитета — то есть ПОСЛЕ шага физики,
+    /// когда `PhysicsDirectSpaceState3D` видит актуальные позы тел, а не позапрошлого
+    /// кадра. Луч: от серверного `Muzzle` по серверному `shipForward (-Basis.Z)`
+    /// на `LaserRange`; `Basis` сервера уже содержит прицел (он интегрировал
+    /// LookYaw/LookPitch пилота), поэтому `aimPoint` клиента тут не нужен — он
+    /// проверен на угол в гейте В17 п.3. Маска `LaserMask` (Station | Target).
+    /// Тело попадания сопоставляется с мишенью ЧЕРЕЗ узел-компонент `TargetState`
+    /// (а не по имени/пути): есть `TargetState` — это мишень (п.21, событие
+    /// `HitConfirmed`); станция без `TargetState` (TestStand, слой Station) —
+    /// попаданием в цель НЕ считается (п.22); пустота — `IntersectRay` пуст (п.23).</summary>
+    private void ProcessPendingFires()
+    {
+        if (_pendingFires.Count == 0)
+            return;
+
+        PhysicsDirectSpaceState3D? space = GetWorld3D().DirectSpaceState;
+        if (space == null)
+        {
+            GD.PushWarning($"ship#{Net?.ShipNetId ?? 0}: нет PhysicalSpace3D — хитскан пропущен");
+            _pendingFires.Clear();
+            return;
+        }
+
+        Vector3 from = BeamOriginGlobal();      // серверный ствол (не клиентский!)
+        Vector3 fwd = -GlobalTransform.Basis.Z; // серверный прицел (уже в Basis)
+        Vector3 to = from + fwd * LaserRange;
+
+        // Убираем из трассы собственное тело, чтобы луч не стартовал внутри корпуса
+        // (ствол лежит на передней грани и может её зацепить).
+        var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+
+        while (_pendingFires.Count > 0)
+        {
+            (uint tick, Vector3 _) = _pendingFires.Dequeue();
+            var query = PhysicsRayQueryParameters3D.Create(from, to, CollisionLayers.LaserMask, exclude);
+            Godot.Collections.Dictionary hit = space.IntersectRay(query);
+            if (hit.Count == 0)
+                continue; // п.23: выстрел в пустоту — подтверждения нет
+
+            // result.GetCollider(): попадание → тело (PhysicsBody3D), не имя/путь.
+            if (hit["collider"].AsGodotObject() is not PhysicsBody3D body)
+                continue;
+
+            // Мишень опознаётся по дочернему буферу состояния, а не по имени:
+            // станция (TestStand, слой Station) тоже попала бы под LaserMask, но
+            // у неё нет `TargetState` — значит это НЕ попадание в цель (п.22).
+            TargetState? state = body.GetNodeOrNull<TargetState>("TargetState");
+            if (state == null || state.TargetNetId == 0)
+                continue;
+
+            // Шаг 3.6, риск №7: реестр — единственный владелец живых мишеней.
+            // Если мишень уже снята (удаляется в этом же кадре / гонка с чужим
+            // выстрелом), FindTarget вернёт null — это warning, а не исключение
+            // (п.25). Урон наносим по записи реестра, а не по «сырому» телу.
+            var nm = NetworkManager.Instance;
+            if (nm != null && nm.FindTarget(state.TargetNetId) == null)
+            {
+                GhostHitsIgnored++;
+                GD.PushWarning($"ship#{Net.ShipNetId}: хитскан в мишень " +
+                               $"#{state.TargetNetId}, её НЕТ в реестре — попадание " +
+                               $"игнорируется (риск №7: удаление во время полёта)");
+                continue;
+            }
+            TargetState target = state;
+
+            Vector3 hitPoint = hit["position"].AsVector3();
+            HitsRegistered++;
+
+            // ─── шаг 3.6: урон наносит ТОЛЬКО сервер (единый источник истины) ───
+            target.Hp = System.Math.Max(0, target.Hp - FireDamage);
+
+            // Рассылка подтверждения всем пирам (Reliable, канал 1): картинке —
+            // вспышка в hitPoint; счёт HP — репликой Hp, параметр damage здесь
+            // только для визуала/логов (риск №5: не второй источник истины).
+            // Offline (peer == null) — рассылать некому: там работает локальный
+            // шов HitConfirmed и локальная вспышка ниже.
+            if (Multiplayer.GetMultiplayerPeer() != null)
+                Rpc(nameof(RpcOnHitConfirmed), target.TargetNetId, FireDamage,
+                    hitPoint, Net.ShipNetId, tick);
+
+            GD.Print($"ship#{Net.ShipNetId}: попадание в мишень #{target.TargetNetId} " +
+                     $"(tick={tick}, HP {target.Hp}/{target.MaxHp})");
+
+            // Локальный шов теста/интерфейса (п.21-23 слушают именно его).
+            HitConfirmed?.Invoke(target.TargetNetId, tick, hitPoint);
+
+            // Уничтожение: сервер QueueFree — MultiplayerSpawner сам снимет узел
+            // у всех пиров; реестр чистит _ExitTree мишени.
+            if (target.Hp <= 0)
+            {
+                GD.Print($"мишень #{target.TargetNetId} уничтожена (стрелок " +
+                         $"ship#{Net.ShipNetId})");
+                target.GetParent()?.QueueFree(); // корень Target (RigidBody3D)
+            }
+
+            // Вспышка и на сервере (хост видит мир; dedicated — безвредно).
+            ShowHitFlash(hitPoint);
+        }
+    }
+
+    /// <summary>Шаг 3.6: подтверждение попадания от сервера всем пирам.
+    /// `RpcMode.Authority` — право отправлять только у авторитета узла (сервер,
+    /// id=1); Reliable, канал 1 (как служебные события). Параметры — КАРТИНКЕ:
+    /// вспышка в `hitPoint`; счёт HP — только репликой `Hp` (риск №5: параметр
+    /// `damage` здесь не трогает локальный Hp — второго источника истины нет).</summary>
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcOnHitConfirmed(int targetNetId, int damage, Vector3 hitPoint,
+                                  int shooterNetId, uint tick)
+    {
+        // Только картинка: вспышка у чужого выстрела тоже видна (в т.ч. стрелку).
+        ShowHitFlash(hitPoint);
+        GD.Print($"[hit] ship#{shooterNetId} → мишень #{targetNetId}: " +
+                 $"-{damage} (HP реплицируется), tick={tick}");
+    }
+
+    /// <summary>Краткая эмиссивная сфера в точке попадания (картинка, шаг 3.6).
+    /// Живёт ~0.3 с и удаляется сама — приём тот же, что у луча прицела.</summary>
+    private void ShowHitFlash(Vector3 at)
+    {
+        var parent = GetParent();
+        if (parent == null || !IsInsideTree())
+            return;
+        var flash = new MeshInstance3D
+        {
+            Name = "HitFlash",
+            Mesh = new SphereMesh { Radius = 0.6f, Height = 1.2f },
+            MaterialOverride = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                AlbedoColor = new Color(1f, 0.9f, 0.4f, 1f),
+                EmissionEnabled = true,
+                Emission = new Color(1f, 0.8f, 0.2f, 1f),
+                EmissionEnergyMultiplier = 2f,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            },
+        };
+        parent.AddChild(flash);
+        flash.GlobalPosition = at;
+        var timer = GetTree()?.CreateTimer(0.3);
+        if (timer != null)
+        {
+            timer.Timeout += () =>
+            {
+                if (GodotObject.IsInstanceValid(flash)) flash.QueueFree();
+            };
+        }
+        else
+        {
+            flash.QueueFree();
+        }
+    }
+
+    /// <summary>Построить/обновить визуальный луч от ствола до точки прицела.
+    /// Точка прицела = луч камеры через курсор, умноженный на длину луча (пока без
+    /// пересечения с мишенями — это добавит шаг 3.5). Без камеры (headless) —
+    /// просто вперёд по носу. Узел называется BeamVisual — на него смотрит тест п.17.</summary>
+    private void ShowAimingBeam()
+    {
+        Vector3 start = BeamOriginGlobal();
+        Vector3 end;
+        Camera3D? cam = GetViewport()?.GetCamera3D();
+        if (cam != null)
+        {
+            Vector3 o = cam.ProjectRayOrigin(_lastMousePos);
+            Vector3 d = cam.ProjectRayNormal(_lastMousePos);
+            end = o + d * AimingBeamLength;
+        }
+        else
+        {
+            // Без камеры прицел не определить — ведём луч вдоль носа (страховка headless).
+            end = start - GlobalTransform.Basis.Z * AimingBeamLength;
+        }
+
+        Vector3 dir = end - start;
+        float len = dir.Length();
+        if (len < 0.001f)
+            return;
+
+        // Узел живёт фиксированное время и удаляется сам (SceneTreeTimer). Новый
+        // выстрел убирает старый луч, чтобы не плодить узлы при спаме ЛКМ.
+        _aimBeam?.QueueFree();
+        var beam = new MeshInstance3D { Name = "BeamVisual" };
+        var cyl = new CylinderMesh
+        {
+            TopRadius = AimingBeamRadius,
+            BottomRadius = AimingBeamRadius,
+            Height = len,
+        };
+        beam.Mesh = cyl;
+        // Светящийся белый материал — картинка, не физический объект (нет коллизии).
+        var mat = new StandardMaterial3D
+        {
+            EmissionEnabled = true,
+            Emission = new Color(1, 1, 1),
+            EmissionEnergyMultiplier = 2.0f,
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+        };
+        beam.MaterialOverride = mat;
+
+        AddChild(beam);
+        // Ориентация: локальная Y цилиндра — вдоль луча. LookAt даёт -Z, поэтому
+        // доворачиваем базис: Y←нормаль луча.
+        beam.GlobalPosition = (start + end) * 0.5f;
+        Vector3 up = dir.Normalized();
+        // Строим базис, где Y=up, а X/Z — любые перпендикуляры (радиус симметричен).
+        Vector3 refAxis = Mathf.Abs(up.Dot(Vector3.Right)) < 0.9f ? Vector3.Right : Vector3.Up;
+        Vector3 x = up.Cross(refAxis).Normalized();
+        Vector3 z = x.Cross(up).Normalized();
+        beam.GlobalTransform = new Transform3D(new Basis(x, up, z), beam.GlobalPosition);
+
+        _aimBeam = beam;
+
+        // Самоудаление через AimingBeamLifetime секунд. Замыкание ловит конкретный
+        // узел: если его уже сняли раньше (новый выстрел) — проверка IsValid.
+        double secs = AimingBeamLifetime;
+        var timer = GetTree()?.CreateTimer(secs);
+        if (timer != null)
+        {
+            timer.Timeout += () =>
+            {
+                if (GodotObject.IsInstanceValid(beam))
+                    beam.QueueFree();
+                if (ReferenceEquals(_aimBeam, beam))
+                    _aimBeam = null;
+            };
+        }
     }
 
     /// <summary>
@@ -1124,6 +1637,10 @@ public partial class Ship : RigidBody3D
 
         if (HasAuthority)
         {
+            // Шаг 3.5: принятые запросы выстрела исполняются здесь, а не в RPC
+            // (риск №3 плана): `_PhysicsProcess` идёт после шага физики, поэтому
+            // `IntersectRay` видит актуальные тела, а не позиции прошлого кадра.
+            ProcessPendingFires();
             // Шаг 2.6, метрика (г): публикуем сетевой снимок раз в NetPublishEveryN
             // физшагов (30 Гц), а не каждый шаг (60 Гц). OnChange-репликация уходит
             // только когда свойство реально меняется, поэтому «реже пишем» = «реже
@@ -1262,7 +1779,8 @@ public partial class Ship : RigidBody3D
                 _metricsTimer = 0f;
                 GD.Print($"[metrics ship#{Net.ShipNetId}] role={(IsLocalPilot ? "pilot" : "observer")} " +
                          $"predErr={PredictionError:F3} hardRollbacks={HardRollbackCount} " +
-                         $"maxHullDelta={MaxHullDelta:F3} interpBuf={_interpBuf.Count}");
+                         $"maxHullDelta={MaxHullDelta:F3} interpBuf={_interpBuf.Count} " +
+                         $"interpDelay={_interpDelay:F3} snapPeriod={_snapPeriodEma:F3}");
                 // Окно метрики (в): за секунду — максимум дельт hull за ЭТУ секунду,
                 // дальше сбрасываем, чтобы разовый стартовый скачок не висел в
                 // каждой следующей строке (сессия-макс не убывает). hardRollbacks
@@ -1359,11 +1877,109 @@ public partial class Ship : RigidBody3D
     {
         while (_recvBuf.Count > 0 && _recvBuf.Peek().DueSec <= now)
         {
-            var s = _recvBuf.Dequeue().Snap;
-            _interpBuf.Add(new Snapshot(now, s.Pos, s.Rot));
-            const double window = InterpDelay * 4.0;
-            while (_interpBuf.Count > 2 && now - _interpBuf[0].Time > window)
-                _interpBuf.RemoveAt(0);
+            var entry = _recvBuf.Dequeue();
+            var s = entry.Snap;
+            // §3.9 (ключ): штампим снимок его ЖУРНАЛЬНЫМ временем доставки
+            // (`DueSec`), а не текущим `now`. Если после сетевой заминки в одном
+            // кадре «дозревает» пачка снимков, при штампе `now` все они получают
+            // одну и ту же отметку → вырожденные сегменты (нулевой интервал) и
+            // hull прыгает на весь путь пачки за кадр. DueSec сохраняет ровный
+            // шаг приёма, каким бы ни был джиттер доставки.
+            double stamp = entry.DueSec;
+            _interpBuf.Add(new Snapshot(stamp, s.Pos, s.Rot));
+            _adaptPending = true; // пересчёт адаптивной задержки ниже, один раз за кадр
+        }
+
+        // §3.9: адаптивная задержка — один пересчёт за кадр (не за снимок!),
+        // иначе пачка «дозревших» снимков даёт несколько шагов задержки в одном
+        // кадре и сама рисует скачок (тот же артефакт, что лечим). Замеряем
+        // ровный шаг между отметками снимков в буфере интерполяции.
+        AdaptInterpDelay(now);
+
+        // Окно буфера — достаточно глубокое, чтобы накрывать адаптивную
+        // задержку: render = now - _interpDelay должен остаться внутри окна.
+        // Держим минимум 2 снимка (иначе нечего интерполировать — «ждать»).
+        double window = System.Math.Max(InterpDelay, _interpDelay) * 2.5;
+        while (_interpBuf.Count > 2 && now - _interpBuf[0].Time > window)
+            _interpBuf.RemoveAt(0);
+    }
+
+    // Осталось ли что пересчитать за этот кадр (выставляется при дренаже).
+    private bool _adaptPending;
+    // Первый валидный замер периода — ставим задержку сразу в цель (без рампы),
+    // чтобы наблюдатель не оставался голодным несколько кадров на старте.
+    private bool _bootstrapDone;
+    private int _periodSamples;            // сколько оценок периода уже сделано
+    /// <summary>§3.9: пересчёт адаптивной задержки интерполяции (один раз за
+    /// кадр). Период меряем по шагу между отметками снимков (`DueSec`), с
+    /// пик-холдом по худшему недавнему зазору; задержка = factor × пик периода
+    /// (2 снимка в окне), плавно сходится к цели с быстрым ростом и медленным
+    /// спадом. Критерий (в) §2.6: render=now-delay всегда внутри окна → нет
+    /// скачков hull на наблюдателе при ≥3 кораблях.</summary>
+    private void AdaptInterpDelay(double now)
+    {
+        if (!_adaptPending) return;
+        _adaptPending = false;
+
+        // Период — шаг между двумя последними добавленными снимками (по DueSec,
+        // ровный). Считаем только валидный положительный шаг.
+        if (_interpBuf.Count >= 2)
+        {
+            double period = _interpBuf[^1].Time - _interpBuf[^2].Time;
+            if (period > 0.0 && period < SnapPeriodMax)
+            {
+                if (_snapPeriodEma < 0.0) _snapPeriodEma = period;
+                else _snapPeriodEma = _snapPeriodEma * 0.6 + period * 0.4;
+
+                // Пик-холд почти «липкий»: держим худший недавний зазор очень
+                // долго (полупериод спада ~десятки секунд на частоте снимков).
+                // Иначе единичный быстрый зазор роняет задержку, render=now-delay
+                // снова выезжает за самый свежий снимок → мёрзнет/прыгает —
+                // самоподдерживающаяся осцилляция. Держим запас по голоданию.
+                if (period > _snapGapPeak || _snapGapPeak < 0.0)
+                    _snapGapPeak = period;
+                else
+                    _snapGapPeak = _snapGapPeak * 0.995 + period * 0.005;
+
+                double worst = System.Math.Max(_snapPeriodEma, _snapGapPeak);
+                double target = Mathf.Clamp(
+                    (float)(AdaptiveDelayFactor * worst),
+                    (float)InterpDelay, (float)AdaptiveDelayMax);
+
+                // Первый замер периода — bootstrap: ставим задержку прямо в цель
+                // (без рампы). Рампа нужна только для плавного слежения за
+                // ДЖИТТЕРОМ в установившемся режиме; на старте буфер ещё не
+                // заполнен и картинка не может «прыгнуть», зато рампа оставляет
+                // наблюдателя голодным на несколько кадров (скачок hull при
+                // догоняющем render=now-delay). NetTest-шов сюда не заходит
+                // (TestPushSnapshot минует дренаж), его математика не тронута.
+                if (!_bootstrapDone && ++_periodSamples >= 3)
+                {
+                    _interpDelay = target;
+                    _bootstrapDone = true;
+                }
+                else if (_bootstrapDone)
+                {
+                    // ГИСТЕРЕЗИС с мёртвой зоной: держим задержку ПОСТОЯННОЙ против
+                    // дрожания EMA. Собственный дрейф задержки сам рисует скачок
+                    // hull на v×Δdelay (при 50 м/с Δdelay=0,02 → скачок 1 м, т.е.
+                    // лечение вносит ровно тот артефакт, что лечит). Двигаем
+                    // задержку только за пределами широкой мёртвой зоны: вверх —
+                    // если реальное голодание выросло (недобрли окно), вниз — если
+                    // явно переборщили. Внутри зоны — не трогаем вовсе.
+                    double delta = target - _interpDelay;
+                    if (delta > DelayRampUpBand)
+                    {
+                        double step = System.Math.Min(delta, MaxDelayStepUpPerFrame);
+                        _interpDelay += step;
+                    }
+                    else if (delta < -DelayReleaseBand)
+                    {
+                        double step = System.Math.Max(delta, -MaxDelayStepPerSnap);
+                        _interpDelay += step;
+                    }
+                }
+            }
         }
     }
 
@@ -1536,7 +2152,7 @@ public partial class Ship : RigidBody3D
             return;
         }
 
-        double render = now - InterpDelay;
+        double render = now - _interpDelay;
 
         // Один снимок или кадр раньше самого старого — рисуем самый старый.
         if (_interpBuf.Count == 1 || render <= _interpBuf[0].Time)
@@ -1766,7 +2382,17 @@ public partial class Ship : RigidBody3D
                 return;
             }
             if (@event is InputEventMouseMotion m)
+            {
                 _ship.HandleMouseMotion(m);
+                return;
+            }
+            // Шаг 3.3: ЛКМ (действие `fire`) — запрос выстрела. Гейты
+            // (IsLocalPilot && !Interaction && AimOnShip) внутри RequestFire;
+            // ловушка существует только у локального пилота (EnsureMouseCatcher),
+            // но гейт на всякий случай продублирован внутри — шов теста дёргает
+            // RequestFire напрямую, минуя мышь.
+            if (@event.IsActionPressed("fire"))
+                _ship.RequestFire();
         }
     }
 

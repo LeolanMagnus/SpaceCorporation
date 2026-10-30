@@ -1,0 +1,57 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/core/TargetState.cs" id="1_targetstate"]
+[ext_resource type="SceneReplicationConfig" path="res://scenes/TargetReplication.tres" id="2_replcfg"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_target"]
+size = Vector3(4, 4, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_target"]
+size = Vector3(4, 4, 4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_target"]
+albedo_color = Color(0.85, 0.55, 0.15, 1)
+emission_enabled = true
+emission = Color(0.85, 0.4, 0.1, 1)
+emission_energy_multiplier = 0.3
+
+; Учебная мишень (этап 3, §3.4). Разделение «истина / картинка» — как у Ship:
+;
+;   Target (RigidBody3D)    — ИСТИНА. Авторитет (сервер) ведёт её состояние;
+;                             на не-авторитете замирает (freeze) и только
+;                             интерполирует картинку.
+;   Visual (MeshInstance3D) — КАРТИНКА. Под ним же HP-полоска на следующих шагах;
+;                             трансформ картинки интерполирует наблюдатель,
+;                             физике это не мешает (§1.6, §2.5).
+;   TargetState (Node)      — буфер сетевого состояния (адрес, Hp/MaxHp, поза),
+;                             реплицируется Synchronizer'ом (RootPath = ".." =
+;                             сам корень мишени). У мишени СВОЙ класс состояния и
+;                             СВОЁ имя адреса (TargetNetId), не ShipNetId (§3.4 п.2).
+;
+; Коллизия на теле (не на картинке): хитскан-луч (шаг 3.5) бьёт по истинному
+; трансформу. Слой Target, маска 0 — чтобы луч (LaserMask=Station|Target) видел
+; мишень, но сама мишень никого не искала и не толкалась кораблём.
+; freeze_mode = DYNAMIC: мишень стоит до тех пор, пока авторитет сам её не
+; сдвинет (сброс freeze); так она не улетает от случайных контактов с кораблями.
+[node name="Target" type="RigidBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+collision_layer = 8
+collision_mask = 0
+mass = 1000.0
+freeze_mode = 1
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_target")
+
+[node name="Visual" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_target")
+material_override = SubResource("StandardMaterial3D_target")
+
+[node name="TargetState" type="Node" parent="."]
+script = ExtResource("1_targetstate")
+MaxHp = 100
+Hp = 100
+
+[node name="Synchronizer" type="MultiplayerSynchronizer" parent="."]
+replication_config = ExtResource("2_replcfg")
+root_path = NodePath("..")

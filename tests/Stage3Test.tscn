@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://tests/Stage3Test.cs" id="1_test"]
+[ext_resource type="PackedScene" path="res://scenes/Main.tscn" id="2_main"]
+
+; Тест стадии 3, шаг 3.1 (учебная мишень). Корень — Node, как в NetTest: миру
+; нужен реальный физический шаг и 3D-поддерево (Main — Node3D со спавнером), а
+; сам тест-драйвер — логика на кадрах. Main инстансится так же, как в NetTest.tscn,
+; чтобы WorldSpawner/NetworkManager поднялись штатно.
+[node name="Stage3Test" type="Node"]
+process_mode = 3
+script = ExtResource("1_test")
+
+[node name="Main" parent="." instance=ExtResource("2_main")]

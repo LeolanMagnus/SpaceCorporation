@@ -208,6 +208,52 @@ public partial class NetworkManager : Node
 
     public IReadOnlyDictionary<int, Ship> Ships => _ships;
 
+    // --------------------------------------------- реестр мишеней (этап 3, §3.4)
+    //
+    // Реестр по АДРЕСУ (TargetNetId), а не по пути узла: у спавн-сцены путь на
+    // разных пирах разный (MultiplayerSpawner генерирует имена), а адрес один —
+    // поэтому RPC урона (шаг 3.6) ищут цель здесь, а не через GetNode(path).
+    // Адрес мишени берётся из ТОГО ЖЕ монотонного счётчика, что ShipNetId
+    // (§3.4 п.2: одна нумерация на все спавнящиеся объекты, id не сталкиваются).
+
+    private readonly Dictionary<int, TargetState> _targets = new();
+
+    /// <summary>Выдать мишени адрес из общего счётчика, если ещё не назначен.
+    /// По образцу <see cref="AssignNetIdIfUnset"/>: на клиенте (Role==Client) не
+    /// делаем — адрес придёт с репликой; повторный вход адрес не меняет.</summary>
+    public void AssignTargetNetIdIfUnset(TargetState state)
+    {
+        if (Role == NetRole.Client || state.TargetNetId != 0)
+            return;
+        state.TargetNetId = NextNetId();
+    }
+
+    public void RegisterTarget(TargetState target)
+    {
+        int id = target.TargetNetId;
+        if (id == 0)
+            return; // без адреса в реестре участвовать нечем (ошибка на печати адреса)
+        if (_targets.TryGetValue(id, out var existing) && existing != target)
+        {
+            GD.PushError($"NetworkManager: коллизия TargetNetId {id} " +
+                         $"({existing.GetPath()} уже занимает его)");
+            return;
+        }
+        _targets[id] = target;
+    }
+
+    public void UnregisterTarget(TargetState target)
+    {
+        int id = target.TargetNetId;
+        if (_targets.TryGetValue(id, out var cur) && cur == target)
+            _targets.Remove(id);
+    }
+
+    public TargetState? FindTarget(int targetNetId) =>
+        _targets.TryGetValue(targetNetId, out var t) && GodotObject.IsInstanceValid(t) ? t : null;
+
+    public IReadOnlyDictionary<int, TargetState> Targets => _targets;
+
     // ------------------------------------------- пилот кораблей (§4 В3 п.3, В14=B)
     //
     // С шага 2.3 сервер назначает только ПИЛОТА — того, кто шлёт входные кадры
@@ -713,6 +759,38 @@ public partial class NetworkManager : Node
         DebugInfoBus.RegisterDebugButton("Join", () => Join("127.0.0.1"));
         DebugInfoBus.RegisterDebugButton("Disconnect", () => Disconnect());
         DebugInfoBus.RegisterInfoSource("Net", GetNetInfoLine);
+
+        // §3.7 п.26: строка Fire: shots/hits/rejected/targets. Источник вешается на
+        // NetworkManager (как «Net»), а не на отдельный Ship: счётчики выстрелов
+        // живут на каждом корабле-авторитете (AcceptedFireCount / HitsRegistered /
+        // RejectedFireCount), а строка должна быть ОДНА на сервер — иначе при N
+        // кораблях в панели появятся N строк (риск №6). Источник регистрируется
+        // всегда (синглтон живёт в любой роли, как и «Net»), но смысл строке дают
+        // серверные реестры: на клиенте корабли — не авторитет, их счётчики нули.
+        DebugInfoBus.RegisterInfoSource("fire", GetFireInfoLine);
+    }
+
+    /// <summary>Строка Fire: §3.7. Агрегация серверных счётчиков выстрелов по всем
+    /// кораблям-авторитетам в реестре + число живых мишеней. Формат
+    /// `Fire: shots=… hits=… rejected=… targets=…` — по образцу В17. Счётчик
+    /// выстрелов (shots) — принятые (AcceptedFireCount), отклонённые отдельно
+    /// (rejected), попадания (hits) — только те, что прошли хитскан по цели.</summary>
+    public string GetFireInfoLine()
+    {
+        int shots = 0, hits = 0, rejected = 0;
+        foreach (var (_, ship) in _ships)
+        {
+            if (ship == null || !GodotObject.IsInstanceValid(ship))
+                continue;
+            shots += ship.AcceptedFireCount;
+            hits += ship.HitsRegistered;
+            rejected += ship.RejectedFireCount;
+        }
+        int targets = 0;
+        foreach (var (_, t) in _targets)
+            if (t != null && GodotObject.IsInstanceValid(t) && !t.IsQueuedForDeletion())
+                targets++;
+        return $"Fire: shots={shots} hits={hits} rejected={rejected} targets={targets}";
     }
 
     /// <summary>Подписка на события соединения. В 4.7 они висят на MultiplayerApi,

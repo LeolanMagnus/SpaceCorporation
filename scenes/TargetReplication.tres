@@ -1,0 +1,51 @@
+[gd_resource type="SceneReplicationConfig" format=3]
+
+[resource]
+
+; Конфиг свойств MultiplayerSynchronizer учебной мишени (этап 3, §3.4 п.2).
+;
+; ФОРМАТ ПУТИ — с двоеточием: "TargetState:Hp", а НЕ "TargetState/Hp". Ловушка
+; перенесена из ShipReplication.tres (§3.11 п.2 / §3.1 шаг 1): путь без subname
+; (get_subname_count() == 0) молча отбрасывается при загрузке .tres
+; ("path.is_empty() || path.get_subname_count() == 0"), конфиг становится ПУСТЫМ,
+; и реплика не приходит ни по одному свойству. Двоеточие = узел TargetState
+; (путь от RootPath синхронизатора = сам корень мишени) и свойство Hp на нём.
+; Заголовок [gd_resource ...] ОБЯЗАТЕЛЕН, иначе ресурс не грузится.
+;
+; replication_mode: 0 = Never, 1 = Always, 2 = OnChange.
+;
+; В ОТЛИЧИЕ от корабля (ShipReplication.tres), где синхронизатор сделали «холодным
+; путём» (Never), потому что дельты ведёт упакованный батч SnapshotBroadcaster:
+; мишени в батч НЕ входят (батч строится по реестру кораблей), поэтому для мишени
+; синхронизатор — ЕДИНСТВЕННЫЙ транспорт. Значит дельты шлём (OnChange), иначе
+; изменение Hp после выстрела (шаг 3.6) до пира не долетит.
+;
+;   • TargetNetId — spawn=true, Never: клиент обязан получить адрес ОДИН РАЗ вместе
+;     с узлом мишени, чтобы сопоставить спавнящийся узел с реестром мишеней и найти
+;     цель по RPC урона; дельты адреса не нужны (адрес не меняется).
+;   • Hp — spawn=true (первое значение в снимке спавна) + OnChange (каждое падение
+;     от выстрела летит до пира: нужен визуал HP и assert п.15).
+;   • MaxHp — spawn=true, Never (для полоски, не меняется).
+;   • NetPosition / NetRotation — spawn=true (куда спавнить картинку) + OnChange:
+;     в 3.1 авторитет мишень не двигает, но путь оставлен верным, чтобы следующий
+;     шаг (дрейф/движение мишени) не требовал менять конфиг.
+;   • NetAngularVelocity — OnChange (интерполяция вращения наблюдателем).
+
+properties/0/path = NodePath("TargetState:TargetNetId")
+properties/0/spawn = true
+properties/0/replication_mode = 0
+properties/1/path = NodePath("TargetState:Hp")
+properties/1/spawn = true
+properties/1/replication_mode = 2
+properties/2/path = NodePath("TargetState:MaxHp")
+properties/2/spawn = true
+properties/2/replication_mode = 0
+properties/3/path = NodePath("TargetState:NetPosition")
+properties/3/spawn = true
+properties/3/replication_mode = 2
+properties/4/path = NodePath("TargetState:NetRotation")
+properties/4/spawn = true
+properties/4/replication_mode = 2
+properties/5/path = NodePath("TargetState:NetAngularVelocity")
+properties/5/spawn = false
+properties/5/replication_mode = 2
