@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeStationDeath.cs" id="1_probe"]
+
+; Проба Э4-П5 (этап 4, шаг 4.8): реальный Ship таранит реальную Station при
+; низком MaxHp — проверяем серверную смерть: узел помечен к удалению и
+; PilotPeerId == 0 (п.21).
+[node name="ProbeStationDeath" type="Node3D"]
+script = ExtResource("1_probe")

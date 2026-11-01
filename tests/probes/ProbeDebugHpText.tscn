@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeDebugHpText.cs" id="1_probe"]
+
+; Проба Э4-П7 (этап 4, шаг 4.10 п.26): BuildInfoText() содержит «HP:» с числом.
+[node name="ProbeDebugHpText" type="Node3D"]
+script = ExtResource("1_probe")

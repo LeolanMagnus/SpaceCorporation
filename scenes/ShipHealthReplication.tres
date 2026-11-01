@@ -1,0 +1,39 @@
+[gd_resource type="SceneReplicationConfig" format=3]
+
+[resource]
+
+; Конфиг свойств ВТОРОГО синхронизатора корабля — здоровья (Этап 4, шаг 4.5).
+;
+; ФОРМАТ ПУТИ — с двоеточием ("ShipHealthState:Hp"): путь без subname
+; (get_subname_count() == 0) молча отбрасывается при загрузке .tres, конфиг
+; становится ПУСТЫМ, и реплика не приходит вовсе (ловушка стадии 1,
+; §3.11 п.2; проверка п.9 читает эти же свойства геттерами движка).
+;
+; replication_mode: 0 = Never, 1 = Always, 2 = OnChange.
+;
+; ВНИМАНИЕ: это отдельный синхронизатор (`ShipHealthSync`), а НЕ тот, что ведёт
+; NetState (ShipReplication.tres, все Never после R6). Причина разделения —
+; В19 п.3: HP меняется раз в столкновение, а не в 20 Гц, поэтому HP НЕ входит в
+; запись батча (FullRecordSize = 21, ShipRecordCodec): метрика rec/s от урона не
+; растёт (п.7). Дельты идут по каналу 0 (deltas_owner, В11) — транспорт
+; «правды сервера», а не позы.
+;
+; OnChange = 2 + spawn = true у всех полей: поздно зашедший пир обязан получить
+; HP/GodMode спавн-снимком (иначе у него Hp = 100 у уже покалеченного корабля).
+; Писатель — только авторитет (сеттеры ShipHealthState печатают PrintErr иначе).
+
+properties/0/path = NodePath("ShipHealthState:Hp")
+properties/0/spawn = true
+properties/0/replication_mode = 2
+properties/1/path = NodePath("ShipHealthState:MaxHp")
+properties/1/spawn = true
+properties/1/replication_mode = 2
+properties/2/path = NodePath("ShipHealthState:GodMode")
+properties/2/spawn = true
+properties/2/replication_mode = 2
+properties/3/path = NodePath("ShipHealthState:DamageTakenCount")
+properties/3/spawn = true
+properties/3/replication_mode = 2
+properties/4/path = NodePath("ShipHealthState:LastDamage")
+properties/4/spawn = true
+properties/4/replication_mode = 2

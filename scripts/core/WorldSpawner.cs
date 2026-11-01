@@ -73,6 +73,9 @@ public partial class WorldSpawner : Node3D
             // Target гейтится IsServer), спавнер повторяет её у всех пиров;
             // удаление тоже только сервером (QueueFree → спавнер сам удалит у пира).
             _spawner.AddSpawnableScene("res://scenes/Target.tscn");
+            // Станция (Этап 4 §4.3): спавнит сервер при старте мира (SpawnWorld),
+            // спавнер повторяет её у всех пиров, включая поздних (шаг 4.3, В19).
+            _spawner.AddSpawnableScene("res://scenes/Station.tscn");
         }
         else
         {
@@ -271,7 +274,54 @@ public partial class WorldSpawner : Node3D
         // идентификатором, но пересечение путей ломает отладку (§3.9 п.15).
         SpawnShipAtSpawnPoint(0, "Ship");
         SpawnShipAtSpawnPoint(1, "Ship2");
+        // Станция (Этап 4, шаг 4.3): спавнится НА СТАРТЕ МИРА, не по кнопке —
+        // пир, зашедший в середине сессии, обязан получить её спавн-снимком.
+        SpawnStation(StationSpawnPos);
         GD.Print("WorldSpawner: мир заспавнен (корабли раньше игроков, §2.4)");
+    }
+
+    /// <summary>Позиция станции: далеко от стартовых точек, чтобы корабли при
+    /// спавне не впились в цилиндр (радиус 60 м).</summary>
+    private static readonly Vector3 StationSpawnPos = new(0f, 0f, 400f);
+
+    /// <summary>Спавн СТАНЦИИ (Этап 4, §4.3). Только авторитет: страховый гейт
+    /// отказывает КЛИЕНТУ (роль Client) — в Offline один процесс, и там станция
+    /// тоже нужна (п.5: ровно одна в дереве), поэтому жёсткий `IsServer`-гейт,
+    /// как у <see cref="SpawnTarget"/>, не подходит: SpawnWorld вызывается и из
+    /// StartSinglePlayerWorld. Адрес выдаётся ДО AddChild (иначе первый
+    /// спавн-снимок уйдёт с StationNetId = 0 — правила те же, что у мишеней
+    /// §3.1 п.8). Позиция — после AddChild (§3.6).</summary>
+    public Station? SpawnStation(Vector3 position)
+    {
+        var nm = NetworkManager.Instance;
+        if (nm != null && nm.Role == NetworkManager.NetRole.Client)
+        {
+            GD.PushWarning("WorldSpawner: SpawnStation вызван на клиенте — " +
+                           "спавн станции разрешён только авторитету (§4.3); " +
+                           "клиент получает станцию спавн-снимком.");
+            return null;
+        }
+        var scene = GD.Load<PackedScene>("res://scenes/Station.tscn");
+        if (scene == null)
+        {
+            GD.PushError("WorldSpawner: не удалось загрузить res://scenes/Station.tscn");
+            return null;
+        }
+        var body = scene.Instantiate<Station>();
+        NetworkManager.Instance?.AssignStationNetIdIfUnset(body.GetNode<StationState>("StationState"));
+        body.Name = UniqueChildName("Station");
+        AddChild(body);
+        body.GlobalPosition = position;
+        var state = body.GetNodeOrNull<StationState>("StationState");
+        if (state != null)
+        {
+            // Поза — в буфер состояния ДО отправки спавн-снимка: свойства с
+            // spawn = true читаются синхронизатором при входе узла в дерево,
+            // и пир обязан увидеть корректную позицию станции.
+            state.NetPosition = position;
+            state.NetRotation = body.GlobalTransform.Basis.GetRotationQuaternion();
+        }
+        return body;
     }
 
     /// <summary>Заспавнить корабль на стартовой точке с указанным индексом

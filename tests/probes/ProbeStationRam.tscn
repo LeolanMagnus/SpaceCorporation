@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeStationRam.cs" id="1_probe"]
+
+; Проба Э4-П4 (этап 4, шаг 4.7): реальный Ship таранит реальную Station —
+; проверяем урон (DamageTakenCount/LastDamage/Hp) и упругий отскок на сервере.
+[node name="ProbeStationRam" type="Node3D"]
+script = ExtResource("1_probe")

@@ -186,6 +186,11 @@ public partial class SnapshotBroadcaster : Node
 
     private void RebuildGrid(NetworkManager nm)
     {
+        // Шаг 4.4: в батч и в грид интереса идут ТОЛЬКО симулируемые корабли из
+        // реестра Ships. Целевой фильтр — сам реестр: TargetState в него не
+        // регистрируется (мишени едут дельтой синхронизатора, TargetReplication,
+        // mode=2), StationState — тем более (статика, спавн-снимок, StationReplication).
+        // Метрики (rec/s) от добавления станции вырасти НЕ должны (п.7).
         _bodies.Clear();
         foreach (var ship in nm.Ships.Values)
         {

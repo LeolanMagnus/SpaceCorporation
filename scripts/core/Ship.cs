@@ -41,6 +41,10 @@ public partial class Ship : RigidBody3D
     /// отклонял кадры не от своего пилота (§3.5 п.8, шаг 2.3).</summary>
     public int PilotPeerId { get; private set; } = 1;
 
+    /// <summary>Буфер HP («правда сервера»), если он есть на корабле (этап 4, шаг 4.5).
+    /// Аксессор — тот же `ShipHealthState`-узел, что читают учёт урона и debug-info.</summary>
+    public ShipHealthState? Health => GetNodeOrNull<ShipHealthState>("ShipHealthState");
+
     // --- интерполяция картинки (шаг 8, §2.5/§3.3) ---------------------------
     //
     // Не-авторитет не симулирует корабль (тело заморожено), поэтому его задача —
@@ -115,6 +119,16 @@ public partial class Ship : RigidBody3D
 
     /// <summary>Переключить интерполяцию (для кнопки дебаг-панели).</summary>
     public void ToggleInterpolation() => _interpolationEnabled = !_interpolationEnabled;
+
+    /// <summary>Шаг 4.9: переключить god mode. Идёт в единственный серверный путь
+    /// записи (`ShipHealthState.SetGodModeServerOnly`), который сам гейтится по
+    /// авторитету. Кнопка регистрируется только серверному процессу (см. _Ready),
+    /// RPC нет вовсе — с клиента запрос не принимается (п.23/п.24).</summary>
+    public void ToggleGodMode()
+    {
+        if (GetNodeOrNull<ShipHealthState>("ShipHealthState") is { } h)
+            h.SetGodModeServerOnly(!h.GodMode);
+    }
 
     /// <summary>Буфер снимков (кольцевой по времени): (момент приёма, позиция,
     /// поворот). Храним локальное время приёма, потому что снимки приходят
@@ -196,6 +210,34 @@ public partial class Ship : RigidBody3D
     /// лучом носа (В17 п.3): точка обязана лежать в конусе AimToleranceM вокруг
     /// серверного `-Basis.Z`. По умолчанию 0.15 рад ≈ 8.6°.</summary>
     [Export] public float AimToleranceM = 0.15f;
+
+    // --- Этап 4, шаг 4.7: серверный учёт контакта со станцией ----------------
+    // Урон и отскок считает ТОЛЬКО авторитет в _IntegrateForces (клиент их не
+    // трогает — шаг 4.11). Обнаружение — PhysicsDirectSpaceState3D.IntersectShape
+    // по маске Station (проба tests/probes/ProbeStationPen.cs: там же в C#-биндинге
+    // НЕТ ComputePenetration, а в результате IntersectShape есть только ключи
+    // rid/collider_id/collider/shape — глубины/нормали нет, поэтому нормаль
+    // берём геометрически: из центра станции в корабль).
+    /// <summary>Пауза (сек) между повторным учётом урона тому же узлу-пересечению,
+    /// чтобы корабль, застрявший в цилиндре станции, не получал урон каждый кадр
+    /// (таблица «ломается», строка «застрять → урон капает»).</summary>
+    [Export] public float CollisionCooldownSec = 0.5f;
+    /// <summary>Сетевой адрес станции, по которому корабль таранит в этом же
+    /// физкадре — чтобы тот же контакт в одном кадре не считался дважды.</summary>
+    private int _lastContactStationNetId;
+    private ulong _lastContactPhysicsFrame;
+    /// <summary>Серверные часы последнего учёта урона конкретной станции
+    /// (кулдаун CollisionCooldownSec).</summary>
+    private double _lastCollisionTimeSec;
+    private bool _hasLastCollisionTime;
+    /// <summary>Форма корпуса корабля для shape-запроса (кэш CollisionShape3D).</summary>
+    private CollisionShape3D? _hullShapeNode;
+    /// <summary>Флаг «отскок применён» — метод выставил новое n.LinearVelocity,
+    /// инкрематор обязан записать его в `sd` перед шагом 3.</summary>
+    private bool _collisionApplied;
+    /// <summary>Новая линейная скорость после упругого отскока (валидна, если
+    /// <see cref="_collisionApplied"/>).</summary>
+    private Vector3 _collisionOutVelocity;
 
     private double _lastFireTimeSec;      // время последнего принятого выстрела
     private bool _hasLastFireTime;        // был ли хотя бы один принятый выстрел
@@ -482,6 +524,9 @@ public partial class Ship : RigidBody3D
         Net = GetNodeOrNull<NetState>("NetState");
         // Шаг 3.3: ствол — начало визуального луча (Ship.tscn: Muzzle, pos (0,0,-2)).
         _muzzle = GetNodeOrNull<Node3D>("Muzzle");
+        // Этап 4, шаг 4.7: форма корпуса для IntersectShape-запроса контакта со
+        // станцией (Ship.tscn: CollisionShape3D, BoxShape3D 2×1×4).
+        _hullShapeNode = GetNodeOrNull<CollisionShape3D>("CollisionShape3D");
 
         // §3.1 п.8: корабль с нулевым адресом физически живёт в сцене, но все его
         // RPC (RequestAttach, рассылка NetState, кадры ввода) уходят в никуда,
@@ -499,22 +544,33 @@ public partial class Ship : RigidBody3D
         // узла с именем "Ship" зальют в шину один ключ, и половина мира исчезнет из
         // панели. В offline адрес = 1, поэтому и там строка помечена Ship#1.
         DebugInfoBus.RegisterInfoSource($"Ship#{Net?.ShipNetId ?? 0}", () =>
-            $"ship#{Net?.ShipNetId ?? 0}: |v| = {LinearVelocity.Length():F2} m/s, " +
-            $"|w| = {AngularVelocity.Length():F2} rad/s, " +
-            $"mass = {Mass:F1}, " +
-            // Без auth/frozen/|err| реконсиляцию и смену пилота отлаживать нечем (§3.1 п.6).
-            $"auth = {GetMultiplayerAuthority()}, pilot = {PilotPeerId}, " +
-            $"mode = {(IsInteractionMode ? "INTERACT" : "PILOT")}, " +
-            $"frozen = {Freeze}, " +
-            $"netid = {Net?.ShipNetId ?? 0}, " +
-            // Показатели stage2-plan §2.5: Server Tick (тикет серверной физики из
-            // реплики NetState), Prediction Error (расхождение предсказания пилота
-            // с эталоном), Interp Buffer (число снимков в буфере интерполяции) и
-            // состояние интерполяции. Пинг (RTT) печатает строка «Net» NetworkManager.
-            $"srvTick = {(Net == null ? "—" : Net.SimTick.ToString())}, " +
-            $"predErr = {PredictionError:F3}, " +
-            $"interpBuf = {_interpBuf.Count}, interpOn = {_interpolationEnabled}, " +
-            $"|err| = {(Net == null ? 0f : Net.NetPosition.DistanceTo(GlobalPosition)):F3}");
+        {
+            // Шаг 4.10 (п.26): в панель дебаг-инфы добавлена строка HP (число) +
+            // god mode + счётчик ударов. Health-узел есть у каждого корабля, но
+            // защищаемся от null (напр. моментально удалённый ShipHealthState).
+            string healthPart = "";
+            if (GetNodeOrNull<ShipHealthState>("ShipHealthState") is { } h)
+                healthPart = $"HP: {h.Hp}/{h.MaxHp}, god={(h.GodMode ? "on" : "off")}, " +
+                             $"dmg#={h.DamageTakenCount}, lastDmg={h.LastDamage:F1}, ";
+            return
+                $"ship#{Net?.ShipNetId ?? 0}: |v| = {LinearVelocity.Length():F2} m/s, " +
+                $"|w| = {AngularVelocity.Length():F2} rad/s, " +
+                $"mass = {Mass:F1}, " +
+                // Без auth/frozen/|err| реконсиляцию и смену пилота отлаживать нечем (§3.1 п.6).
+                $"auth = {GetMultiplayerAuthority()}, pilot = {PilotPeerId}, " +
+                $"mode = {(IsInteractionMode ? "INTERACT" : "PILOT")}, " +
+                $"frozen = {Freeze}, " +
+                $"netid = {Net?.ShipNetId ?? 0}, " +
+                // Показатели stage2-plan §2.5: Server Tick (тикет серверной физики из
+                // реплики NetState), Prediction Error (расхождение предсказания пилота
+                // с эталоном), Interp Buffer (число снимков в буфере интерполяции) и
+                // состояние интерполяции. Пинг (RTT) печатает строка «Net» NetworkManager.
+                $"srvTick = {(Net == null ? "—" : Net.SimTick.ToString())}, " +
+                $"predErr = {PredictionError:F3}, " +
+                $"interpBuf = {_interpBuf.Count}, interpOn = {_interpolationEnabled}, " +
+                healthPart +
+                $"|err| = {(Net == null ? 0f : Net.NetPosition.DistanceTo(GlobalPosition)):F3}";
+        });
 
         // Реестр кораблей по адресу: RPC про корабль идут по ShipNetId, не по пути (§4 В4 п.3).
         if (Net != null && Net.ShipNetId != 0)
@@ -535,6 +591,15 @@ public partial class Ship : RigidBody3D
         if (HasAuthority)
         {
             DebugInfoBus.RegisterDebugButton("Nudge Ship", NudgeShip);
+            // Шаг 4.9: god mode включает только серверный процесс. Сервер — всегда
+            // авторитет корабля (В14=B), поэтому гейт по HasAuthority = гейт «только
+            // сервер» (п.23: у клиента-не-авторитета кнопки нет вовсе).
+            DebugInfoBus.RegisterDebugButton("Toggle God Mode", ToggleGodMode);
+
+            // CLI-путь god mode для headless/dedicated (панели нет): `-- --god`
+            // идёт в тот же серверный метод, что и кнопка (п.24).
+            if (NetworkManager.GodModeCli)
+                ToggleGodMode();
         }
         else
         {
@@ -553,6 +618,7 @@ public partial class Ship : RigidBody3D
         DebugInfoBus.RemoveInfoSource($"Ship#{Net?.ShipNetId ?? 0}");
         DebugInfoBus.RemoveDebugButton("Nudge Ship");
         DebugInfoBus.RemoveDebugButton("Toggle Interpolation");
+        DebugInfoBus.RemoveDebugButton("Toggle God Mode");
 
         // §3.9 п.16: игрок, пристёгнутый к точкам этого корабля, — узел внутри
         // ShipHull/AttachPoints, и при удалении корабля был бы удалён вместе с ним.
@@ -716,6 +782,14 @@ public partial class Ship : RigidBody3D
         // у offline-игры сервер = локальный пир, и поведение стадии 1 сохраняется.
         FlightState n = AdvanceFlight(s, FrameForStep(), dt);
 
+        // --- 2.5. Этап 4, шаг 4.7: серверный учёт контакта со станцией ---
+        // Запрашиваем пересечение КОРПУСА в позе КОНЦА шага (n.Position): если
+        // корпус вошёл в цилиндр станции — урон по |vn| и отскок. Только на
+        // авторитете (метод уже гейтнут HasAuthority выше), клиент сюда не
+        // заходит (шаг 4.11). Результат отскока — в n.LinearVelocity ДО записи.
+        HandleStationContacts(n.Position, n.LinearVelocity);
+        if (_collisionApplied) { n.LinearVelocity = _collisionOutVelocity; _collisionApplied = false; }
+
         // --- 3. Запись в тело (финальна для шага) ---
         sd.Transform = new Transform3D(new Basis(n.Rotation), n.Position);
         sd.LinearVelocity = n.LinearVelocity;
@@ -731,6 +805,140 @@ public partial class Ship : RigidBody3D
         FlightState n = StepPrediction(s, frame, dt);
         _tick++;
         return n;
+    }
+
+    /// <summary>
+    /// Этап 4, шаг 4.7 — серверный учёт контакта со станцией. Вызывается из
+    /// обоих шагов (`_IntegrateForces` и `TestStepForTest`) ПОСЛЕ шага модели и
+    /// ДО финальной записи `LinearVelocity` — иначе запись перетрёт отскок
+    /// (stage4-plan §4.7). Вызывается только на авторитете (оба вызывающих пути
+    /// уже гейтятся `HasAuthority`), поэтому «правда сервера» о HP пишется без
+    /// GuardWrite-ошибок, а клиент урона не считает вовсе (шаг 4.11).
+    ///
+    /// Обнаружение (проба tests/probes/ProbeStationPen.cs + ProbeIntegrateContact.cs):
+    ///   • в C#-биндинге Godot 4.7 НЕТ `ComputePenetration`; рабочий примитив —
+    ///     `PhysicsDirectSpaceState3D.IntersectShape`, вызванный прямо из
+    ///     `_IntegrateForces` (пространство во время шага доступно, не «заперто»);
+    ///   • в словаре пересечения есть только ключи rid/collider_id/collider/shape —
+    ///     НИ глубины, НИ нормали нет, поэтому нормаль сближения считаем
+    ///     геометрически: из центра станции в корабль (`stationPos → shipPos`).
+    ///   • `collider` достаём через `.As<GodotObject>()` и приводим к `Station`.
+    /// Урон: `CollisionDamage.ComputeDamage` (чистая функция, шаг 4.6) по
+    /// нормальной составляющей скорости `ApproachSpeed`. Отскок: `ApplyBounce` —
+    /// применяется ВСЕГДА при контакте (даже dmg==0), иначе корабль ползёт
+    /// внутри цилиндра станции.
+    /// Анти-спам: пара `(StationNetId, PhysicsFrame)` запрещает повторный учёт
+    /// того же контакта в одном физкадре; `CollisionCooldownSec` — пауза между
+    /// повторными удрами по той же станции (таблица «ломается»).
+    /// </summary>
+    private void HandleStationContacts(Vector3 shipPos, Vector3 v)
+    {
+        if (_hullShapeNode?.Shape == null)
+            return;
+        var space = GetWorld3D()?.DirectSpaceState;
+        if (space == null)
+            return;
+
+        var xform = new Transform3D(GlobalTransform.Basis, shipPos);
+        var pq = new PhysicsShapeQueryParameters3D
+        {
+            Shape = _hullShapeNode.Shape,
+            Transform = xform,
+            CollisionMask = CollisionLayers.Station,
+            CollideWithBodies = true,
+            CollideWithAreas = false,
+            Exclude = new Godot.Collections.Array<Rid> { GetRid() },
+            Margin = 0.0f,
+        };
+
+        var hits = space.IntersectShape(pq, 8);
+        if (hits.Count == 0)
+            return;
+
+        var health = GetNodeOrNull<ShipHealthState>("ShipHealthState");
+        ulong frame = Engine.GetPhysicsFrames();
+        double nowSec = Time.GetTicksMsec() / 1000.0;
+
+        foreach (Variant hv in hits)
+        {
+            var d = hv.AsGodotDictionary();
+            if (!d.TryGetValue("collider", out Variant cv))
+                continue;
+            var col = cv.As<GodotObject>();
+            if (col is not Station station)
+                continue; // TestStand и прочая статика слоя Station урона не дают
+
+            int stationNetId = station.State?.StationNetId ?? 0;
+
+            // Тот же контакт в этом же физкадре — уже учтён (п.19).
+            if (stationNetId == _lastContactStationNetId && frame == _lastContactPhysicsFrame)
+                continue;
+            // Кулдаун по станции (п. «застрять → урон капает»): в пределах
+            // CollisionCooldownSec урон не начисляем, но отскок ниже всё равно.
+            bool inCooldown = _hasLastCollisionTime &&
+                              stationNetId == _lastContactStationNetId &&
+                              nowSec - _lastCollisionTimeSec < CollisionCooldownSec;
+
+            // Внешняя нормаль станции → в сторону корабля.
+            Vector3 outward = shipPos - station.GlobalPosition;
+            if (outward.LengthSquared() <= 0.0001f)
+                outward = -GlobalTransform.Basis.Z; // вырожденный случай: наружу от носа
+            outward = outward.Normalized();
+
+            float vn = CollisionDamage.ApproachSpeed(v, outward); // >0 когда летим в станцию
+
+            _lastContactStationNetId = stationNetId;
+            _lastContactPhysicsFrame = frame;
+
+            if (health != null && !inCooldown)
+            {
+                int dmg = CollisionDamage.ComputeDamage(health.MaxHp, health.GodMode, vn);
+                if (dmg > 0)
+                {
+                    health.Hp = Mathf.Max(0, health.Hp - dmg);
+                    health.LastDamage = dmg;
+                    health.DamageTakenCount++;
+                    _lastCollisionTimeSec = nowSec;
+                    _hasLastCollisionTime = true;
+                    GD.Print($"ship#{Net?.ShipNetId ?? 0}: урон {dmg} от станции " +
+                             $"#{stationNetId} (|vn| = {Mathf.Abs(vn):F1} м/с), " +
+                             $"Hp = {health.Hp}/{health.MaxHp}, ударов = {health.DamageTakenCount}");
+
+                    // Шаг 4.8: Hp<=0 → серверная смерть. Этот путь уже гейтится
+                    // авторитетом (_IntegrateForces/HandleStationContacts работают
+                    // только у сервера), поэтому повторная проверка не нужна.
+                    if (health.Hp <= 0)
+                        ServerDieShip();
+                }
+            }
+
+            // Отскок — всегда при контакте, независимо от урона и кулдауна.
+            v = CollisionDamage.ApplyBounce(v, outward, vn, CollisionDamage.BounceRestitution);
+        }
+
+        _collisionOutVelocity = v;
+        _collisionApplied = true;
+    }
+
+    /// <summary>
+    /// Шаг 4.8: серверная смерть корабля (Hp<=0 после урона от станции).
+    /// По образцу ветки `target.Hp <= 0` у мишени (QueueFree + печать).
+    /// Вызывается только с сервера-авторитета (_IntegrateForces/HandleStationContacts
+    /// гейтятся авторитетом), поэтому сам метод авторитет не проверяет.
+    /// Пилот снимается присваиванием PilotPeerId = 0 (не через SetPilot — корабль
+    /// всё равно удаляется, рассылать нового пилота незачем). Пристёгнутый игрок
+    /// отпускается в _ExitTree (§3.9 п.16) ДО удаления узла — капсула не виснет.
+    /// Удаление корабля реплицируется спавнером (spawner-реплика QueueFree), поэтому
+    /// у не-авторитета корабль исчезнет тем же путём, что и у сервера (п.22).
+    /// </summary>
+    private void ServerDieShip()
+    {
+        if (IsQueuedForDeletion() || !IsNodeReady())
+            return; // уже умирает — не повторять
+
+        PilotPeerId = 0; // п.21: после Hp=0 у сервера пилот снят (0 = не назначался)
+        GD.Print($"ship#{Net?.ShipNetId ?? 0}: уничтожен (Hp<=0) — сервер удаляет узел");
+        QueueFree();
     }
 
     /// <summary>Ядро шага без счётика тика: мышь → ориентация, кадр → тяга.
@@ -2457,6 +2665,21 @@ public partial class Ship : RigidBody3D
         _testStep = false;
     }
 
+    /// <summary>Шов теста Этапа 4 (п.11/п.22/п.27): изобразить НЕ-авторитет корабля
+    /// — назначить узлу чужой сетевой авторитет (peer, отличный от локального) и
+    /// пересчитать роль через <see cref="ApplyAuthority"/> (тот же пересчёт, что у
+    /// <see cref="ApplyPilot"/>). После шва <see cref="IsServerAuthority"/> == false:
+    /// сеттеры <see cref="ShipHealthState"/> помечают запись чужой
+    /// (<c>IsNonAuthorityWrite()</c> == true), а <see cref="TestStepForTest"/> не
+    /// шагает (не-авторитет интегрирует только предсказание, не истину). Реальной
+    /// UDP-доставки пиру в headless нет — это шов «роли» по образцу NetTest
+    /// (`SetMultiplayerAuthority(peer, false)`).</summary>
+    public void TestSimulateAuthorityOwnerForTest(int ownerPeer)
+    {
+        SetMultiplayerAuthority(ownerPeer, false);
+        ApplyAuthority();
+    }
+
     /// <summary>Явный шаг модели (для теста, где физкадров нет): ровно один шаг
     /// `FlightModel` из текущего состояния тела с записью обратно — тот же код,
     /// что и `_IntegrateForces`.</summary>
@@ -2480,6 +2703,10 @@ public partial class Ship : RigidBody3D
         // кадров (`_serverInput`). Так тест п.7 гоняет настоящий серверный путь,
         // а не его копию (§3.8).
         FlightState n = AdvanceFlight(s, FrameForStep(), dt);
+
+        // Этап 4, шаг 4.7: тот же серверный учёт контакта, что и в бою (§3.8).
+        HandleStationContacts(n.Position, n.LinearVelocity);
+        if (_collisionApplied) { n.LinearVelocity = _collisionOutVelocity; _collisionApplied = false; }
 
         GlobalTransform = new Transform3D(new Basis(n.Rotation), n.Position);
         LinearVelocity = n.LinearVelocity;

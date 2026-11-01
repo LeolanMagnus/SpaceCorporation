@@ -427,6 +427,91 @@ headless-экспорт сервера (это Этап 7, `prototype-plan.md:14
 
 ---
 
+## Этап 4 — Станция + урон от столкновений, HP как «правда сервера» ✅ (зафиксирован)
+
+> План стадии: `stage4-plan.md` (§4). Источник требований: `prototype-plan.md`,
+> «Этап 4» (строки 100–101).
+
+**Что сделано:**
+
+- **Станция** — `scenes/Station.tscn`: корень `Station : StaticBody3D` (слой
+  `Station`, маска `Ship`), цилиндр r=60 м × h=40 м, огни-заглушки (`Enabled=false`),
+  дочерние `StationState` (NetId/позиция/поворот/MaxHp — все `spawn=true`) и
+  `DockingPoint : AttachPoint` (`Kind=Hatch`, закладка под Этап 5/6, логики притяжения нет).
+  `AttachPoint.ResolveOwnerNetId` расширен поиском `StationState` (иначе `OwnerNetId=-1`).
+- **Реестр станций** — `NetworkManager`: `Dictionary<int, StationState>` +
+  `FindStation`/`RegisterStation`/`UnregisterStation` по образцу мишеней; адрес
+  выдаётся **до** `AddChild` (гонка первого спавн-снимка, §4.2).
+- **Спавн** — `WorldSpawner.SpawnStation` вызывается из `SpawnWorld` (не по кнопке):
+  пир, зашедший в середине сессии, обязан получить станцию спавн-снимком
+  (`StationReplication.tres`: `replication_mode = Never`, дельт нет — В4-батч и
+  `SpatialIndex` станцию не видят, шаг 4.4).
+- **HP корабля** — `ShipHealthState` (`Hp`, `MaxHp=100`, `GodMode`, `LastDamage`,
+  `DamageTakenCount`) + `ShipHealthReplication.tres`: `Hp/GodMode` — `OnChange` +
+  `spawn=true`; сервер пишет правду, реплика доходит до не-авторитета.
+- **Чистая функция урона** — `CollisionDamage.ComputeDamage(maxHp, god, vn)`:
+  порог 12 м/с, 2 ед. урона за 1 м/с сверх порога, кламп в `MaxHp`, god → 0,
+  знак `vn` не важен. `ApplyBounce`/`ApproachSpeed` — отскок с `restitution=0.3`,
+  расходящийся корабль не разворачивается (станция его не «тянет»).
+- **Серверный учёт контакта** в `_IntegrateForces` (шаг 4.7): `IntersectShape` по
+  маске `Station` из позы корабля; учитываются только `Station`-коллайдеры
+  (`TestStand` урона не даёт); анти-спам — пара `(StationNetId, PhysicsFrame)` +
+  `CollisionCooldownSec = 0.5` по станции; отскок применяется ВСЕГДА при контакте
+  (иначе корабль ползёт внутри цилиндра).
+- **Смерть** `Hp <= 0` → `ServerDieShip`: пилот отстёгнут (`PilotPeerId=0`) до
+  `QueueFree` (§3.9 п.16); не-авторитет сам себя НЕ удаляет — смерть приходит
+  спавнер-репликой (п.22).
+- **God Mode (шаг 4.9):** кнопка `Toggle God Mode` регистрируется только авторитету
+  гейтом `HasAuthority` в `_Ready`; серверный метод + CLI `-- --god`; при god урон 0,
+  отскок сохраняется. **Show HP** (шаг 4.10) — `Hp`/`LastDamage`/`DamageTakenCount`
+  в источнике `Ship#N` debug-панели.
+- **Главный критерий (п.11/п.27):** запись `Hp`/`GodMode` без авторитета — софт-гейт:
+  свой экземпляр не-авторитета меняет не пишет и не отменяет серверный урон
+  (страховый `GD.PushErr`); реплика сервера всегда побеждает.
+
+### Итоговая проверка Этапа 4 (шаг 4.12)
+
+Финальный прогон всех наборов (все зелёные, регресса нет):
+
+| Набор | Assert'ов | Провалов |
+|---|---|---|
+| `run-tests.sh` (Stage1Test) | 104 | 0 |
+| `run-tests.sh res://tests/Stage2Test.tscn` | 82 | 0 |
+| `run-tests.sh res://tests/Stage3Test.tscn` | 78 | 0 |
+| `run-tests.sh res://tests/Stage4Test.tscn` | **84** | 0 |
+| `run-tests.sh res://tests/NetTest.tscn` | 123 | 0 |
+| `dotnet run --project tools/CodecTest` (R1) | 103046 | 0 |
+| `dotnet run --project tools/BroadcasterTest` (R3) | 27 | 0 |
+| `dotnet run --project tools/SpatialIndexTest` (R2) | 25 | 0 |
+| `dotnet run --project tools/StandTest` (R9) | 11 | 0 |
+
+Критерии готовности Этапа 4 (`prototype-plan.md:100`):
+
+- **(а) «на одинаковой скорости тарана HP тратится одинаково у всех»** — Stage4Test
+  п.17: таран 40 м/с → детерминированно `Hp = 100 − 56 = 44`, `DamageTakenCount = 1`;
+  п.16: урон не зависит от знака `vn`; п.22: `Hp = 0` доехал до не-авторитета
+  спавн/`OnChange`-репликой — у сервера и копии значения совпадают. ✅
+- **(б) «при медленном касании урона нет»** — п.18: 2 м/с → `Hp == 100`,
+  `DamageTakenCount == 0`; п.12: `|vn| = 11 < 12` → 0; п.19: повторный кадр в
+  кулдауне урона не добавляет. ✅
+- **(в) «клиент не может отменить урон»** — п.27: не-авторитет, пытающийся
+  поднять `Hp`/включить `GodMode`, не меняет свой экземпляр; серверный урон
+  проходит насквозь (God-таран п.25 + шов п.11). ✅
+
+Демо-замеры: `LATENCY=100 ./run-net-demo.sh 2` — 4 критерия §2.6 PASS, трафик из-за
+станции НЕ вырос: `rec/s = 80` (2 корабля × 40 Гц, как до Этапа 4 — станция в конфиге
+`Never`, дельт нет), `KB/s ≈ 7.6`.
+
+### Что НЕ делается на Этапе 4
+
+стыковка/посадка и пружина «магнитного захвата» (Этап 5); магнитные ботинки, выход
+на палубу, шлюзы (Этап 6) — `DockingPoint` только узел-закладка; урон станции от
+тарана (станцию можно будет таранить на Этапе 5 — `MaxHp` у `StationState` уже есть);
+реальный UDP-прогон пира в headless (ENet-пиры к себе не подключаются, §3.10 — шов
+`TestSimulateAuthorityOwnerForTest`); долг R7 (гейтинг `RpcOnHitConfirmed` по интересу).
+
+---
+
 ## Как запустить и проверить
 
 ```
@@ -435,6 +520,7 @@ godot --path .        # игра: F3 → «Debug Mode» → панель → ч�
                       #       (для тяги паузу лучше выключить)
 ./run-tests.sh        # dotnet build + 89 проверок приёмки, exit code 0
 ./run-tests.sh res://tests/ProbeNest.tscn   # прогон гипотезы крепления игрока к сценам
+./run-tests.sh res://tests/Stage4Test.tscn  # станция + урон от столкновений + HP (Этап 4, 84 проверок)
 PYTHONIOENCODING=utf-8 python tools/traffic_estimate.py  # бюджет трафика (§ Этап 2.5),
                       #   exit code 0 = нормативный пресет проходит все пороги
 ```

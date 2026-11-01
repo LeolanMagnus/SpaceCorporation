@@ -20,6 +20,10 @@ public partial class DebugInfoBus : Node
 
     private readonly Dictionary<string, Func<string>> _infoSources = new();
     private readonly List<DebugButtonHandle> _pendingButtons = new();
+    // Все зарегистрированные (и ещё не снятые) кнопки, включая уже выгруженные в слой:
+    // нужно для HasDebugButton — проверка «есть ли кнопка» не зависит от готовности UI
+    // (§4 шаг 4.9 п.23: у клиента кнопка «Toggle God Mode» не регистрируется вовсе).
+    private readonly List<DebugButtonHandle> _activeButtons = new();
     private DebugLayer? _layer;
 
     public override void _EnterTree()
@@ -49,11 +53,54 @@ public partial class DebugInfoBus : Node
         }
 
         var handle = new DebugButtonHandle(label, callback);
+        Instance._activeButtons.Add(handle); // учитываем для HasDebugButton независимо от UI
         if (Instance._layer != null)
             handle.Button = Instance._layer.RegisterDebugButton(label, callback);
         else
             Instance._pendingButtons.Add(handle); // слой ещё не готов — заявка до готовности
         return handle;
+    }
+
+    /// <summary>Зарегистрирована ли кнопка с такой подпиской (логически, без учёта
+    /// готовности UI). Сервер-авторитет зарегистрировал → true; клиент-не-авторитет
+    /// не регистрировал → false (шаг 4.9 п.23).</summary>
+    public static bool HasDebugButton(string label)
+    {
+        if (Instance == null)
+            return false;
+        foreach (var handle in Instance._activeButtons)
+            if (!handle.Removed && handle.Label == label)
+                return true;
+        return false;
+    }
+
+    /// <summary>Сколько ЖИВЫХ кнопок с такой подпиской. Шов п.23: мирные корабли
+    /// сервера уже зарегистрировали «Toggle God Mode», поэтому «у клиента кнопки
+    /// нет» проверяем НЕ отсутствием метки вообще, а тем, что добавление
+    /// НЕ-авторитетного корабля НЕ увеличило счётчик этой кнопки (он регистрирует
+    /// «Toggle Interpolation»). Счёт по метке, а не bool.</summary>
+    public static int CountDebugButtons(string label)
+    {
+        if (Instance == null)
+            return 0;
+        int n = 0;
+        foreach (var handle in Instance._activeButtons)
+            if (!handle.Removed && handle.Label == label)
+                n++;
+        return n;
+    }
+
+    /// <summary>Подписки всех живых зарегистрированных кнопок через запятую — для
+    /// assert'ов «в списке нет «Toggle God Mode» у клиента» (п.23).</summary>
+    public static string ListDebugButtonLabels()
+    {
+        if (Instance == null)
+            return string.Empty;
+        var labels = new List<string>();
+        foreach (var handle in Instance._activeButtons)
+            if (!handle.Removed && !labels.Contains(handle.Label))
+                labels.Add(handle.Label);
+        return string.Join(", ", labels);
     }
 
     /// <summary>Вызывается DebugLayer при готовности: забрать накопленные кнопки.</summary>
@@ -73,6 +120,11 @@ public partial class DebugInfoBus : Node
     {
         if (Instance == null)
             return;
+        // Помечаем снятыми все живые ручки с этой меткой — иначе HasDebugButton
+        // врал бы после снятия (шаг 4.9 п.23: «кнопки нет» должно быть видно).
+        foreach (var handle in Instance._activeButtons)
+            if (handle.Label == label)
+                handle.Removed = true;
         Instance._pendingButtons.RemoveAll(b => b.Label == label);
         Instance._layer?.RemoveDebugButton(label);
     }

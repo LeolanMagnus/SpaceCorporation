@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeIntegrateContact.cs" id="1_probe"]
+
+; Проба Э4-П3 (этап 4, шаг 4.7): работает ли IntersectShape прямо из
+; _IntegrateForces (CustomIntegrator) или пространство «заперто» на время шага.
+[node name="ProbeIntegrateContact" type="Node3D"]
+script = ExtResource("1_probe")

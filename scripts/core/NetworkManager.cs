@@ -48,6 +48,12 @@ public partial class NetworkManager : Node
     /// откатов в логе стенда всегда нулевые — метрики не измеряются.</summary>
     public static bool Autopilot { get; set; }
 
+    /// <summary>Шаг 4.9: god mode через CLI (headless/dedicated, где дебаг-панели
+    /// нет): `-- --god` ставит флаг, и авторитетный Ship применяет его через
+    /// единственный серверный метод ShipHealthState.SetGodModeServerOnly (п.24).
+    /// С клиента god mode не включается: RPC нет вовсе.</summary>
+    public static bool GodModeCli { get; set; }
+
     /// <summary>Три канала ENet: 0 = снимки (unreliable), 1 = ввод/события (reliable),
     /// 2 = редкие крупные (спавн-данные). См. §2.1.</summary>
     public const int ChannelCount = 3;
@@ -253,6 +259,52 @@ public partial class NetworkManager : Node
         _targets.TryGetValue(targetNetId, out var t) && GodotObject.IsInstanceValid(t) ? t : null;
 
     public IReadOnlyDictionary<int, TargetState> Targets => _targets;
+
+    // ------------------------------------------- реестр станций (этап 4, шаг 4.2)
+    //
+    // Ровно по образцу реестра мишеней выше: ключ — адрес из общего счётчика
+    // (StationNetId), а не путь узла. Станция спавнится сервером при старте мира
+    // (шаг 4.3) и приходит пирам спавн-снимком; в этой стадии реестр нужен для
+    // OwnerNetId точки DockingPoint и assert'ов Stage4Test, в Этапе 5 по нему
+    // пойдут RPC-действия со станцией.
+
+    private readonly Dictionary<int, StationState> _stations = new();
+
+    /// <summary>Выдать станции адрес из общего счётчика, если ещё не назначен.
+    /// Гейт `Role == Client` — как у <see cref="AssignTargetNetIdIfUnset"/>:
+    /// клиенту адрес придёт с репликой спавна.</summary>
+    public void AssignStationNetIdIfUnset(StationState state)
+    {
+        if (Role == NetRole.Client || state.StationNetId != 0)
+            return;
+        state.StationNetId = NextNetId();
+    }
+
+    public void RegisterStation(StationState station)
+    {
+        int id = station.StationNetId;
+        if (id == 0)
+            return; // без адреса в реестре участвовать нечем
+        if (_stations.TryGetValue(id, out var existing) && existing != station)
+        {
+            GD.PushError($"NetworkManager: коллизия StationNetId {id} " +
+                         $"({existing.GetPath()} уже занимает его)");
+            return;
+        }
+        _stations[id] = station;
+    }
+
+    public void UnregisterStation(StationState station)
+    {
+        int id = station.StationNetId;
+        if (_stations.TryGetValue(id, out var cur) && cur == station)
+            _stations.Remove(id);
+    }
+
+    public StationState? FindStation(int stationNetId) =>
+        _stations.TryGetValue(stationNetId, out var s) && GodotObject.IsInstanceValid(s) ? s : null;
+
+    public IReadOnlyDictionary<int, StationState> Stations => _stations;
 
     // ------------------------------------------- пилот кораблей (§4 В3 п.3, В14=B)
     //
@@ -843,6 +895,12 @@ public partial class NetworkManager : Node
                 case "--autopilot":
                     // Пилот-клиент сам жмёт тягу/рыск (headless-стенд §2.6).
                     Autopilot = true;
+                    break;
+                case "--god":
+                    // Шаг 4.9: god mode через CLI для процесса без дебаг-панели
+                    // (dedicated/headless). Флаг читает авторитетный Ship в _Ready
+                    // и включает god mode серверным методом (п.24).
+                    GodModeCli = true;
                     break;
                 case "--key":
                     // Явный playerKey для headless-стенда (§2.6): несколько клиентов

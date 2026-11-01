@@ -1,0 +1,70 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/core/Station.cs" id="1_station"]
+[ext_resource type="Script" path="res://scripts/core/StationState.cs" id="2_stationstate"]
+[ext_resource type="Script" path="res://scripts/core/AttachPoint.cs" id="3_attach"]
+[ext_resource type="SceneReplicationConfig" path="res://scenes/StationReplication.tres" id="4_replcfg"]
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_station"]
+height = 40.0
+radius = 60.0
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_station"]
+top_radius = 60.0
+bottom_radius = 60.0
+height = 40.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_station"]
+albedo_color = Color(0.35, 0.4, 0.45, 1)
+emission_enabled = true
+emission = Color(0.9, 0.9, 1, 1)
+emission_energy_multiplier = 0.0
+
+; Станция (Этап 4, шаг 4.1). Статическое тело: корабль (mask ShipMask=Station|Target)
+; в неё упирается, хитскан-луч (LaserMask=Station|Target) её видит.
+;
+; Разделение «истина / картинка» — как у Ship/Target: тело-носитель адреса и
+; коллизии, Visual — только картинка. Станция НЕ симулируется: ни интегратора,
+; ни батча (шаг 4.4), картинка статична.
+;
+; Слой Station (2), маска Ship (1): станция «видит» корабли (нужно для
+; ComputePenetration-контактов на сервере, шаг 4.7), но сама никуда не едет.
+[node name="Station" type="StaticBody3D"]
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("1_station")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("CylinderShape3D_station")
+
+[node name="Visual" type="MeshInstance3D" parent="."]
+mesh = SubResource("CylinderMesh_station")
+material_override = SubResource("StandardMaterial3D_station")
+
+; Огни станции: узлы Light существуют, но ВЫКЛЮЧЕНЫ (EmissionEnergy = 0,
+; Light.Enabled = false) — проверка п.1 визуальной дисциплины сцены; свет
+; включится вместе с геймплеем станции (Этап 5+).
+[node name="Light" type="Node3D" parent="."]
+
+[node name="StationLight" type="OmniLight3D" parent="Light"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 25, 0)
+enabled = false
+
+; Буфер сетевого состояния (шаг 4.2): адрес из общего счётчика, поза, MaxHp.
+; Свойства — [Export], писатель адреса — сервер ДО AddChild (шаг 4.3).
+[node name="StationState" type="Node" parent="."]
+script = ExtResource("2_stationstate")
+MaxHp = 5000
+
+; Точка стыковки/шлюза (закладка под Этап 5–6): AttachPoint Kind=Hatch, NetId=0.
+; Владелец-resolve по предку с StationState (AttachPoint расширен, шаг 4.1).
+[node name="DockingPoint" type="Node3D" parent="."]
+script = ExtResource("3_attach")
+Kind = 2
+NetId = 0
+
+; Станция приходит пирам ТОЛЬКО спавн-снимком: spawn=true, Never по всем
+; свойствам (StationReplication.tres, В19 п.1).
+[node name="Synchronizer" type="MultiplayerSynchronizer" parent="."]
+replication_config = ExtResource("4_replcfg")
+root_path = NodePath("..")

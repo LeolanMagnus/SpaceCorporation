@@ -1,0 +1,31 @@
+[gd_resource type="SceneReplicationConfig" format=3]
+
+[resource]
+
+; Конфиг свойств MultiplayerSynchronizer станции (Этап 4, шаг 4.2, В19 п.1).
+;
+; ФОРМАТ ПУТИ — с двоеточием ("StationState:NetPosition"), перенесённая ловушка
+; из ShipReplication.tres / TargetReplication.tres: путь без subname
+; (get_subname_count() == 0) молча отбрасывается при загрузке .tres, конфиг
+; становится ПУСТЫМ, и спавн-снимок не содержит ни одного свойства.
+;
+; replication_mode: 0 = Never, 1 = Always, 2 = OnChange.
+;
+; Станция — СТАТИКА: у неё нет интегратора, она не входит в батч
+; (SnapshotBroadcaster строит записи только по реестру кораблей, шаг 4.4).
+; Поэтому ЕДИНСТВЕННЫЙ транспорт для станции — спавн-снимок MultiplayerSpawner:
+; у ВСЕХ свойств spawn = true, дельты не шлются (Never). Пир, зашедший в середине
+; сессии, обязан получить адрес/позицию/поворот/MaxHp вместе с узлом (п.6).
+
+properties/0/path = NodePath("StationState:StationNetId")
+properties/0/spawn = true
+properties/0/replication_mode = 0
+properties/1/path = NodePath("StationState:MaxHp")
+properties/1/spawn = true
+properties/1/replication_mode = 0
+properties/2/path = NodePath("StationState:NetPosition")
+properties/2/spawn = true
+properties/2/replication_mode = 0
+properties/3/path = NodePath("StationState:NetRotation")
+properties/3/spawn = true
+properties/3/replication_mode = 0

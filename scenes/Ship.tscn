@@ -1,9 +1,11 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/core/Ship.cs" id="1_ship"]
 [ext_resource type="Script" path="res://scripts/core/AttachPoint.cs" id="2_attach"]
 [ext_resource type="Script" path="res://scripts/core/NetState.cs" id="3_netstate"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/ShipReplication.tres" id="4_replcfg"]
+[ext_resource type="Script" path="res://scripts/core/ShipHealthState.cs" id="5_health"]
+[ext_resource type="SceneReplicationConfig" path="res://scenes/ShipHealthReplication.tres" id="6_healthcfg"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hull"]
 size = Vector3(2, 1, 4)
@@ -83,3 +85,16 @@ root_path = NodePath("..")
 replication_interval = 0.0333
 public_visibility = true
 replication_config = ExtResource("4_replcfg")
+
+; --- Этап 4, шаг 4.5: HP корабля -------------------------------------------------
+; Буфер «правды сервера» о здоровье (ShipHealthState.cs). Свойства пишет только
+; авторитет (сеттеры печатают PrintErr иначе); реплика — OnChange + спавн-снимок.
+; Это ВТОРОЙ синхронизатор корабля: отдельный конфиг (ShipHealthReplication.tres),
+; чтобы не трогать холодный ShipReplication (R6) и не растить запись батча (В19 п.3).
+[node name="ShipHealthState" type="Node" parent="."]
+script = ExtResource("5_health")
+
+[node name="ShipHealthSync" type="MultiplayerSynchronizer" parent="."]
+root_path = NodePath("..")
+public_visibility = true
+replication_config = ExtResource("6_healthcfg")

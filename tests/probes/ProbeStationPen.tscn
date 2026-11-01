@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeStationPen.cs" id="1_probe"]
+
+; Проба Э4-П2 (этап 4, шаг 4.7): C#-биндинг поиска проникновения в статическую
+; станцию из CustomIntegrator (ComputePenetration / IntersectShape, типизированный
+; или словарь, чем достать collider станции).
+[node name="ProbeStationPen" type="Node3D"]
+script = ExtResource("1_probe")

@@ -82,6 +82,12 @@ public partial class AttachPoint : Node3D
             var net = n.GetNodeOrNull<NetState>("NetState");
             if (net != null)
                 return net.ShipNetId;
+            // Этап 4, шаг 4.1: у станции вместо NetState узел StationState со
+            // своим именем адреса (StationNetId) — без этой ветки OwnerNetId
+            // точки DockingPoint был бы -1, и точка не попала бы в реестр.
+            var st = n.GetNodeOrNull<StationState>("StationState");
+            if (st != null)
+                return st.StationNetId;
         }
         return -1;
     }
