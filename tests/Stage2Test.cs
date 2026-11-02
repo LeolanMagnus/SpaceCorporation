@@ -506,7 +506,7 @@ public partial class Stage2Test : Node3D
                 Check(_ship.Tick - _p4Tick >= 25u,
                     $"п.4: тик корабля продвинулся на {_ship.Tick - _p4Tick} за 33 физкадра");
 
-                // П.5: момент рыскания с клавиатуры (Q). W отпускаем, чтобы
+                // П.5: момент крена с клавиатуры (Q). W отпускаем, чтобы
                 // ускорение не мешало читать |w|.
                 Input.ParseInputEvent(KeyEvt(Key.W, false));
                 Input.ParseInputEvent(KeyEvt(Key.Q, true));
@@ -516,21 +516,25 @@ public partial class Stage2Test : Node3D
                 _pilotStep = 2;
                 return;
 
-            // --- п.5: Q → |AngularVelocity| > 0 и нос реально повернулся ---
+            // --- п.5: Q → |AngularVelocity| > 0 и корпус реально накренился ---
             case 2:
                 if (_pilotFrames < 33) return;
 
-                Check(Input.IsActionPressed("torque_yaw_left"),
-                    "п.5: действие torque_yaw_left читается из project.godot (Q)");
+                Check(Input.IsActionPressed("torque_roll_left"),
+                    "п.5: действие torque_roll_left читается из project.godot (Q)");
                 float spin = _ship.AngularVelocity.Length();
                 Check(spin > 0.1f, $"п.5: |AngularVelocity| = {spin:F3} рад/с > 0");
                 Quaternion rot = _ship.GlobalTransform.Basis.GetRotationQuaternion();
                 float turned = AngleBetween(_p5Rot, rot);
                 Check(turned > 0.05f, $"п.5: ориентация корпуса изменилась на {turned:F3} рад");
-                // Знак: Q = рыскание влево = отрицательная угловая скорость вокруг
-                // локальной Y корпуса (мировая Y при неизменной ориентации).
-                Check(_ship.AngularVelocity.Y < 0f,
-                    $"п.5: Q даёт рыскание ВЛЕВО (w.Y = {_ship.AngularVelocity.Y:F3})");
+                // BUG-010: Q = крен ВЛЕВО = угловая скорость вдоль ЛОКАЛЬНОЙ Z
+                // корпуса (продольной), а не мировой Y (рыскание). Переводим
+                // мировую ω в систему корпуса транслированием базиса.
+                Vector3 wLocal = _ship.GlobalTransform.Basis.Transposed() * _ship.AngularVelocity;
+                Check(wLocal.Z > 0.1f * spin,
+                    $"п.5: Q даёт крен ВЛЕВО: ω вдоль локальной Z (wLocal = {wLocal}, |w| = {spin:F3})");
+                Check(Mathf.Abs(wLocal.Y) < 0.3f * spin,
+                    $"п.5: Q не даёт рыскания: |wLocal.Y| = {Mathf.Abs(wLocal.Y):F3} мала");
 
                 Input.ParseInputEvent(KeyEvt(Key.Q, false));
                 _pilotFrames = 0;
@@ -540,7 +544,7 @@ public partial class Stage2Test : Node3D
             // --- п.6: клавиши отпущены → |v| не растёт, |w| гаснет ---
             case 3:
                 if (_pilotFrames < 3) return; // даём отпуску зарегистрироваться
-                Check(!Input.IsActionPressed("thrust_f") && !Input.IsActionPressed("torque_yaw_left"),
+                Check(!Input.IsActionPressed("thrust_f") && !Input.IsActionPressed("torque_roll_left"),
                     "п.6: отпущенные клавиши перестали быть нажатыми");
                 _p6Speed = _ship.LinearVelocity.Length();
                 _p6Spin = _ship.AngularVelocity.Length();
@@ -682,7 +686,7 @@ public partial class Stage2Test : Node3D
 
                 Check((_ship.LocalInput.Mask & InputMask.AngularBits) == 0u,
                     "п.6c: в кадре взаимодействия нет битов тангажа/рыскания");
-                Check((_ship.LocalInput.Mask & InputMask.TorqueYawLeft) == 0u,
+                Check((_ship.LocalInput.Mask & InputMask.TorqueRollLeft) == 0u,
                     "п.6c: удерживаемая Q не попала в кадр взаимодействия");
 
                 // Возврат в режим пилотирования: та же удерживаемая Q и мышь
@@ -703,8 +707,8 @@ public partial class Stage2Test : Node3D
                 if (_pilotFrames < 3) return;
                 Input.ParseInputEvent(KeyEvt(Key.Q, false));
 
-                Check((_ship.LocalInput.Mask & InputMask.TorqueYawLeft) != 0u,
-                    "п.6c: в режиме пилотирования Q вернулась в кадр (бит рыскания)");
+                Check((_ship.LocalInput.Mask & InputMask.TorqueRollLeft) != 0u,
+                    "п.6c: в режиме пилотирования Q вернулась в кадр (бит крена)");
                 FinishPilotTest();
                 return;
         }

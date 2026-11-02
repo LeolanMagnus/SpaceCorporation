@@ -21,15 +21,19 @@ public static class InputMask
     public const uint ThrustD = 1u << 5;   // Ctrl — вниз  (локальная -Y)
     public const uint TorquePitchUp = 1u << 6;   // Z   — тангаж +
     public const uint TorquePitchDown = 1u << 7; // X   — тангаж -
-    public const uint TorqueYawLeft = 1u << 8;   // Q   — рыскание -
-    public const uint TorqueYawRight = 1u << 9;  // E   — рыскание +
+    public const uint TorqueYawLeft = 1u << 8;   // C   — рыскание -
+    public const uint TorqueYawRight = 1u << 9;  // V   — рыскание +
     public const uint Boost = 1u << 10;          // Shift — форсаж (усиливает тягу)
+    // BUG-010: Q/E — крен вокруг продольной оси корпуса (локальная Z, «вперёд» = −Z).
+    public const uint TorqueRollLeft = 1u << 11; // Q   — крен влево  (локальная Z +)
+    public const uint TorqueRollRight = 1u << 12;// E   — крен вправо (локальная Z −)
 
     /// <summary>Все биты линейной тяги — для проверки «есть ли линейный ввод».</summary>
     public const uint LinearBits = ThrustF | ThrustB | ThrustL | ThrustR | ThrustU | ThrustD;
 
     /// <summary>Все биты момента — для проверки «есть ли вращательный ввод».</summary>
-    public const uint AngularBits = TorquePitchUp | TorquePitchDown | TorqueYawLeft | TorqueYawRight;
+    public const uint AngularBits = TorquePitchUp | TorquePitchDown | TorqueYawLeft | TorqueYawRight
+        | TorqueRollLeft | TorqueRollRight;
 }
 
 /// <summary>
@@ -53,6 +57,7 @@ public struct InputFrame
     // Оси по действиям: значение 0..1 (клавиатура) или -1..1 (геймпад later).
     public float AxisF, AxisB, AxisL, AxisR, AxisU, AxisD;
     public float AxisPitchUp, AxisPitchDown, AxisYawLeft, AxisYawRight;
+    public float AxisRollLeft, AxisRollRight;
 
     // Дельта мыши за кадр, радианы.
     public float LookYaw, LookPitch;
@@ -85,6 +90,8 @@ public struct InputFrame
         if ((mask & InputMask.TorquePitchDown) != 0) f.AxisPitchDown = 1f;
         if ((mask & InputMask.TorqueYawLeft) != 0) f.AxisYawLeft = 1f;
         if ((mask & InputMask.TorqueYawRight) != 0) f.AxisYawRight = 1f;
+        if ((mask & InputMask.TorqueRollLeft) != 0) f.AxisRollLeft = 1f;
+        if ((mask & InputMask.TorqueRollRight) != 0) f.AxisRollRight = 1f;
         return f;
     }
 
@@ -108,6 +115,8 @@ public struct InputFrame
             AxisPitchDown = Clamp1(a.AxisPitchDown + b.AxisPitchDown),
             AxisYawLeft = Clamp1(a.AxisYawLeft + b.AxisYawLeft),
             AxisYawRight = Clamp1(a.AxisYawRight + b.AxisYawRight),
+            AxisRollLeft = Clamp1(a.AxisRollLeft + b.AxisRollLeft),
+            AxisRollRight = Clamp1(a.AxisRollRight + b.AxisRollRight),
             LookYaw = a.LookYaw + b.LookYaw,
             LookPitch = a.LookPitch + b.LookPitch,
         };

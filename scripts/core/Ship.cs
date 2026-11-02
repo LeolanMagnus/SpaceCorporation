@@ -976,8 +976,8 @@ public partial class Ship : RigidBody3D
         if (Input.IsActionPressed("thrust_r")) mask |= InputMask.ThrustR;
         if (Input.IsActionPressed("thrust_u")) mask |= InputMask.ThrustU;
         if (Input.IsActionPressed("thrust_d")) mask |= InputMask.ThrustD;
-        // Режим взаимодействия: корабль перестаёт управляться по тангажу/рысканью
-        // (и мышью — см. `HandleMouseMotion`, и клавишами Z/X/Q/E — здесь). Тяга
+        // Режим взаимодействия: корабль перестаёт управляться по тангажу/рысканью/крену
+        // (и мышью — см. `HandleMouseMotion`, и клавишами Z/X/C/V/Q/E — здесь). Тяга
         // (WASD/boost) остаётся: игрок освобождает мышь для интерфейса, а не глушит
         // двигатели.
         if (!IsInteractionMode)
@@ -986,6 +986,8 @@ public partial class Ship : RigidBody3D
             if (Input.IsActionPressed("torque_pitch_down")) mask |= InputMask.TorquePitchDown;
             if (Input.IsActionPressed("torque_yaw_left")) mask |= InputMask.TorqueYawLeft;
             if (Input.IsActionPressed("torque_yaw_right")) mask |= InputMask.TorqueYawRight;
+            if (Input.IsActionPressed("torque_roll_left")) mask |= InputMask.TorqueRollLeft;
+            if (Input.IsActionPressed("torque_roll_right")) mask |= InputMask.TorqueRollRight;
         }
         if (Input.IsActionPressed("boost")) mask |= InputMask.Boost;
 

@@ -351,7 +351,7 @@
 
 ## BUG-010 — Q/E вращают корабль вокруг вертикальной оси Y (рыскание), а нужен крен вокруг продольной оси Z
 
-- **Статус:** open (зафиксирован, исправляется отдельно)
+- **Статус:** fixed (реализован вариант «Q/E → крен, рыскание переехало на C/V»)
 - **Компонент:** `project.godot` (`[input]` `torque_yaw_left/right` = Q/E),
   `scripts/core/InputFrame.cs` (`InputMask.TorqueYawLeft/Right`,
   `AxisYawLeft/Right`), `scripts/core/FlightModel.cs` (`Step`, `localTorque`)
@@ -378,6 +378,16 @@
   `AngularVelocity` вдоль локальной Z корпуса (продольной), а не мировой Y;
   тангаж (Z/X) и рыскание (новые клавиши) работают по своим осям. `dotnet build`
   без ошибок, тесты стадии не деградируют.
+- **Проверено:** раскладка: `torque_roll_left`=Q, `torque_roll_right`=E,
+  `torque_yaw_left/right` перенесены на C/V. В `InputMask` добавлены биты
+  `TorqueRollLeft/Right` (1<<11, 1<<12, входят в `AngularBits`), в `InputFrame` —
+  оси `AxisRollLeft/Right` (размер сериализуемого кадра не изменился: 16 байт).
+  `FlightModel.Step` ставит крен в Z: `localTorque.Z = AxisRollLeft − AxisRollRight`
+  (при «вперёд = −Z» положительный момент вокруг +Z поднимает правый борт = крен
+  влево). Stage2Test п.5 переписан под крен: удержание Q даёт `wLocal = (0, 0,
+  12,33)` — ω строго вдоль локальной Z, `|wLocal.Y| = 0`; п.6c проверяет бит
+  `TorqueRollLeft` в гейте режима взаимодействия. Прогон: Stage2Test 83 OK / 0 FAIL,
+  NetTest 123 PASS, Stage1/3/4 — 104/78/84 PASS, деградаций нет.
 
 ---
 

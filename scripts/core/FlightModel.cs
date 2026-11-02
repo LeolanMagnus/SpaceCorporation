@@ -161,10 +161,13 @@ public static class FlightModel
         // момент переводится в мировые тем же базисом. Иначе предсказание пилота
         // и сервер сошлись бы только при identity-ориентации.
         float angAccelScale = (p.Mass > 0f ? p.AngularThrust / p.Mass : 0f) * boost;
+        // BUG-010: Q/E — крен вокруг локальной Z (продольной) оси корпуса. Знак:
+        // «вперёд» у корпуса это −Z, поэтому положительный момент вокруг +Z по
+        // правилу правой руки (X→Y) поднимает правый борт = крен ВЛЕВО.
         Vector3 localTorque = new Vector3(
             f.AxisPitchUp - f.AxisPitchDown,
             f.AxisYawRight - f.AxisYawLeft,
-            0f);
+            f.AxisRollLeft - f.AxisRollRight);
         if (localTorque.LengthSquared() > 1f) localTorque = localTorque.Normalized();
 
         // --- 5. Скорости ---
