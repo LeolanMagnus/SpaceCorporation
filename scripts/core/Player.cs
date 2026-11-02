@@ -388,15 +388,19 @@ public partial class Player : CharacterBody3D
         // как факт. Владелец игрока (GetMultiplayerAuthority) становится пилотом —
         // он шлёт серверу кадры ввода. Если владелец точки — не корабль (станция
         // на этапе 6), пилота не назначаем: у станции его назначает сервер навсегда (§3.4 п.2).
-        if (NetworkManager.Instance is { IsServer: true } nm)
+        // BUG-008/009: гейт расширен с IsServer на IsAuthoritySide — offline тоже
+        // назначает пилота по факту пристёжки (в offline SelfId = 1, и без смены
+        // пилота все корабли оставались «локальными»).
+        if (NetworkManager.Instance is { IsAuthoritySide: true } nm)
         {
             if (nm.FindShip(ownerNetId) is { } ship)
                 nm.SetPilot(shipNetId: ownerNetId, peerId: pilotPeer);
             // Прежний корабль освобождаем от пилота только если этот игрок был
             // его пилотом (иначе это наблюдатель, и пилотом A он не был).
+            // В сети свободный корабль уходит автопилоту (1), в offline — «никому» (0).
             if (prevShip != null && prevShip.Net?.ShipNetId != ownerNetId &&
                 prevShip.PilotPeerId == pilotPeer)
-                nm.SetPilot(shipNetId: prevShip.Net!.ShipNetId, peerId: 1);
+                nm.SetPilot(shipNetId: prevShip.Net!.ShipNetId, peerId: nm.FreeShipPilotId);
         }
         if (NetworkManager.Instance is { HasRealPeer: true })
             Rpc(nameof(ApplyAttach), ownerNetId, pointNetId);
@@ -415,8 +419,12 @@ public partial class Player : CharacterBody3D
         int playerPeer = GetMultiplayerAuthority();
         Detach();
         if (ship != null && ship.PilotPeerId == playerPeer &&
-            NetworkManager.Instance is { IsServer: true } nm)
-            nm.SetPilot(shipNetId: ship.Net!.ShipNetId, peerId: 1);
+            NetworkManager.Instance is { IsAuthoritySide: true } nm)
+            // BUG-009: в offline освободившийся корабль уходит «никому» (0), а не
+            // автопилоту 1: SelfId = 1 сделал бы его снова «локальным пилотом»
+            // игрока, и отстёжка не снимала бы управление. По инерции тело летит
+            // само (Freeze = false у авторитета, ввод не читается).
+            nm.SetPilot(shipNetId: ship.Net!.ShipNetId, peerId: nm.FreeShipPilotId);
         if (NetworkManager.Instance is { HasRealPeer: true })
             Rpc(nameof(ApplyDetach));
     }

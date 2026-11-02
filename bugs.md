@@ -269,8 +269,7 @@
 
 ## BUG-007 — NetTest: ERROR «Unable to auto-spawn node with reserved name: @CharacterBody3D@N»
 
-- **Статус:** open (шум, на результаты assert'ов не влияет; починить в стадии 2,
-  попутно с правками спавна)
+- **Статус:** fixed (stage 2, шаг бага-фикса; имя задаётся до `AddChild`)
 - **Компонент:** `scripts/core/WorldSpawner.cs` (`SpawnPlayerAt`), `MultiplayerSpawner`
 - **Симптом:** в логе `NetTest` (фазы п.8) трижды печатается
   `ERROR: Unable to auto-spawn node with reserved name: @CharacterBody3D@10. Make sure
@@ -290,7 +289,8 @@
 
 ## BUG-008 — Второй корабль реагирует на ввод игрока, хотя игрок к нему не пристёгнут
 
-- **Статус:** open (зафиксирован, исправляется отдельно)
+- **Статус:** fixed (реализован вариант «авторитетная сторона = сервер ИЛИ offline»
+  + `PilotPeerId = 0` = «никто не пилотирует» в offline)
 - **Компонент:** `scripts/core/Ship.cs` (`IsLocalPilot`, `ApplyAuthority`,
   `CollectInputFrame`), `scripts/core/Player.cs` (`AttachServerSide`),
   `scripts/core/NetworkManager.cs` (`SetPilot`, `SelfId`)
@@ -324,7 +324,7 @@
 
 ## BUG-009 — После открепления от корабля игрок продолжает им управлять (корабль должен дрейфовать)
 
-- **Статус:** open (зафиксирован, исправляется отдельно; общий корень с BUG-008)
+- **Статус:** fixed (общий корень с BUG-008; исправлен тем же)
 - **Компонент:** `scripts/core/Player.cs` (`DetachServerSide`),
   `scripts/core/Ship.cs` (`IsLocalPilot`, `ApplyPilot`)
 - **Симптом:** игрок открепляется (`Detach Player`) от корабля, но продолжает

@@ -90,6 +90,19 @@ public partial class NetworkManager : Node
     public bool IsHost => Role == NetRole.Host;
     public bool IsActive => HasRealPeer;
 
+    /// <summary>Авторитетная сторона процесса: сервер (Dedicated/Host) ИЛИ offline
+    /// (одиночная игра, где локальный процесс — он же сервер, SelfId = 1).
+    /// BUG-008/009: серверную логику (назначение пилота, крепление) выполняем
+    /// и в offline — раньше гейк был чистым `IsServer`, и в offline PilotPeerId
+    /// никогда не менялся: все корабли оставались с пилотом-автопилотом 1.</summary>
+    public bool IsAuthoritySide => IsServer || Role == NetRole.Offline;
+
+    /// <summary>Кому принадлежит свободный (никто не пристёгнут) корабль:
+    /// в сети — автопилоту сервера (peerId = 1), в offline — «никому» (0),
+    /// иначе SelfId = 1 снова сделал бы каждый корабль «локальным пилотом»
+    /// единственного игрока (BUG-008/009).</summary>
+    public int FreeShipPilotId => Role == NetRole.Offline ? 0 : 1;
+
     /// <summary>Локальный id авторитета: в Offline = 1 (то же значение, что у
     /// сервера, поэтому режимы различают по `Role`, а не по номеру, §2.5 п.5).
     /// GetUniqueId() при снятом peer (после Disconnect MultiplayerPeer = null)
@@ -334,22 +347,38 @@ public partial class NetworkManager : Node
     /// стоит замороженным, если кадров ни от кого нет (правило Freeze, §3.5 п.8).</summary>
     public void SetPilot(int shipNetId, int peerId)
     {
-        if (!IsServer)
+        // BUG-008/009: назначать пилота вправе авторитетная сторона — сервер
+        // (Dedicated/Host) И offline-процесс (он сам себе сервер, LocalAuthorityId
+        // = 1). Раньше гейт был `IsServer`, и в offline пристёжка/отстёжка вообще
+        // не меняли PilotPeerId: все корабли оставались с PilotPeerId = 1, а
+        // SelfId = 1 делал их «локальными пилотами» одновременно (BUG-008).
+        if (!IsAuthoritySide)
         {
             GD.PrintErr($"NetworkManager.SetPilot({shipNetId}, {peerId}): " +
                         "пилота назначает только сервер");
             return;
         }
-        if (peerId == 0 || (peerId != 1 && !PeerExists(peerId)))
+        // peerId = 0 («никто не пилотирует») допустим только в offline: в сети
+        // свободный корабль уходит автопилоту (peerId = 1), иначе клиент мог бы
+        // оставить корабль без серверного интегратора ввода.
+        if (peerId != 0 && peerId != 1 && !PeerExists(peerId))
         {
             GD.PrintErr($"NetworkManager.SetPilot: пир {peerId} не существует — отказ");
+            return;
+        }
+        if (peerId == 0 && HasRealPeer)
+        {
+            GD.PrintErr($"NetworkManager.SetPilot({shipNetId}, 0): в сети свободный " +
+                        "корабль уходит автопилоту (1), а не «никому» — отказ");
             return;
         }
 
         // §3.9 п.17 (рантайм-гейт): пир не может пилотировать два корабля сразу —
         // иначе между двумя назначениями висит состояние «один пир — два входа»,
         // и он шлёт кадры за оба. Освобождаем прежний ДО назначения нового.
-        if (peerId != 1)
+        // peerId = 0 — «никто», а не пир: правило одного корабля на пирра к нему
+        // не применяется (несколько свободных кораблей с пилотом 0 — норма).
+        if (peerId != 1 && peerId != 0)
             foreach (var other in _ships.Values)
                 if (GodotObject.IsInstanceValid(other) && other.Net != null &&
                     other.Net.ShipNetId != shipNetId && other.PilotPeerId == peerId)
@@ -360,6 +389,7 @@ public partial class NetworkManager : Node
                 }
 
         _pilots[shipNetId] = peerId; // единый источник правды, в т.ч. для отложенных
+
 
         var ship = FindShip(shipNetId);
         if (ship != null)
@@ -379,14 +409,14 @@ public partial class NetworkManager : Node
     /// <summary>Снять пилота (корабль уходит серверу, peerId = 1) без рассылки:
     /// рассылка — внутри SetPilot. Отдельный метод нужен, чтобы освобождение
     /// прежнего корабля не запускало рекурсивный обход.</summary>
-    private void ReleasePilot(int shipNetId)
-    {
-        _pilots[shipNetId] = 1;
+    private void ReleasePilot(int shipNetId)    {
+        int free = FreeShipPilotId; // сеть: автопилот (1); offline: «никто» (0) — BUG-008/009
+        _pilots[shipNetId] = free;
         var ship = FindShip(shipNetId);
         if (ship != null)
-            ship.ApplyPilot(1);
+            ship.ApplyPilot(free);
         if (HasRealPeer)
-            Rpc(nameof(RpcSetPilot), shipNetId, 1);
+            Rpc(nameof(RpcSetPilot), shipNetId, free);
     }
 
     /// <summary>Серверная рассылка нового пилота. Едет через autoload, а не через
@@ -410,6 +440,18 @@ public partial class NetworkManager : Node
     /// Нужен, чтобы пир, создавший узел позже RPC, не остался без пилота.</summary>
     public bool TryGetPilot(int shipNetId, out int peerId) =>
         _pilots.TryGetValue(shipNetId, out peerId);
+
+    /// <summary>BUG-008/009: первоначальный пилот спавнящегося корабля — только
+    /// запись в реестр, БЕЗ ApplyPilot/RPC. Узел ещё не в дереве и не
+    /// зарегистрирован; корабль подхватит значение в _Ready через TryGetPilot.
+    /// Лишний ApplyPilot здесь снял бы дебаг-кнопку чужого корабля (метки кнопок
+    /// общие для всех кораблей) и-resetнул бы очередь ввода у уже летящего тела.</summary>
+    public void SetInitialPilot(int shipNetId, int peerId)
+    {
+        if (!IsAuthoritySide)
+            return;
+        _pilots[shipNetId] = peerId;
+    }
 
     // -------------------------------------------------- идентичность (§4 В2)
     //
@@ -1037,8 +1079,48 @@ public partial class NetworkManager : Node
         // Счётчики относятся к ЗАКРЫТОМУ peer'у — на новой роли они обнулены,
         // иначе панель показывает пакеты уже несуществующего соединения (§2.7).
         ResetTrafficStats();
+        // BUG-008/009: перераспределение свободных кораблей между «никому» (0)
+        // и автопилотом (1) при смене роли — до обработчиков RoleChanged.
+        RebalancePilotsForRole(prev, next);
         DebugInfoBus.Report($"role: {prev.ToString().ToLower()} -> {next.ToString().ToLower()}, self = {SelfId}");
         RoleChanged?.Invoke(prev, next);
+    }
+
+    /// <summary>BUG-008/009: при смене роли сверяем пилотов свободных кораблей:
+    /// «никому» (0) имеет смысл только в offline, автопилот (1) — только в сети.
+    /// Offline → сеть: свободные (0) уходят автопилоту (1), иначе тесты п.15/п.17
+    /// видят PilotPeerId = 0 там, где ждут 1. Host → Offline: автопилот (1) у
+    /// корабля, в котором НЕ сидит локальный игрок хоста (авторитет 1), гасится
+    /// до «никого» (0): SelfId = 1 иначе вернул бы удалённый доступ к WASD
+    /// (BUG-008). Client → Offline: узлы кораблей были репликами (авторитет чужого
+    /// сервера) — локальная подмена пилота не нужна, права разберёт ApplyAuthority
+    /// при пересборе.</summary>
+    private void RebalancePilotsForRole(NetRole prev, NetRole next)
+    {
+        if (prev == NetRole.Offline && next != NetRole.Offline)
+        {
+            foreach (var s in _ships.Values)
+                if (GodotObject.IsInstanceValid(s) && s.Net != null && s.PilotPeerId == 0)
+                    SetPilot(s.Net.ShipNetId, 1);
+        }
+        else if (next == NetRole.Offline && (prev == NetRole.Host || prev == NetRole.Dedicated))
+        {
+            // Корабль, в котором сидит локальный игрок (авторитет 1), — под пилотом 1,
+            // остальные автопилоты (1) становятся свободными (0).
+            int seatedShipNetId = 0;
+            foreach (var node in GetTree().GetNodesInGroup("player"))
+                if (node is Player p && GodotObject.IsInstanceValid(p) &&
+                    !p.IsQueuedForDeletion() && p.GetMultiplayerAuthority() == 1 &&
+                    p.IsAttached)
+                {
+                    seatedShipNetId = p.AttachedTo!.OwnerNetId;
+                    break;
+                }
+            foreach (var s in _ships.Values)
+                if (GodotObject.IsInstanceValid(s) && s.Net != null &&
+                    s.PilotPeerId == 1 && s.Net.ShipNetId != seatedShipNetId)
+                    SetPilot(s.Net.ShipNetId, 0);
+        }
     }
 
     /// <summary>Хук: сервер поднят. Спавн мира (корабли раньше игроков, §2.4)

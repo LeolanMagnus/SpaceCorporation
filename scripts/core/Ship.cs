@@ -680,7 +680,12 @@ public partial class Ship : RigidBody3D
     /// </summary>
     protected void ApplyAuthority()
     {
-        HasAuthority = IsMultiplayerAuthority();
+        // `IsMultiplayerAuthority()` при снятом peer (после Disconnect:
+        // MultiplayerPeer = null) печатает ERROR «No multiplayer peer». Авторитет
+        // узла при этом сохраняется — сравниваем номер напрямую.
+        HasAuthority = Multiplayer.MultiplayerPeer is null or OfflineMultiplayerPeer
+            ? GetMultiplayerAuthority() == (NetworkManager.Instance?.LocalAuthorityId ?? 1)
+            : IsMultiplayerAuthority();
 
         // Шаг 2.3 (В14=B): авторитет корабля навсегда у сервера (id = 1), поэтому
         // `Freeze = !HasAuthority` = «заморожен у всех, кроме сервера» — ровно
@@ -2447,7 +2452,7 @@ public partial class Ship : RigidBody3D
         var impulse = -GlobalTransform.Basis.Z * Mass * 5f;
         ApplyImpulseAuthorityOnly(impulse);
         // Скорость обновится только на следующем шаге физики, поэтому печатаем импульс.
-        GD.Print($"ship nudged, impulse = {impulse.Length():F1} Н*с (ожидается |v| ≈ 5 м/с)");
+        GD.Print($"ship#{Net?.ShipNetId ?? 0} nudged, impulse = {impulse.Length():F1} Н*с (ожидается |v| ≈ 5 м/с)");
     }
 
     // ==================================================================

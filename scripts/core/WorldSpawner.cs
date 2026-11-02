@@ -352,7 +352,8 @@ public partial class WorldSpawner : Node3D
         var ship = scene.Instantiate<Ship>();
         // Ship.Net заполняется в _Ready, а адрес нужен ДО AddChild — берём NetState
         // из инстанса напрямую (§3.1 п.8).
-        NetworkManager.Instance?.AssignNetIdIfUnset(ship.GetNode<NetState>("NetState"));
+        var shipNetState = ship.GetNode<NetState>("NetState");
+        NetworkManager.Instance?.AssignNetIdIfUnset(shipNetState);
         if (nameOverride != null)
             ship.Name = nameOverride;
         // Позиция ставится ПОСЛЕ AddChild: вне дерева get_global_transform вернёт
@@ -362,6 +363,18 @@ public partial class WorldSpawner : Node3D
         AddChild(ship);
         if (position is { } pos)
             ship.GlobalPosition = pos;
+        // BUG-008: в offline свободный корабль — «без пилота» (PilotPeerId = 0),
+        // а не автопилот 1: SelfId = 1 делал бы КАЖДЫЙ корабль «локальным
+        // пилотом» игрока, и WASD двигал бы все корабли сразу. Пристёгнутый
+        // корабль получает пилота 1 через Player.AttachServerSide (оно же
+        // включает чтение ввода). В сети (Host/Dedicated) свободные корабли —
+        // автопилот 1, как ждали тесты п.15/п.17.
+        // Пишем в реестр пилотов БЕЗ ApplyPilot: корабль ещё не зарегистрирован,
+        // а лишний ApplyPilot снял бы дебаг-кнопку чужого корабля (метки кнопок
+        // не различают корабли). Ship подхватит значение в _Ready через TryGetPilot.
+        if (ship.Net is { ShipNetId: not 0 } &&
+            NetworkManager.Instance is { IsAuthoritySide: true } nm)
+            nm.SetInitialPilot(ship.Net.ShipNetId, nm.FreeShipPilotId);
         return ship;
     }
 
@@ -540,6 +553,10 @@ public partial class WorldSpawner : Node3D
         var player = scene.Instantiate<Player>();
         player.AddToGroup("player");
 
+        // BUG-007: имя узлу даёт сам корень Player.tscn («Player»); специально его
+        // МЕНЯТЬ нельзя — на него опираются тесты/поиск. Достаточно, чтобы имя было
+        // валидным: см. force_readable_name ниже.
+
         // Авторитет ставится ДО AddChild: узел с неверным авторитетом хотя бы кадр
         // управляется не тем пиром (§2.5 п.5).
         player.SetMultiplayerAuthority(peerId);
@@ -547,7 +564,17 @@ public partial class WorldSpawner : Node3D
         // Позицию ставим ПОСЛЕ AddChild: до входа в дерево GlobalPosition — это
         // identity, а get_global_transform вне дерева возвращает Transform3D() и
         // печатает ERROR (§3.6). Порядок: авторитет → в дерево → позиция.
-        AddChild(player);
+        //
+        // force_readable_name = true (второй аргумент) — вторая половина фикса
+        // BUG-007. При пере-спавне того же пира (восстановление из LastSeenState,
+        // force-выдворение занятого ключа) старый узел ещё жив: QueueFree освобождает
+        // его только в конце кадра и он держит имя «Player#2». Быстрый путь Godot при
+        // коллизии имён резервирует символ @ и переименовывает новинку в
+        // «@CharacterBody3D@11», а MultiplayerSpawner на таком узле печатает ERROR
+        // «reserved name» (гейт: get_name().validate_node_name() == get_name()).
+        // С force_readable_name коллизия разводится читаемым суффиксом — имя
+        // остаётся валидным, гейт проходит, ERROR'а нет (§2.5, как у кораблей).
+        AddChild(player, true);
 
         if (position is { } pos)
         {
