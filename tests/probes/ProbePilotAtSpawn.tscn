@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbePilotAtSpawn.cs" id="1_probe"]
+
+; Проба BUG-008 (повторная): offline-мир Main.tscn — печатает PilotPeerId и
+; IsLocalPilot обоих кораблей. Ожидание: свободный корабль pilot = 0,
+; IsLocalPilot = false. Если pilot = 1 у обоих — фикс BUG-008 не применился.
+[node name="ProbePilotAtSpawn" type="Node3D"]
+script = ExtResource("1_probe")

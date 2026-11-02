@@ -356,6 +356,28 @@ public partial class WorldSpawner : Node3D
         NetworkManager.Instance?.AssignNetIdIfUnset(shipNetState);
         if (nameOverride != null)
             ship.Name = nameOverride;
+        // BUG-008 (рецидив): первоначальный пилот пишем в реестр ДО AddChild.
+        // В offline свободный корабль — «без пилота» (PilotPeerId = 0), а не
+        // автопилот 1: SelfId = 1 делал бы КАЖДЫЙ корабль «локальным пилотом»
+        // игрока, и WASD двигал бы все корабли сразу. Пристёгнутый корабль
+        // получает пилота 1 позже, через Player.AttachServerSide (оно же
+        // включает чтение ввода). В сети (Host/Dedicated) свободные корабли —
+        // автопилот 1, как ждали тесты п.15/п.17.
+        //
+        // Порядок здесь принципиален: AddChild синхронно вызывает Ship._Ready,
+        // который читает реестр пилотов (Ship: RegisterShip → TryGetPilot →
+        // ApplyPilot). Запись ПОСЛЕ AddChild означала бы: в _Ready реестр пуст →
+        // ApplyPilot не вызван → PilotPeerId остался на дефолте (1), а значение
+        // из реестра не применил бы уже НИКТО (TryGetPilot больше не зовётся).
+        // Отсюда и «оба корабля слушаются WASD» при зафикшенном гейте SetPilot.
+        //
+        // Пишем в реестр БЕЗ ApplyPilot: узел ещё не в дереве и не зарегистрирован,
+        // а лишний ApplyPilot снял бы дебаг-кнопку чужого корабля (метки кнопок
+        // не различают корабли) и сбросил бы очередь ввода уже летящего тела.
+        // Ship подхватит значение в _Ready через TryGetPilot.
+        if (shipNetState.ShipNetId != 0 &&
+            NetworkManager.Instance is { IsAuthoritySide: true } nm)
+            nm.SetInitialPilot(shipNetState.ShipNetId, nm.FreeShipPilotId);
         // Позиция ставится ПОСЛЕ AddChild: вне дерева get_global_transform вернёт
         // Transform3D() и напечатает ERROR (§3.6). Первый снимок реплики берётся в
         // _Process синхронизатора, а не внутри AddChild, поэтому позиция, заданная
@@ -363,18 +385,6 @@ public partial class WorldSpawner : Node3D
         AddChild(ship);
         if (position is { } pos)
             ship.GlobalPosition = pos;
-        // BUG-008: в offline свободный корабль — «без пилота» (PilotPeerId = 0),
-        // а не автопилот 1: SelfId = 1 делал бы КАЖДЫЙ корабль «локальным
-        // пилотом» игрока, и WASD двигал бы все корабли сразу. Пристёгнутый
-        // корабль получает пилота 1 через Player.AttachServerSide (оно же
-        // включает чтение ввода). В сети (Host/Dedicated) свободные корабли —
-        // автопилот 1, как ждали тесты п.15/п.17.
-        // Пишем в реестр пилотов БЕЗ ApplyPilot: корабль ещё не зарегистрирован,
-        // а лишний ApplyPilot снял бы дебаг-кнопку чужого корабля (метки кнопок
-        // не различают корабли). Ship подхватит значение в _Ready через TryGetPilot.
-        if (ship.Net is { ShipNetId: not 0 } &&
-            NetworkManager.Instance is { IsAuthoritySide: true } nm)
-            nm.SetInitialPilot(ship.Net.ShipNetId, nm.FreeShipPilotId);
         return ship;
     }
 

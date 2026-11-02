@@ -304,7 +304,6 @@
 ---
 
 ## BUG-008 — Второй корабль реагирует на ввод игрока, хотя игрок к нему не пристёгнут
-
 - **Статус:** fixed (реализован вариант «авторитетная сторона = сервер ИЛИ offline»
   + `PilotPeerId = 0` = «никто не пилотирует» в offline)
 - **Компонент:** `scripts/core/Ship.cs` (`IsLocalPilot`, `ApplyAuthority`,
@@ -335,6 +334,40 @@
 - **Проверка (когда будет сделано):** в `Main.tscn` (offline, 2 корабля) WASD
   двигает только пристёгнутый корабль; второй стоит/дрейфует. В `Stage1Test`/`NetTest`
   не деградирует.
+- **Рецидив (повторный симптом, тот же ID):** «при запуске спавнятся два корабля,
+  второй тоже слушается WASD». Оказалось, что исходный фикс не применялся по двум
+  причинам, и обе — вне того места, где его искали:
+  1. `WorldSpawner.SpawnShipFromScene` писал `nm.SetInitialPilot(...)` в реестр
+     пилотов **после** `AddChild(ship)`, а `Ship._Ready` читает этот реестр
+     (`TryGetPilot` → `ApplyPilot`) **внутри** `AddChild`. В момент `_Ready` реестр
+     пуст → `ApplyPilot` не вызывается, а сделанную позже запись не применяет уже
+     никто. `PilotPeerId` оставался на дефолте `1`, `SelfId == 1` → `IsLocalPilot`
+     true у обоих кораблей. **Фикс:** запись перенесена ДО `AddChild` (порядок
+     прокомментирован на месте).
+  2. `Player.AttachToDefaultPoint` звал чистый `AttachTo`, который дерево меняет,
+     но пилота не назначает, — ветка `nm.SetPilot` живёт только в `AttachServerSide`.
+     Автопристёгивание при спавне (в `Ship.tscn` точка `Seat` помечена
+     `IsDefaultForPlayer`) поэтому оставляло пилота в состоянии «0 = никто»:
+     починка №1 без этой правки убрала управление вообще с обоих кораблей.
+     **Фикс:** при `best.OwnerNetId > 0` идёт `AttachServerSide(...)`; точки без
+     сетевого адреса (`TestStand` автотестов, `OwnerNetId <= 0`) остаются на старом
+     пути, иначе `AttachServerSide` не нашёл бы их в реестре и отказал бы в креплении.
+- **Побочный эффект фикса (и его правка):** `ApplyPilot` теперь реально вызывается
+  из `_Ready`, и его снятие кнопок **по метке** (`RemoveDebugButton("Nudge Ship")`)
+  снимало кнопку ДРУГОГО корабля — метка у кораблей законно повторяется. В итоге
+  кнопка импульса в `Stage1Test` п.25 толкала не тот корабль
+  («инерция сохранилась: |v| = 0,00 м/с»). **Фикс:** кнопки корабля переведены на
+  ручки (`_nudgeHandle`/`_godHandle`/`_interpHandle`, уже начатое в шаге 5.12 для
+  `_teleportHandle`) и собираются в одном месте `BuildDebugButtons()`; `ApplyPilot`
+  пересобирает их только при реальном изменении роли (`_debugButtonsAuthority`),
+  а не «на всякий случай» (пересборка переставляет кнопку в конец панели).
+- **Проверено (рецидив):** проба `tests/probes/ProbePilotAtSpawn.tscn` — offline-мир
+  из `Main.tscn`, печать `PilotPeerId` / `IsLocalPilot` / ввода у обоих кораблей на
+  5-м и 120-м кадрах. До: `ship#1 pilot=1 IsLocalPilot=True`, `ship#2 pilot=1
+  IsLocalPilot=True inputOn=True`. После: `ship#1 pilot=1 inputOn=True` (игрок
+  пристёгнут), `ship#2 pilot=0 IsLocalPilot=False inputOn=False`. Прогон тестов:
+  Stage1Test 104/0, Stage2Test 83/0, Stage3Test OK, Stage4Test OK, Stage5Test OK,
+  NetTest 123/0.
 
 ---
 

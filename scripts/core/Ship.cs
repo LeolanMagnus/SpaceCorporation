@@ -454,6 +454,29 @@ public partial class Ship : RigidBody3D
     /// в _ExitTree по ручке, а не по метке (надёжно при пересборке корабля).</summary>
     private DebugButtonHandle? _teleportHandle;
 
+    /// <summary>Ручки «Nudge Ship» и «Toggle Interpolation» этого корабля. Снимаем
+    /// ТОЛЬКО по ним (BUG-008-рецидив): снятие по метке помечает снятыми ВСЕ ручки
+    /// с таким именем, поэтому смена пилота на одном корабле срезала кнопку ДРУГОГО
+    /// (в Stage1Test п.25 «Nudge Ship» после этого толкал не тот корабль →
+    /// «инерция сохранилась: |v| = 0,00»). У нескольких кораблей метка законно
+    /// повторяется, поэтому массовая чистка по метке недопустима.</summary>
+    private DebugButtonHandle? _nudgeHandle;
+    private DebugButtonHandle? _interpHandle;
+    private DebugButtonHandle? _godHandle;
+
+    /// <summary>Зарегистрированы ли кнопки этого корабля (BuildDebugButtons уже
+    /// отработал). `ApplyPilot` вызывается и внутри `_Ready()` — до регистрации, —
+    /// и тогда пересборку кнопок делает идущий следом BuildDebugButtons.</summary>
+    private bool _debugButtonsBuilt;
+
+    /// <summary>Авторитет, под который собраны кнопки (`null` — кнопок нет). Нужен,
+    /// чтобы `ApplyPilot` пересобирал кнопки ТОЛЬКО при реальной смене роли: набор
+    /// кнопок гейтуется авторитетом, а при В14=B смена пилота авторитет не меняет
+    /// (§3.5 п.8). Пересборка «на всякий случай» снимала кнопку и ставила её в
+    /// конец списка панели, и автотест инерции (Stage1Test п.25) начинал толкать не
+    /// тот корабль: в мире два корабля, у каждого своя «Nudge Ship», а тест ищет
+    /// кнопку по тексту и берёт первую найденную.</summary>
+    private bool? _debugButtonsAuthority;
     /// <summary>Состояние окна, которое пилотирование временно перехватывает:
     /// режим мыши и включён ли ввод у узла. Возвращаем при освобождении.</summary>
     private Input.MouseModeEnum _prevMouseMode = Input.MouseModeEnum.Visible;
@@ -598,19 +621,34 @@ public partial class Ship : RigidBody3D
                 ApplyPilot(pending);
         }
 
-        // Кнопка для проверки инерции: короткий импульс вперёд, дальше тело летит само.
-        // Только авторитету: не-авторитет не имеет права вызывать ApplyImpulse (§2.5 п.6).
-        // В offline авторитет есть у всех — кнопка остаётся на своём месте.
+        // Кнопки этого корабля под текущую роль (авторитет / не-авторитет).
+        // Регистрация и снятие — ТОЛЬКО по ручкам этого корабля: см. _nudgeHandle.
+        BuildDebugButtons();
+    }
+
+    /// <summary>Зарегистрировать кнопки корабля под текущую роль, предварительно
+    /// сняв свои же. Вызывается из `_Ready()` один раз и из `ApplyPilot` при смене
+    /// пилота (§3.1 п.4: кнопку импульса перерегистрируем вместе с ролью, иначе у
+    /// бывшего пилота остаётся кнопка, шлющая импульс в никуда).
+    ///
+    /// Кнопка для проверки инерции («Nudge Ship»): короткий импульс вперёд, дальше
+    /// тело летит само. Только авторитету: не-авторитет не имеет права вызывать
+    /// ApplyImpulse (§2.5 п.6). В offline авторитет есть у всех — кнопка на месте.
+    /// Шаг 4.9: god mode включает только серверный процесс. Сервер — всегда
+    /// авторитет корабля (В14=B), поэтому гейт по HasAuthority = гейт «только
+    /// сервер» (п.23: у клиента-не-авторитета кнопки нет вовсе).
+    /// Шаг 5.12: телепорт в зону стыковки — только сервер (он единственный легально
+    /// двигает тела, §3.6): у клиента-не-авторитета кнопки нет вовсе (п.33).
+    /// Кнопка интерполяции, наоборот, имеет смысл только там, где hull рисуется по
+    /// снимкам (наблюдатель/пилот-предсказание), поэтому — только не-авторитету.</summary>
+    private void BuildDebugButtons()
+    {
+        RemoveDebugButtons();
+
         if (HasAuthority)
         {
-            DebugInfoBus.RegisterDebugButton("Nudge Ship", NudgeShip);
-            // Шаг 4.9: god mode включает только серверный процесс. Сервер — всегда
-            // авторитет корабля (В14=B), поэтому гейт по HasAuthority = гейт «только
-            // сервер» (п.23: у клиента-не-авторитета кнопки нет вовсе).
-            DebugInfoBus.RegisterDebugButton("Toggle God Mode", ToggleGodMode);
-            // Шаг 5.12: телепорт в зону стыковки — только сервер (он единственный
-            // легально двигает тела, §3.6): у клиента-не-авторитета кнопки нет
-            // вовсе (п.33).
+            _nudgeHandle = DebugInfoBus.RegisterDebugButton("Nudge Ship", NudgeShip);
+            _godHandle = DebugInfoBus.RegisterDebugButton("Toggle God Mode", ToggleGodMode);
             _teleportHandle = DebugInfoBus.RegisterDebugButton(
                 "Teleport to Docking Zone", TeleportToDockingZone);
 
@@ -621,11 +659,27 @@ public partial class Ship : RigidBody3D
         }
         else
         {
-            // Кнопка интерполяции картинки не-авторитета (stage2-plan §2.5): имеет
-            // смысл только там, где hull рисуется по снимкам (наблюдатель/пилот-
-            // предсказание), поэтому и регистрируется только не-авторитету.
-            DebugInfoBus.RegisterDebugButton("Toggle Interpolation", ToggleInterpolation);
+            _interpHandle = DebugInfoBus.RegisterDebugButton(
+                "Toggle Interpolation", ToggleInterpolation);
         }
+
+        _debugButtonsBuilt = true;
+        _debugButtonsAuthority = HasAuthority;
+    }
+
+    /// <summary>Снять СОБСТВЕННЫЕ кнопки корабля (по ручкам). Массовое снятие по
+    /// метке здесь недопустимо: у нескольких кораблей метка законно повторяется, и
+    /// смена пилота на одном корабле срезала бы кнопку другого (см. _nudgeHandle).</summary>
+    private void RemoveDebugButtons()
+    {
+        DebugInfoBus.RemoveDebugButton(_nudgeHandle);
+        DebugInfoBus.RemoveDebugButton(_godHandle);
+        DebugInfoBus.RemoveDebugButton(_teleportHandle); // 5.12: снимаем по ручке (не задев чужие)
+        DebugInfoBus.RemoveDebugButton(_interpHandle);
+        _nudgeHandle = null;
+        _godHandle = null;
+        _teleportHandle = null;
+        _interpHandle = null;
     }
 
     public override void _ExitTree()
@@ -634,10 +688,11 @@ public partial class Ship : RigidBody3D
         // этот узел, и после освобождения корабля (DespawnShip, §3.9 п.16) шина
         // звала бы мёртвую лямбду каждый кадр → ObjectDisposedException (§3.11 п.9).
         DebugInfoBus.RemoveInfoSource($"Ship#{Net?.ShipNetId ?? 0}");
-        DebugInfoBus.RemoveDebugButton("Nudge Ship");
-        DebugInfoBus.RemoveDebugButton("Toggle Interpolation");
-        DebugInfoBus.RemoveDebugButton("Toggle God Mode");
-        DebugInfoBus.RemoveDebugButton(_teleportHandle); // 5.12: снимаем по ручке (не задев чужие)
+        // Кнопки — только свои, по ручкам (BUG-008-рецидив): снятие по метке задевает
+        // кнопки других кораблей (у них та же метка законно). Ручки покрывают и
+        // «страховку» из баг-листа: отложенная заявка в _pendingButtons убирается
+        // ручкой же, узел-сирота с колбэком на мёртвый корабль не остаётся.
+        RemoveDebugButtons();
 
         // §3.9 п.16: игрок, пристёгнутый к точкам этого корабля, — узел внутри
         // ShipHull/AttachPoints, и при удалении корабля был бы удалён вместе с ним.
@@ -677,15 +732,22 @@ public partial class Ship : RigidBody3D
 
         ApplyAuthority();
 
-        // §3.1 п.4: при смене пилота кнопку перерегистрируем вместе с ролью —
+        // §3.1 п.4: при смене пилота кнопки перерегистрируем вместе с ролью —
         // иначе у бывшего пилота остаётся кнопка, шлющая импульс в никуда.
-        DebugInfoBus.RemoveDebugButton("Nudge Ship");
-        if (HasAuthority)
-            DebugInfoBus.RegisterDebugButton("Nudge Ship", NudgeShip);
-        // Кнопка интерполяции живёт только у не-авторитета (картинка по снимкам).
-        DebugInfoBus.RemoveDebugButton("Toggle Interpolation");
-        if (!HasAuthority)
-            DebugInfoBus.RegisterDebugButton("Toggle Interpolation", ToggleInterpolation);
+        //
+        // Во время `_Ready()` этот метод вызывается ДО BuildDebugButtons (реестр
+        // пилотов читаем сразу после RegisterShip, а роль корабля в момент чтения
+        // ещё не подтверждена) — тогда пересборку делает идущий следом
+        // BuildDebugButtons, а здесь трогать кнопки нельзя: иначе каждая смена
+        // пилота при спавне добавляла бы второй набор кнопок этого корабля.
+        //
+        // Пересобираем ТОЛЬКО если набор кнопок реально не соответствует роли
+        // (_debugButtonsAuthority): сами кнопки гейтуются авторитетом, а при В14=B
+        // пилот авторитет не получает (§3.5 п.8), так что обычная пристёжка/отстёжка
+        // набор не меняет. Пересборка «на всякий случай» переставляла кнопку в
+        // конец панели и ломала автотест инерции (Stage1Test п.25).
+        if (_debugButtonsBuilt && _debugButtonsAuthority != HasAuthority)
+            BuildDebugButtons();
 
         GD.Print($"ship#{Net?.ShipNetId ?? 0}: pilot -> {peerId}, " +
                  $"local pilot = {IsLocalPilot}, auth = {GetMultiplayerAuthority()}, " +

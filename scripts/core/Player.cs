@@ -216,6 +216,24 @@ public partial class Player : CharacterBody3D
         }
         if (best == null)
             return false;
+
+        // BUG-008 (рецидив, часть 2): у точки с сетевым адресом (реальный корабль
+        // из WorldSpawner) идём ПОЛНЫМ серверным путём AttachServerSide, а не чистым
+        // AttachTo. Причина: вход в кабину = назначение пилота (§3.5 п.8, В14=B), и
+        // только AttachServerSide зовёт nm.SetPilot. Чистый AttachTo меняет дерево,
+        // но PilotPeerId не трогает, поэтому после спавна (где корабли уже с
+        // пилотом 0) пристёгнутый игрок остался бы без управления, а чужие
+        // корабли — с прежним пилотом.
+        //
+        // Точки без сетевого адреса (OwnerNetId <= 0: TestStand автотестов и проб,
+        // где стенд не спавнится через WorldSpawner) остаются на старом пути:
+        // AttachServerSide по реестру их не найдёт и откажет в креплении.
+        if (best.OwnerNetId > 0)
+        {
+            AttachServerSide(best.OwnerNetId, best.NetId);
+            return IsAttached;
+        }
+
         AttachTo(best);
         return true;
     }
