@@ -67,6 +67,7 @@ public partial class Stage2Test : Node3D
         // физического шага (живой RigidBody3D с CustomIntegrator) — он доделывается
         // в _PhysicsProcess, а итог печатается там же и только потом Finish().
         RunFlightModelTests();
+        RunAngularSpeedLimitTests();
         RunInputFrameTests();
         StartIntegratorProbe();
     }
@@ -894,6 +895,166 @@ public partial class Stage2Test : Node3D
         }
 
         s.QueueFree();
+    }
+
+    // ==================================================================
+    // П.12: потолок угловой скорости корабля (MaxAngularSpeed)
+    // ==================================================================
+    // Модель «каждому кораблю — своя предельная скорость вращения»: одна и та
+    // же ручка управления даёт разный результат у кораблей с разным лимитом.
+    private void RunAngularSpeedLimitTests()
+    {
+        GD.Print("[Stage2Test] п.12: лимит угловой скорости (MaxAngularSpeed)");
+
+        // Одинаковый кадр-«ручка» с зажатой Q/E (крен) на длинном прогоне: без
+        // лимита момент раскручивает корпус неограниченно, с лимитом — выходит
+        // на плато и дальше не растёт.
+        var frame = InputFrame.FromMask(1, InputMask.TorqueRollLeft);
+
+        var pNoLimit = new FlightParams
+        {
+            Mass = 1200f, LinearThrust = 90000f, AngularThrust = 40000f,
+            LinearDamping = 0f, AngularDamping = 0f, BoostMultiplier = 2f,
+            MaxAngularSpeed = 0f, // без ограничения — как во всех прежних прогонах
+        };
+        var pLimit = pNoLimit;
+        pLimit.MaxAngularSpeed = 2f; // рад/с — «тяжёлый» freighter
+
+        // Park(), а не default: у структурного нуля кватернион нулевой, и
+        // Basis(нулевой кватернион) даёт NaN во всех осях.
+        var noLimit = FlightState.Park();
+        var limited = FlightState.Park();
+        float maxSeenLimited = 0f;
+        for (int i = 0; i < 600; i++)
+        {
+            frame.Tick = (uint)(i + 1);
+            noLimit = FlightModel.Step(noLimit, pNoLimit, frame, FlightModel.FixedDt);
+            limited = FlightModel.Step(limited, pLimit, frame, FlightModel.FixedDt);
+            maxSeenLimited = Mathf.Max(maxSeenLimited, limited.AngularVelocity.Length());
+        }
+
+        Check(noLimit.AngularVelocity.Length() > 10f,
+            $"п.12: без лимита Q раскручивает корпус неограниченно " +
+            $"(|w| = {noLimit.AngularVelocity.Length():F2} рад/с за 10 с)");
+        Check(Mathf.Abs(limited.AngularVelocity.Length() - 2f) < 1e-3f,
+            $"п.12: с лимитом 2 рад/с |w| встаёт на плато " +
+            $"({limited.AngularVelocity.Length():F4} ≈ 2)");
+        Check(maxSeenLimited <= 2f + 1e-6f,
+            $"п.12: лимит не превышен ни на одном шаге (максимум {maxSeenLimited:F6} ≤ 2)");
+
+        // Направление вращения сохраняется: клиппится модуль, а не оси.
+        Vector3 wDir = limited.AngularVelocity.Normalized();
+        Check(Mathf.Abs(Mathf.Abs(wDir.Z) - 1f) < 1e-3f &&
+              wDir.X * wDir.X + wDir.Y * wDir.Y < 1e-6f,
+            "п.12: лимит не меняет ось вращения (крен остался вокруг Z)");
+
+        // Диагональный момент: лимит по модулю, а не «каждая ось по 2».
+        var diag = FlightState.Park();
+        var pDiag = pNoLimit;
+        pDiag.MaxAngularSpeed = 2f;
+        var diagFrame = InputFrame.FromMask(1,
+            InputMask.TorqueRollLeft | InputMask.TorqueYawLeft | InputMask.TorquePitchUp);
+        for (int i = 0; i < 600; i++)
+        {
+            diagFrame.Tick = (uint)(i + 1);
+            diag = FlightModel.Step(diag, pDiag, diagFrame, FlightModel.FixedDt);
+        }
+        Check(Mathf.Abs(diag.AngularVelocity.Length() - 2f) < 1e-3f,
+            $"п.12: при вращении по трём осям сразу ограничен МОДУЛЬ (|w| = " +
+            $"{diag.AngularVelocity.Length():F4} ≈ 2), а не каждая ось по отдельности");
+
+        // Старые прогоны (лимит = 0 — структурный ноль в FlightParams, как в
+        // Params() тестов) обязаны считаться побитово как раньше — иначе все
+        // замеры стадий 2-5 поедут.
+        // Повторяет pNoLimit во всех полях, кроме MaxAngularSpeed = 0. Иначе
+        // сверялись бы РАЗНЫЕ параметры (без демпфирования и с ним) — тривиальный
+        // прогон.
+        var structZero = pNoLimit;
+        structZero.MaxAngularSpeed = 0f;
+        FlightState a = FlightState.Park(), b = FlightState.Park();
+        for (int i = 0; i < 100; i++)
+        {
+            frame.Tick = (uint)(i + 1);
+            a = FlightModel.Step(a, pNoLimit, frame, FlightModel.FixedDt);
+            b = FlightModel.Step(b, structZero, frame, FlightModel.FixedDt);
+        }
+        Check(a.AngularVelocity == b.AngularVelocity && a.Rotation == b.Rotation,
+            "п.12: MaxAngularSpeed = 0 (структурный ноль) = без ограничения, " +
+            "числа совпадают побитово");
+
+        // --- Мышь: потолок применяется и к прямому довороту носа ---
+        // 100 пикселей за кадр при чувствительности 0.0025 = 0,25 рад — слишком
+        // много для «быстрого» корабля; за один шаг 1/60 с лимитом 2 рад/с
+        // допустимо не более 2/60 = 0,0333 рад.
+        Vector2 lookBig = new Vector2(30f, 30f) * 0.0025f; // (0.075, 0.075)
+        float dt = FlightModel.FixedDt;
+        Vector2 clamped = FlightModel.ClampLookRadians(lookBig, 2f, dt);
+        Check(Mathf.Abs(clamped.Length() - 2f * dt) < 1e-6f,
+            $"п.12: мышиная дельта ограничена MaxAngularSpeed·dt " +
+            $"(|look| = {clamped.Length():F6} = {2f * dt:F6})");
+        Check(clamped.X == clamped.Y && clamped.X > 0f,
+            "п.12: дельта режется пропорционально — направление доворота не меняется");
+        Check(FlightModel.ClampLookRadians(lookBig, 0f, dt) == lookBig,
+            "п.12: лимит 0 = дельта проходит побитово как есть (старые прогоны)");
+        Vector2 small = new Vector2(0.001f, 0.002f);
+        Check(FlightModel.ClampLookRadians(small, 2f, dt) == small,
+            "п.12: дельта внутри лимита не трогается");
+
+        // Живой Ship: мышь не должна поворачивать нос быстрее лимита корабля.
+        if (GD.Load<PackedScene>("res://scenes/Ship.tscn") is PackedScene lookScene)
+        {
+            // Предел задаётся ДО AddChild: `_Ready` переносит его в Flight сам —
+            // так проверка подтверждает, что настройка корабля доходит до модели.
+            Ship s = lookScene.Instantiate<Ship>();
+            s.MaxAngularSpeed = 1.5f;
+            AddChild(s);
+            s.TestSetPilotForTest(1);
+            s.TestSetVelocity(Vector3.Zero);
+
+            // Рывок мыши: 400 пикселей за один кадр (≈ 1 рад) — заведомо больше,
+            // чем корабль проворачивает нос за шаг.
+            s.TestAddLookDelta(new Vector2(400f, 0f));
+            s.TestStepForTest(dt);
+            float turned = s.GlobalTransform.Basis.GetRotationQuaternion().AngleTo(Quaternion.Identity);
+            // Допуск 1e-4: AngleTo ≈ acos след/2 около нуля усиливает ошибку
+            // float32 до ~ε/sin(θ) ≈ 5e-6 при угле 0,025 рад.
+            Check(turned <= s.MaxAngularSpeed * dt + 1e-4f,
+                $"п.12: рывок мыши повернул нос не быстрее лимита корпуса " +
+                $"({turned:F6} рад ≤ {s.MaxAngularSpeed * dt:F6})");
+
+            // И клавиша Q/E: корпус не раскручивается выше своего предела.
+            var keyFrame = InputFrame.FromMask(10_000, InputMask.TorqueRollLeft);
+            for (int i = 0; i < 600; i++)
+            {
+                keyFrame.Tick = (uint)(10_000 + i + 1);
+                s.TestSetInputForTest(keyFrame);
+                s.TestStepForTest(dt);
+            }
+            Check(Mathf.Abs(s.AngularVelocity.Length() - s.MaxAngularSpeed) < 1e-3f,
+                $"п.12: живым Q/E корпус встал на свой потолок " +
+                $"(|w| = {s.AngularVelocity.Length():F4} ≈ {s.MaxAngularSpeed})");
+
+            // Другой корабль той же сцены — с другим пределом: настройка
+            // действительно принадлежит кораблю, а не модели полёта вообще.
+            Ship s2 = lookScene.Instantiate<Ship>();
+            s2.MaxAngularSpeed = 0.5f;
+            AddChild(s2);
+            s2.TestSetPilotForTest(1);
+            var keyFrame2 = InputFrame.FromMask(20_000, InputMask.TorquePitchUp);
+            for (int i = 0; i < 600; i++)
+            {
+                keyFrame2.Tick = (uint)(20_000 + i + 1);
+                s2.TestSetInputForTest(keyFrame2);
+                s2.TestStepForTest(dt);
+            }
+            Check(s2.AngularVelocity.Length() < 0.501f &&
+                  s2.AngularVelocity.Length() < s.AngularVelocity.Length() - 0.5f,
+                $"п.12: у корабля с MaxAngularSpeed = 0.5 потолок свой " +
+                $"(|w| = {s2.AngularVelocity.Length():F4} < 0.51, у первого {s.AngularVelocity.Length():F2})");
+
+            s.QueueFree();
+            s2.QueueFree();
+        }
     }
 
     // ==================================================================

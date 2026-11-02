@@ -80,6 +80,18 @@ public struct FlightParams
     public float AngularDamping;
     /// <summary>Множитель тяги при форсаже (бит Boost).</summary>
     public float BoostMultiplier;
+    /// <summary>
+    /// Максимальная угловая скорость корабля, рад/с (модуль `AngularVelocity`,
+    /// т.е. любая ось: тангаж/рысканье/крен). 0 или меньше = без ограничения.
+    /// Это характеристика корабля: у тяжёлого freighter она меньше, у лёгкого
+    /// истребителя больше. Ограничивает и ручное управление (Q/E, Z/X/C/V), и
+    /// мышь (см. <see cref="ClampLookRadians"/>), и доводку при стыковке.
+    ///
+    /// Поле НЕ задаётся в `Default()` и в тестовых `Params()`: структурный
+    /// ноль = «без ограничения», поэтому существующие прогоны (детерминизм,
+    /// тандем с телом, затухание демпфером) считают ровно те же числа.
+    /// </summary>
+    public float MaxAngularSpeed;
 
     /// <summary>Значения по умолчанию = то, что сейчас стоит на Ship.cs:86-87.</summary>
     public static FlightParams Default()
@@ -91,6 +103,7 @@ public struct FlightParams
             LinearDamping = 0.15f,
             AngularDamping = 0.4f,
             BoostMultiplier = 2f,
+            MaxAngularSpeed = 0f, // 0 = без ограничения (см. документацию поля)
         };
 }
 
@@ -119,17 +132,29 @@ public static class FlightModel
     {
         if (dt <= 0f) return s;
 
+        // Лимит угловой скорости корабля (макс. рад/с по ЛЮБОЙ оси — модуль
+        // мирового `AngularVelocity`). Гейтим и вход шага, и выход:
+        //  • вход — чтобы интегрирование поворота ниже шло скоростью, которая
+        //    уже под лимитом (иначе допущенное сверху состояние за этот шаг
+        //    провернуло бы нос быстрее предельной скорости);
+        //  • выход — чтобы момент с клавиш (Q/E, Z/X/C/V) или доводка стыковки
+        //    не раскрутили сверх лимита.
+        // `p.MaxAngularSpeed <= 0` = без ограничения (так стоят все старые
+        // тестовые прогоны: структурный ноль меняет поведение ровно на «нет»).
+        Vector3 w = s.AngularVelocity;
+        if (p.MaxAngularSpeed > 0f && w.LengthSquared() > p.MaxAngularSpeed * p.MaxAngularSpeed)
+            w = w.Normalized() * p.MaxAngularSpeed;
+
         Basis basis = new Basis(s.Rotation);
 
         // --- 1-2. Интегрирование положения/ориентации ТЕКУЩИМИ скоростями ---
         FlightState n = s;
         n.Position = s.Position + s.LinearVelocity * dt;
 
-        if (s.AngularVelocity != Vector3.Zero)
+        if (w != Vector3.Zero)
         {
             // Угловая скорость — в мировых осях (как у RigidBody3D), поэтому
             // прирост поворота строится прямо от неё, без пересчёта в базис.
-            Vector3 w = s.AngularVelocity;
             float wLen = w.Length();
             if (wLen > 1e-8f)
             {
@@ -180,7 +205,38 @@ public static class FlightModel
         if (p.AngularDamping > 0f)
             n.AngularVelocity *= Mathf.Exp(-p.AngularDamping * dt);
 
+        // --- 7. Потолок угловой скорости (характеристика корабля) ---
+        // После демпфирования, чтобы момент с клавиш (Q/E, Z/X/C/V) и внешняя
+        // доводка не могли выйти за предел ни при каком шаге. Клиппится МОДУЛЬ
+        // вектора, а не каждая ось: направление вращения сохраняется.
+        if (p.MaxAngularSpeed > 0f &&
+            n.AngularVelocity.LengthSquared() > p.MaxAngularSpeed * p.MaxAngularSpeed)
+            n.AngularVelocity = n.AngularVelocity.Normalized() * p.MaxAngularSpeed;
+
         return n;
+    }
+
+    /// <summary>
+    /// Пропорциональное ограничение мышиной дельты угла (радианы, из
+    /// `InputFrame.LookYaw`/`LookPitch`): не более `p.MaxAngularSpeed` радиан
+    /// за шаг `dt`, т.е. мышь крутит нос не быстрее предельной угловой скорости
+    /// корабля. Ограничивается ВЕКТОР (yaw, pitch) целиком — при резком диагональном
+    /// движении обе компоненты режутся в одно число, порядок доворота сохраняется.
+    ///
+    /// Мышь не проходит через `AngularVelocity` (это прямой доворот носа), поэтому
+    /// гейт обязателен и здесь, и внутри `Step`. `MaxAngularSpeed <= 0` = без
+    /// ограничения: функция возвращает дельту побитово как пришла (тесты п.6b/п.9
+    /// сверяют точное значение поворота от мыши).
+    /// </summary>
+    public static Vector2 ClampLookRadians(Vector2 look, float maxAngularSpeed, float dt)
+    {
+        if (maxAngularSpeed <= 0f || dt <= 0f)
+            return look;
+        float maxAngle = maxAngularSpeed * dt;
+        float len = look.Length();
+        if (len <= maxAngle || len <= 0f)
+            return look;
+        return look * (maxAngle / len);
     }
 
     /// <summary>

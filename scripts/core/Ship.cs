@@ -177,6 +177,21 @@ public partial class Ship : RigidBody3D
     /// </summary>
     public FlightParams Flight;
 
+    /// <summary>
+    /// Максимальная угловая скорость корабля, рад/с (модуль `AngularVelocity` —
+    /// т.е. ограничена и каждая ось, и любая комбинация: тангаж, рыскание, крен).
+    /// Это характеристика конкретного корабля: у freighter она меньше, у
+    /// истребителя больше, и настраивается прямо в сцене (Ship.tscn) или кодом
+    /// перед `_Ready`. Гейтит всё, что крутит корпус:
+    ///  • момент с клавиш (Q/E, Z/X/C/V) — через `AngularVelocity` в `FlightModel.Step`;
+    ///  • мышь (прямой доворот носа) — через `FlightModel.ClampLookRadians`
+    ///    в `StepPrediction`;
+    ///  • угловую доводку при стыковке и любую внешнюю запись скорости.
+    /// 0 или меньше = без ограничения (так стоят все прогоны, где `Flight`
+    /// собирается вручную: структурный ноль не меняет их числа).
+    /// </summary>
+    [Export] public float MaxAngularSpeed = 6f;
+
     /// <summary>Плечо мыши: радианы поворота носа на 1 пиксель движения мыши.</summary>
     [Export] public float MouseSensitivity = 0.0025f;
 
@@ -547,6 +562,7 @@ public partial class Ship : RigidBody3D
             LinearDamping = LinearDamp,   // 0 → инерция сохраняется (тест этапа 1)
             AngularDamping = AngularDamp, // 1.5 → вращение гаснет само
             BoostMultiplier = 2f,
+            MaxAngularSpeed = MaxAngularSpeed, // потолок угловой скорости корпуса
         };
 
         CollisionLayer = CollisionLayers.Ship;
@@ -944,6 +960,12 @@ public partial class Ship : RigidBody3D
             Vector3 nose = f.Rotation * Vector3.Back; // конвенция: нос = -Z
             Vector3 corr = nose.Cross(toDock);        // ось и величина доворота
             Vector3 w = corr * Docking.AlignK - f.AngularVelocity * Docking.AlignDamp;
+            // Потолок угловой скорости корпуса — и для доводки пружины: корабль
+            // не обязан крутиться быстрее своей предельной скорости даже когда
+            // станция «тянет» его сильнее (MaxAngularSpeed <= 0 = без потолка).
+            if (Flight.MaxAngularSpeed > 0f &&
+                w.LengthSquared() > Flight.MaxAngularSpeed * Flight.MaxAngularSpeed)
+                w = w.Normalized() * Flight.MaxAngularSpeed;
             float blend = Mathf.Min(1f, Docking.AlignDamp * dt);
             f.AngularVelocity = f.AngularVelocity.Lerp(w, blend);
             float wLen = f.AngularVelocity.Length();
@@ -1163,7 +1185,17 @@ public partial class Ship : RigidBody3D
         // читает `_lookDelta`: у сервера-авторитета своей мыши по этому кораблю
         // нет, и look прилетает только через кадр (шаг 2.3, §3.5 п.8).
         if (frame.LookYaw != 0f || frame.LookPitch != 0f)
-            s.Rotation = ApplyLookRadians(s.Rotation, frame.LookYaw, frame.LookPitch);
+        {
+            // Мышь не проходит через `AngularVelocity` (это прямой доворот носа),
+            // поэтому её собственный угол тоже обязан быть под потолком: не более
+            // `Flight.MaxAngularSpeed` радиан за шаг. Иначе рывок мыши повернул бы
+            // нос быстрее, чем корабль умеет крутиться (и быстрее, чем это может
+            // воспроизвести сервер/реплика по тем же кадрам ввода).
+            // `MaxAngularSpeed <= 0` = без ограничения: дельта проходит как есть.
+            Vector2 look = FlightModel.ClampLookRadians(
+                new Vector2(frame.LookYaw, frame.LookPitch), Flight.MaxAngularSpeed, dt);
+            s.Rotation = ApplyLookRadians(s.Rotation, look.X, look.Y);
+        }
 
         return FlightModel.Step(s, Flight, frame, dt);
     }
@@ -2208,6 +2240,12 @@ public partial class Ship : RigidBody3D
     /// offline-сервер (он же пилот) не должен гонять ввод через RPC-никуда.</summary>
     private InputFrame FrameForStep()
     {
+        // Тестовый шов (TestSetInputForTest): кадр из теста имеет приоритет над
+        // клавишами и очередью — шов обязан работать в обеих ролях, иначе
+        // задокументированный «ввод без клавиатуры» молча подменяется реальным
+        // (в headless это пустота) и тесты п.12/Stage5BlockC п.21 меряют не то.
+        if (_testInput)
+            return _testFrame;
         // Offline: сервер = локальный пир, ввод читается с реальных клавиш.
         if (IsLocalPilot)
             return CollectInputFrame();
