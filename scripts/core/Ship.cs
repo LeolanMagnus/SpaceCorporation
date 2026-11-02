@@ -1609,6 +1609,12 @@ public partial class Ship : RigidBody3D
     {
         if (Net == null || Net.ShipNetId == 0)
             return; // адрес 0 → RPC уходят в никуда (§3.1 п.8)
+        // BUG-011 (тот же класс, что и в SnapshotBroadcaster.ClientGapWatch): в
+        // Offline-роли наш id = 1, и `RpcId(1, …)` — это RPC «сам себе», который
+        // режим MultiplayerApi запрещает (ERROR в логе). Отправка при этом и не
+        // нужна: сервер — это мы, а предсказание пилота уже интегрировано локально.
+        if (NetworkManager.Instance is not { HasRealPeer: true })
+            return;
         RpcId(1, nameof(RpcSubmitInput), Net.ShipNetId,
               frame.Tick, frame.Mask, frame.LookYaw, frame.LookPitch);
         // Бюджет ввода (В6 = C): кадр ввода считается отдельно от репликации,

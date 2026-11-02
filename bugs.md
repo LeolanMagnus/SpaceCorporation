@@ -423,7 +423,7 @@
 
 ## BUG-011 — ERROR в логе Stage1Test: `RPC 'RpcRequestFullSnapshot' on yourself is not allowed by selected mode`
 
-- **Статус:** open (зафиксирован при базовом прогоне стадии 3, к стрельбе отношения не имеет)
+- **Статус:** fixed (гейт по реальному соединению; та же болезнь в Ship тоже устранена)
 - **Компонент:** `scripts/core/SnapshotBroadcaster.cs` (`ClientGapWatch`, строка 140),
   `scripts/core/Ship.cs` (`RpcRequestFullSnapshot`)
 - **Симптом:** в прогоне `./run-tests.sh` (Stage1Test) в выводе появляется
@@ -443,6 +443,20 @@
 - **Проверка (когда будет сделано):** `./run-tests.sh` — в stdout нет
   «on yourself is not allowed»; `grep -c "RpcRequestFullSnapshot" log` = 0 ошибок;
   тестовый assert «пир получает полный снимок и в single-process конфигурации».
+- **Проверено (фикс):** вместо «прямого вызова» выбран отказ от запроса вообще:
+  в Offline-роли сервер — это мы, репликационных снимков нет и терять эталон
+  негде, поэтому gap-watch там не на что точить. Гейт `nm.HasRealPeer` в
+  клиентской ветке `SnapshotBroadcaster._Process` (`else if (!nm.IsServer &&
+  nm.HasRealPeer)`). Та же болезнь оказалась у `Ship.SubmitInputToServer`
+  (ERROR `RpcSubmitInput on yourself` в Stage2Test/Stage4Test): добавлен тот же
+  гейт (`NetworkManager.Instance is not { HasRealPeer: true } → return`) —
+  в offline ввод серверу и не нужен, сервер интегрирует то же состояние сам.
+  Прогон: Stage2Test 83 OK / 0 FAIL и 0 ошибок `on yourself` (было 3),
+  NetTest 123 PASS / 0 ERROR, Stage1/Stage3 — без изменений. В Stage4Test
+  остаются 7 ошибок `RpcSubmitInput on yourself` — это артефакт п.11/п.27
+  (`TestSimulateAuthorityOwnerForTest(999)`: host-пилот намеренно эмулирует
+  чужой авторитет 999 на действующем host-соединении), они были и в базовой
+  линии до фикса, к offline-ветке отношения не имеют.
 
 ---
 

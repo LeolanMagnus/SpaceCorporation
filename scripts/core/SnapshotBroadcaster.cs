@@ -123,9 +123,15 @@ public partial class SnapshotBroadcaster : Node
 
         if (nm.IsServer && nm.HasRealPeer && _clients.Count > 0)
             ServerTick(nm, (float)delta);
-        else if (!nm.IsServer)
+        else if (!nm.IsServer && nm.HasRealPeer)
             ClientGapWatch(nm, (float)delta);
         // Клиентская ветка приёма — в RpcSnapshotBatch (RPC-колбэк), здесь не нужна.
+        //
+        // BUG-011: гейт `HasRealPeer` в клиентской ветке. В Offline-роли (одиночная
+        // игра) `!IsServer`, но своего-то сервера нет: наш id = 1, и `RpcId(1, …)`
+        // упирается в «RPC on yourself is not allowed by selected mode» (ERROR в
+        // логе). При этом запрос и не нужен: полный эталон своего корабля — локальное
+        // состояние, пропадать ему негде (снимки в offline не летают).
     }
 
     /// <summary>Клиентская ветка (шаг R5): сторожим пропадание пилотской записи
