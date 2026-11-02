@@ -29,3 +29,17 @@ properties/2/replication_mode = 0
 properties/3/path = NodePath("StationState:NetRotation")
 properties/3/spawn = true
 properties/3/replication_mode = 0
+
+; Шаг 5.3 (Этап 5): док-состояние станции. В отличие от позы (статика, дельт
+; нет), эти три поля МЕНЯЮТСЯ в рантайме (фаза сделки), а станция не входит в
+; батч SnapshotBroadcaster — значит дельта-транспорт синхронизатора ей нужен:
+; OnChange (2). Пути — с двоеточием (ловушка пустого .tres, см. шапку).
+properties/4/path = NodePath("StationState:DockApproved")
+properties/4/spawn = true
+properties/4/replication_mode = 2
+properties/5/path = NodePath("StationState:DockShipNetId")
+properties/5/spawn = true
+properties/5/replication_mode = 2
+properties/6/path = NodePath("StationState:DockStateValue")
+properties/6/spawn = true
+properties/6/replication_mode = 2

@@ -361,6 +361,10 @@ public partial class Ship : RigidBody3D
     /// <summary>Есть ли уже валидное предсказание (инициализировано из тела при
     /// входе пилота). До первого шага предсказывать нечего.</summary>
     private bool _hasPrediction;
+    // Шаг 5.9: клиент-пилот в док-фазе (предсказание выключено, картинка идёт
+    // по интерполяции батча). true — пока фаза активна; при выходе из фазы
+    // предсказание сбрасывается (_hasPrediction=false) и стартует от реплики.
+    private bool _clientDockPhaseActive;
 
     /// <summary>Последний `SimTick` эталона, по которому уже сверялись: чтобы не
     /// реконсилироваться по одной и той же реплике многократно.</summary>
@@ -445,6 +449,10 @@ public partial class Ship : RigidBody3D
     /// этого тела не доходит до интегратора (проверяется пробой
     /// `tests/probes/ProbeInputHeadless.tscn`).</summary>
     private bool _testStep;
+
+    /// <summary>Ручка кнопки «Teleport to Docking Zone» (шаг 5.12) — снимается
+    /// в _ExitTree по ручке, а не по метке (надёжно при пересборке корабля).</summary>
+    private DebugButtonHandle? _teleportHandle;
 
     /// <summary>Состояние окна, которое пилотирование временно перехватывает:
     /// режим мыши и включён ли ввод у узла. Возвращаем при освобождении.</summary>
@@ -560,6 +568,11 @@ public partial class Ship : RigidBody3D
                 $"auth = {GetMultiplayerAuthority()}, pilot = {PilotPeerId}, " +
                 $"mode = {(IsInteractionMode ? "INTERACT" : "PILOT")}, " +
                 $"frozen = {Freeze}, " +
+                // Шаг 5.13 (п.35): dock-фаза и адрес станции в сделке — без них
+                // сделку в панели отладить нечем. Ключи добавлены, прежние
+                // (mode/auth/frozen/HP) не переписаны — assert'ы 3/4 стадий целы.
+                $"dock = {((DockState)(Net?.DockStateValue ?? 0))}, " +
+                $"dockStn = {(Net != null && Net.DockStationNetId != 0 ? Net.DockStationNetId.ToString() : "—")}, " +
                 $"netid = {Net?.ShipNetId ?? 0}, " +
                 // Показатели stage2-plan §2.5: Server Tick (тикет серверной физики из
                 // реплики NetState), Prediction Error (расхождение предсказания пилота
@@ -595,6 +608,11 @@ public partial class Ship : RigidBody3D
             // авторитет корабля (В14=B), поэтому гейт по HasAuthority = гейт «только
             // сервер» (п.23: у клиента-не-авторитета кнопки нет вовсе).
             DebugInfoBus.RegisterDebugButton("Toggle God Mode", ToggleGodMode);
+            // Шаг 5.12: телепорт в зону стыковки — только сервер (он единственный
+            // легально двигает тела, §3.6): у клиента-не-авторитета кнопки нет
+            // вовсе (п.33).
+            _teleportHandle = DebugInfoBus.RegisterDebugButton(
+                "Teleport to Docking Zone", TeleportToDockingZone);
 
             // CLI-путь god mode для headless/dedicated (панели нет): `-- --god`
             // идёт в тот же серверный метод, что и кнопка (п.24).
@@ -619,6 +637,7 @@ public partial class Ship : RigidBody3D
         DebugInfoBus.RemoveDebugButton("Nudge Ship");
         DebugInfoBus.RemoveDebugButton("Toggle Interpolation");
         DebugInfoBus.RemoveDebugButton("Toggle God Mode");
+        DebugInfoBus.RemoveDebugButton(_teleportHandle); // 5.12: снимаем по ручке (не задев чужие)
 
         // §3.9 п.16: игрок, пристёгнутый к точкам этого корабля, — узел внутри
         // ShipHull/AttachPoints, и при удалении корабля был бы удалён вместе с ним.
@@ -692,7 +711,17 @@ public partial class Ship : RigidBody3D
         // правило Freeze из §3.5 п.8. Пилот-клиент заморожен ОБЯЗАТЕЛЬНО: он
         // интегрирует только своё предсказание (шаг 2.4), а не истину (§3.5 п.5
         // плана: забытая заморозка пилота = два интегратора на одном теле).
-        Freeze = !HasAuthority;
+        //
+        // Шаг 5.10 (п.29): dock-замок. Единственная точка записи Freeze — здесь,
+        // поэтому «сервер ставит Freeze = true на Docked» живёт тоже здесь:
+        // иначе ApplyPilot (→ ApplyAuthority) во время сделки молча сотрёт замок.
+        // Проба tests/probes/probe_freeze_integrator.tscn доказала: у Frozen-тела
+        // Godot НЕ вызывает `_IntegrateForces` (0 вызовов за 30 кадров), поэтому
+        // замок — только на `Docked`, НЕ на `Latched`: в Capturing/Latched тело
+        // обязана интегрировать серверная пружина (шаг 5.8), а плановое
+        // «DockIsLatched()» из stage5-plan:116 убило бы доводку на 3 метрах.
+        bool dockLocked = Net != null && (DockState)Net.DockStateValue == DockState.Docked;
+        Freeze = !HasAuthority || dockLocked;
         FreezeMode = FreezeModeEnum.Static;
 
         // Страховка: если кто-то вернёт старую схему (авторитет = пилот-клиент),
@@ -807,9 +836,109 @@ public partial class Ship : RigidBody3D
     private FlightState AdvanceFlight(FlightState s, InputFrame frame, float dt)
     {
         _localInput = frame;
-        FlightState n = StepPrediction(s, frame, dt);
+        // Шаг 5.8: на dock-фазе тяга пилота заменена серверной пружиной —
+        // оба шага (боевой и тестовый) идут через этот общий код.
+        FlightState n = Net != null && Docking.IsCapturePhase((DockState)Net.DockStateValue)
+            ? StepDockSpring(s, dt)
+            : StepPrediction(s, frame, dt);
         _tick++;
         return n;
+    }
+
+    /// <summary>Шаг 5.8 (В20): серверная пружина вместо `Joint3D`. У корабля
+    /// `CustomIntegrator` — движок `Joint3D` всё равно не читает (§0 п.3),
+    /// поэтому доводка считается здесь, в том же `FlightModel`-шаге:
+    /// `a = Docking.CaptureAccel(target - pos, v)` + угловая доводка носа к оси
+    /// стыка (`AlignK`/`AlignDamp`). Кадр ввода — пустой (тяга пилота
+    /// проигнорирана, п.25), ориентация и скорость — наши. `Freeze` не трогаем:
+    /// сервер интегрирует через `CustomIntegrator`, не снимая заморозки у других.
+    /// Фазы `Approved` здесь нет: там пилот ещё ЛЕТИТ к зоне обычным управлением,
+    /// пружина включается только с `Capturing` (риск №3: самовольный захват).</summary>
+    private FlightState StepDockSpring(FlightState s, float dt)
+    {
+        var station = NetworkManager.Instance?.FindStationNode(Net!.DockStationNetId);
+        Vector3 dockPos = station != null ? station.DockPointGlobal
+                                          : station?.GlobalPosition ?? s.Position;
+        Vector3 dx = dockPos - s.Position;
+
+        var f = new FlightState
+        {
+            Position = s.Position,
+            Rotation = s.Rotation,
+            LinearVelocity = s.LinearVelocity,
+            AngularVelocity = s.AngularVelocity,
+        };
+
+        // --- линейная доводка: ускорение пружины добавляем к существующей v ---
+        f.LinearVelocity += Docking.CaptureAccel(dx, f.LinearVelocity) * dt;
+
+        // --- угловая доводка: доворот -Basis.Z к оси стыка (корабль к позиции,
+        // не к центру станции) по образцу экспоненциального сглаживания углов
+        // Stage2Test.PredictWithLook: q' = normalize(q * exp(w*dt/2)) ---
+        Vector3 toDock = dockPos - s.Position;
+        if (toDock.LengthSquared() > 1e-6f)
+        {
+            toDock = toDock.Normalized();
+            Vector3 nose = f.Rotation * Vector3.Back; // конвенция: нос = -Z
+            Vector3 corr = nose.Cross(toDock);        // ось и величина доворота
+            Vector3 w = corr * Docking.AlignK - f.AngularVelocity * Docking.AlignDamp;
+            float blend = Mathf.Min(1f, Docking.AlignDamp * dt);
+            f.AngularVelocity = f.AngularVelocity.Lerp(w, blend);
+            float wLen = f.AngularVelocity.Length();
+            if (wLen > 1e-6f)
+            {
+                var qd = new Quaternion(f.AngularVelocity.Normalized(), wLen * dt);
+                f.Rotation = (f.Rotation * qd).Normalized();
+            }
+        }
+
+        // --- обычный полётный шаг (инерция + интеграция позиции/ориенти),
+        // пустой кадр: тяги и ручного момента пилота нет ---
+        return FlightModel.Step(f, Flight, default, dt);
+    }
+
+    /// <summary>Шаг 5.8: продвижение фаз сделки (Capturing → Latched → Docked).
+    /// Зовётся из обоих серверных шагов ПОСЛЕ шага модели и учёта контактов —
+    /// геометрия шага уже финальная. Гистерезис: Latch у LatchDistance=3 м,
+    /// финал — у DockDistance=0.5 м от точки стыка, поэтому пружина дожимает
+    /// последние метры в фазе Latched (контакт с «нашей» станцией уже без урона,
+    /// шаг 5.10).</summary>
+    private void TickDockPhases()
+    {
+        if (Net == null || NetworkManager.Instance is not { IsServer: true } nm)
+            return;
+        var entry = nm.FindDockRequest(Net.ShipNetId);
+        if (entry == null)
+            return; // реестр снят (AbortDock) — фазы больше нет
+        var st = entry.Value.State;
+        if (st != DockState.Capturing && st != DockState.Latched)
+            return;
+        var station = nm.FindStationNode(Net.DockStationNetId);
+        if (station == null)
+        {
+            nm.AbortDock(Net.ShipNetId, "станция исчезла");
+            return;
+        }
+        Vector3 dockPos = station.DockPointGlobal;
+        Vector3 dx = dockPos - GlobalPosition;
+        float alignErr = Docking.AlignError(GlobalTransform.Basis.GetRotationQuaternion(),
+                                            dx.LengthSquared() > 1e-6f ? dx.Normalized()
+                                                                       : -GlobalTransform.Basis.Z);
+        if (st == DockState.Capturing && Docking.IsLatched(GlobalPosition, dockPos, alignErr))
+        {
+            nm.SetDockPhase(Net.ShipNetId, DockState.Latched);
+            DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} latched (d = {dx.Length():F1} м)");
+        }
+        else if (st == DockState.Latched && Docking.IsDocked(dx, LinearVelocity))
+        {
+            // Шаг 5.10: финальный замок — скорости в нуль, поза точно в точке.
+            LinearVelocity = Vector3.Zero;
+            AngularVelocity = Vector3.Zero;
+            GlobalPosition = dockPos;
+            nm.SetDockPhase(Net.ShipNetId, DockState.Docked);
+            ApplyAuthority(); // Freeze = true у авторитета (единственная точка записи)
+            DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} DOCKED at station#{Net.DockStationNetId}");
+        }
     }
 
     /// <summary>
@@ -874,6 +1003,18 @@ public partial class Ship : RigidBody3D
                 continue; // TestStand и прочая статика слоя Station урона не дают
 
             int stationNetId = station.State?.StationNetId ?? 0;
+
+            // Шаг 5.10 (гейт В19): на dock-фазе контакт с ЦЕЛЕВОЙ станцией
+            // (к которой идёт захват) пропускается ЦЕЛИКОМ — ни урона, ни
+            // отскока. Иначе серверная пружина сама себя таранит: корпус
+            // затягивает в цилиндр r=60, урон капает каждый кадр до смерти
+            // корабля (риск №2 плана). Чужие станции и корабль без активной
+            // сделки — как в стадии 4 (п.28: таран 20 м/с без сделки ранит).
+            if (Net != null &&
+                (DockState)Net.DockStateValue >= DockState.Approved &&
+                Net.DockStationNetId != 0 &&
+                stationNetId == Net.DockStationNetId)
+                continue;
 
             // Тот же контакт в этом же физкадре — уже учтён (п.19).
             if (stationNetId == _lastContactStationNetId && frame == _lastContactPhysicsFrame)
@@ -1266,6 +1407,207 @@ public partial class Ship : RigidBody3D
     public int ShotsFired { get; private set; }
     /// <summary>Число подтверждений попадания (счётчик для строки «Fire: shots/hits/rejected», шаг 3.7).</summary>
     public int HitsRegistered { get; private set; }
+
+    // ═══════════ Этап 5 (шаги 5.5/5.6): запрос стыковки (F) ═══════════
+    // Копия связки RequestFire/SubmitFireToServer/RpcRequestFire/AcceptFireFrom
+    // (В15 п.1, В17): клиент-пилот шлёт намерение, сервер гейтит и решает.
+
+    /// <summary>Запрос стыковки локального пилота (клавиша F, действие
+    /// `request_docking`). Тот же `FireGatesNonAim`-принцип: пилот и не
+    /// Interaction. Публично — шов теста зовёт путь кода без эмуляции клавиш.</summary>
+    public void RequestDocking(int stationNetId)
+    {
+        if (!IsLocalPilot || IsInteractionMode)
+            return;
+        SubmitDockToServer(stationNetId);
+    }
+
+    /// <summary>Клиент-пилот: послать серверу намерение пришвартоваться к
+    /// станции `stationNetId`. Адресуется по ShipNetId (путь не идентификатор).</summary>
+    private void SubmitDockToServer(int stationNetId)
+    {
+        if (Net == null || Net.ShipNetId == 0)
+            return; // нет адреса — запрос адресовать нечем
+        if (NetworkManager.Instance is not { IsServer: false })
+        {
+            // Сервер (и offline — локальный авторитет) сам себе RPC не шлёт:
+            // приём делается напрямую тем же серверным гейтом (В14=B: авторитет
+            // — источник истины, RPC — транспорт чужих намерений).
+            AcceptDockFrom(NetworkManager.Instance?.SelfId ?? 1,
+                           Net.ShipNetId, stationNetId);
+            return;
+        }
+        RpcId(1, nameof(RpcRequestDocking), Net.ShipNetId, stationNetId);
+    }
+
+    /// <summary>Серверный приём запроса стыковки от пилота (гейты В17). Атрибут
+    /// как у `RpcRequestFire`: AnyPeer, CallLocal=false, надёжный, канал 1 —
+    /// запросы редки и терять их нельзя (в отличие от кадров ввода на канале 0).</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcRequestDocking(int shipNetId, int stationNetId)
+    {
+        AcceptDockFrom(Multiplayer.GetRemoteSenderId(), shipNetId, stationNetId);
+    }
+
+    /// <summary>Шов автеста (по образцу `TestFire`): «запрос стыковки пришёл от
+    /// пира X» без UDP. Зовёт боевой серверный гейт, а не копию.</summary>
+    public void TestSetPilotForTest(int peerId) => PilotPeerId = peerId;
+
+    public Vector3 TestGetVelocity() => LinearVelocity;
+
+    public void TestSetVelocity(Vector3 v) => LinearVelocity = v;
+
+    public bool TestRequestDock(int senderPeer, int stationNetId)
+        => AcceptDockFrom(senderPeer, Net?.ShipNetId ?? 0, stationNetId);
+
+    /// <summary>Шов теста п.12: RPC с Поддельным shipNetId (чужой корабль).
+    /// Зовёт тот же серверный гейт, что и RPC — «боевой код, а не копия».</summary>
+    public bool TestAcceptDockFromForTest(int senderPeer, int shipNetId, int stationNetId)
+        => AcceptDockFrom(senderPeer, shipNetId, stationNetId);
+
+    /// <summary>Сколько запросов стыковки принял/отклонил сервер (автотесты
+    /// п.10-п.15, п.29).</summary>
+    public int AcceptedDockCount { get; private set; }
+    public int RejectedDockCount { get; private set; }
+
+    /// <summary>Метка времени принятия Approved (сек, Time.GetTicksMsec) для
+    /// авто-сброса окна DockWindowSec (шаг 5.6, п.16).</summary>
+    private double _dockApprovedUptimeSec;
+    private bool _hasDockApprovedUptime;
+
+    /// <summary>
+    /// Серверные гейты запроса стыковки (шаги 5.5/5.6). Гейты: только сервер;
+    /// адрес корабля; отправитель = пилот; авторитет корабля (В14=B); станция
+    /// найдена по адресу; корабль жив; нет активной сделки (реестр). Затем
+    /// геометрические: `Docking.InZone` (от точки стыка) и `Docking.AllowDock`
+    /// по нормальной скорости сближения (та же метрика, что урона В19).
+    /// Принятый запрос кладёт сделку в реестр (Requested) и сразу переводит в
+    /// Approved («огни горят»); из Approved без захвата окно гаснет через
+    /// DockWindowSec (п.16, проверка в _PhysicsProcess авторитета).
+    /// </summary>
+    private bool AcceptDockFrom(int senderPeer, int shipNetId, int stationNetId)
+    {
+        var nm = NetworkManager.Instance;
+        if (nm is not { IsServer: true })
+        {
+            GD.PrintErr($"ship#{shipNetId}: AcceptDockFrom вызван не на сервере " +
+                        "— отказ (В14=B: клиент не может сам себя одобрить)");
+            return false;
+        }
+        if (Net == null || Net.ShipNetId != shipNetId)
+            return false; // запрос про другой корабль (адрес важнее пути)
+        if (senderPeer != PilotPeerId)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: стыковку запрашивает не пилот " +
+                        $"(peer={senderPeer}, pilot={PilotPeerId}) — отказ (В17)");
+            RejectedDockCount++;
+            nm.NoteDockRejection();
+            return false;
+        }
+        if (!HasAuthority)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: запрос стыковки на копии без " +
+                        "авторитета — отказ");
+            RejectedDockCount++;
+            nm.NoteDockRejection();
+            return false;
+        }
+        if (Health != null && Health.Hp <= 0)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: мёртвый корабль не стыкуется — отказ");
+            RejectedDockCount++;
+            nm.NoteDockRejection();
+            return false;
+        }
+        var stationState = nm.FindStation(stationNetId);
+        var station = nm.FindStationNode(stationNetId);
+        if (stationState == null || station == null)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: станция #{stationNetId} не найдена — отказ");
+            RejectedDockCount++;
+            nm.NoteDockRejection();
+            return false;
+        }
+
+        // Гейты В17 пройдены; дальше — геометрия (шаг 5.6): зона и скорость.
+        // Метрика «в зоне» — от ТОЧКИ СТЫКОВКИ станции (не от её центра: r=60).
+        Vector3 dockPoint = station.DockPointGlobal;
+        Vector3 outward = (GlobalPosition - dockPoint).Normalized();
+        float vn = CollisionDamage.ApproachSpeed(LinearVelocity, outward); // >0 когда летим в станцию
+        if (!Docking.InZone(GlobalPosition, dockPoint))
+        {
+            GD.Print($"ship#{Net.ShipNetId}: стыковка отклонена: вне зоны " +
+                     $"({GlobalPosition.DistanceTo(dockPoint):F1} м > {Docking.DockRange})");
+            RejectedDockCount++; nm.NoteDockRejection();
+            return false;
+        }
+        if (!Docking.AllowDock(Mathf.Abs(vn)))
+        {
+            GD.Print($"ship#{Net.ShipNetId}: стыковка отклонена: скорость {Mathf.Abs(vn):F1} " +
+                     $"> {Docking.DockSpeedLimit}");
+            RejectedDockCount++; nm.NoteDockRejection();
+            return false;
+        }
+
+        // Все гейты пройдены. Если для этого корабля уже есть Approved-сделка
+        // на ЭТУ станцию от ЭТОГО пира — повторное F = подтверждение захвата:
+        // Approved → Capturing, пружина включается (п.21+; переход делает
+        // сервер, клиент лишь подаёт сигнал — В14=B). Окно при этом всё ещё
+        // живое: мёртвое окно TickDockWindow закрыл бы до сюда (п.16).
+        var existing = nm.FindDockRequest(Net.ShipNetId);
+        if (existing != null && existing.Value.State == DockState.Approved
+            && existing.Value.StationNetId == stationNetId
+            && existing.Value.PeerId == senderPeer)
+        {
+            nm.SetDockPhase(Net.ShipNetId, DockState.Capturing);
+            _hasDockApprovedUptime = false;
+            AcceptedDockCount++;
+            DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} -> station#{stationNetId} " +
+                                $"capture started (peer {senderPeer})");
+            return true;
+        }
+
+        // Сделка — в реестр (Requested), затем сразу Approved:
+        // запрос у нас авторизуется синхронно, переходной фазы «ждём ответа» нет,
+        // но фазу Requested реестр видит для честной карты (п.7).
+        if (!nm.BeginDock(Net.ShipNetId, senderPeer, stationNetId, out string reason))
+        {
+            GD.Print($"ship#{Net.ShipNetId}: стыковка отклонена: {reason}");
+            RejectedDockCount++;
+            return false; // счётчик уже поднят в реестре (station-busy/already)
+        }
+        nm.SetDockPhase(Net.ShipNetId, DockState.Approved);
+        AcceptedDockCount++;
+        _dockApprovedUptimeSec = Time.GetTicksMsec() / 1000.0;
+        _hasDockApprovedUptime = true;
+        DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} -> station#{stationNetId} approved " +
+                            $"(peer {senderPeer})");
+        return true;
+    }
+
+    /// <summary>Авто-сброс окна Approved (шаг 5.6, п.16): если через
+    /// DockWindowSec после одобрения корабль так и не вошёл в захват —
+    /// AbortDock("окно истекло"). Вызывается из _PhysicsProcess авторитета.</summary>
+    private void TickDockWindow()
+    {
+        if (!_hasDockApprovedUptime || Net == null)
+            return;
+        var nm = NetworkManager.Instance;
+        var entry = nm?.FindDockRequest(Net.ShipNetId);
+        if (entry == null || entry.Value.State != DockState.Approved)
+        {
+            _hasDockApprovedUptime = false;
+            return; // сделка закрыта/перешла — окно больше не Our concern
+        }
+        double ageSec = Time.GetTicksMsec() / 1000.0 - _dockApprovedUptimeSec;
+        if (ageSec > Docking.DockWindowSec)
+        {
+            nm!.AbortDock(Net.ShipNetId, "окно истекло");
+            DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} window expired ({ageSec:F1}s)");
+            _hasDockApprovedUptime = false;
+        }
+    }
     /// <summary>Хитскан нашёл тело с `TargetState`, но его НЕТ в реестре мишеней —
     /// попадание проигнорировано (п.25, риск №7: «мишень удалили, пока луч летел»).
     /// Счётчик — детерминированный шов теста (ловля warning'а хрупка).</summary>
@@ -1862,6 +2204,14 @@ public partial class Ship : RigidBody3D
             // (риск №3 плана): `_PhysicsProcess` идёт после шага физики, поэтому
             // `IntersectRay` видит актуальные тела, а не позиции прошлого кадра.
             ProcessPendingFires();
+            // Шаг 5.6: окно Approved гаснет само, если захват не начался
+            // (п.16) — здесь, на авторитете, потому что клиентский AbortDock
+            // был бы подделкой (гейт SetDockStateServerOnly его всё равно отверг бы).
+            TickDockWindow();
+            // Шаг 5.8/5.10: машина фаз захвата (Capturing→Latched→Docked) —
+            // тоже только на авторитете, ПОСЛЕ шага физики (видит актуальные
+            // позы, как ProcessPendingFires в шаге 3.5).
+            TickDockPhases();
             // Шаг 2.6, метрика (г): публикуем сетевой снимок раз в NetPublishEveryN
             // физшагов (30 Гц), а не каждый шаг (60 Гц). OnChange-репликация уходит
             // только когда свойство реально меняется, поэтому «реже пишем» = «реже
@@ -1921,6 +2271,20 @@ public partial class Ship : RigidBody3D
         // отпущенная клавиша залипнет на сервере, §1.2 плана).
         if (IsLocalPilot)
         {
+            // Шаг 5.9 (В20): на dock-фазе (Capturing/Latched/Docked) клиент-пилот
+            // НЕ отправляет кадры ввода и НЕ применяет локальное предсказание —
+            // пружину ведёт сервер (prototype-plan:113), а предсказание пилота
+            // разошлось бы с серверной истиной почти на 100% и рисовало бы
+            // постоянные hardRollbacks (риск №5). Поза картинке придёт из
+            // интерполяции батча в _Process (ветка наблюдателя). Возврат
+            // предсказания — при снятии фазы (AbortDock): _hasPrediction=false
+            // в _Process, предсказание стартует от актуальной реплики.
+            if (Net != null && (DockState)Net.DockStateValue >= DockState.Capturing)
+            {
+                _clientDockPhaseActive = true;
+                return;
+            }
+
             // Фиксированный шаг, как у сервера (`sd.GetStep()` = 1/60), а НЕ
             // переменный `delta`: предсказание обязано сходиться с серверной
             // истиной побитово при одинаковом вводе (риск №1 плана: при нулевом
@@ -2030,6 +2394,30 @@ public partial class Ship : RigidBody3D
                 // корабля (порог (г) §2.7 меряется по ним, а не по wire-пакетам ENet).
                 NetworkManager.Instance?.CountReplicationRecv(Net.ShipNetId);
                 EnqueueSnapshotFromNet(now);
+            }
+
+            // Шаг 5.9 (В20): на dock-фазе пилот-клиент НЕ реконсилирует и НЕ
+            // предсказывает — позу ведёт серверная пружина. Картинка идёт по
+            // интерполяции батча, как у наблюдателя (InterpDelay=0.1), а тело
+            // следует за картинкой: чейз-камера — ребёнок тела, кабина обязана
+            // ехать на изображении (строка 24 этого файла).
+            if ((DockState)Net.DockStateValue >= DockState.Capturing)
+            {
+                _clientDockPhaseActive = true;
+                DrainRecvBufferForObserver(now);
+                InterpolateHull(now);
+                var hullDock = GetNodeOrNull<Node3D>("ShipHull");
+                if (hullDock != null)
+                    GlobalTransform = hullDock.GlobalTransform;
+                return;
+            }
+            if (_clientDockPhaseActive)
+            {
+                // Фаза снята (AbortDock / разрыв): предсказание обнуляем — оно
+                // рестартует из актуальной реплики (проверка _hasPrediction в
+                // _PhysicsProcess), иначе пилота откатит старый _predicted.
+                _clientDockPhaseActive = false;
+                _hasPrediction = false;
             }
             DrainRecvBufferForPilot();
             return;
@@ -2463,6 +2851,62 @@ public partial class Ship : RigidBody3D
         GD.Print($"ship#{Net?.ShipNetId ?? 0} nudged, impulse = {impulse.Length():F1} Н*с (ожидается |v| ≈ 5 м/с)");
     }
 
+    /// <summary>Шаг 5.12: телепорт в зону стыковки ближайшей станции — только
+    /// сервер/локальный авторитет (кнопка регистрируется только ему, а метод
+    /// гейтован дополнительно: прямые вызовы с клиента обязаны отбиваться).
+    /// Ставит корабль вглубь зоны (20 м от точки стыка по −X) и гасит скорость:
+    /// после телепорта запрос принят (зона + лимит скорости выполнены).</summary>
+    private void TeleportToDockingZone()
+    {
+        if (!HasAuthority)
+        {
+            GD.Print("teleport to docking zone: запрещено (не авторитет — только сервер)");
+            return;
+        }
+        if (!TeleportToDockingZoneCore())
+            GD.Print("teleport to docking zone: нет ни одной станции — телепорт нечего направлять");
+    }
+
+    /// <summary>Тело телепорта без гейта роли (шов автотеста п.34: серверный
+    /// стенд уже авторитет, проверяем эффект — InZone + |v| <= лимита +
+    /// принятый запрос). Возвращает false, если станции не найдено.</summary>
+    private bool TeleportToDockingZoneCore()
+    {
+        var nm = NetworkManager.Instance;
+        Station? station = null;
+        foreach (var (_, st) in nm!.Stations)
+        {
+            var node = st.GetParent() as Station;
+            if (node != null && GodotObject.IsInstanceValid(node))
+            {
+                station = node;
+                break;
+            }
+        }
+        if (station == null)
+            return false;
+
+        Vector3 dp = station.DockPointGlobal;
+        // Вглубь зоны (DockRange=90): 20 м — гарантированно внутри и сферы, и
+        // цилиндра collision (r=60), тело не застревает в станции.
+        GlobalPosition = dp + new Vector3(20, 0, 0);
+        LinearVelocity = Vector3.Zero;
+        // Если авторитет сам пилотирует (хост-стенд), синхронизируем и состояние
+        // предсказания — иначе следующий кадр пилота продолжит от старого _predicted.
+        if (IsLocalPilot)
+        {
+            _predicted.Position = GlobalPosition;
+            _predicted.LinearVelocity = Vector3.Zero;
+        }
+        GD.Print($"ship#{Net?.ShipNetId ?? 0} teleported to docking zone of " +
+                 $"Station#{station.State?.StationNetId ?? 0} at {GlobalPosition}");
+        return true;
+    }
+
+    /// <summary>Шов автотеста п.34: вызывает телепорт как серверный обработчик
+    /// кнопки (тот же боевой код).</summary>
+    public bool TestTeleportToDockingZoneForTest() => TeleportToDockingZoneCore();
+
     // ==================================================================
     // Шаг 2.2.3: камера-преследование и захват мыши
     // ==================================================================
@@ -2693,6 +3137,18 @@ public partial class Ship : RigidBody3D
         ApplyAuthority();
     }
 
+    /// <summary>Шов теста (п.16): сдвинуть метку Approved в прошлое, чтобы окно
+    /// протухло, и дёрнуть боевой `TickDockWindow` — без ожидания 10 реальных
+    /// секунд. Пишет тот же код, что читаёт боевая функция (подделка времени,
+    /// не логики — §3.8).</summary>
+    public void TestAgeDockWindowForTest(double secondsAgo)
+    {
+        _dockApprovedUptimeSec = Time.GetTicksMsec() / 1000.0 - secondsAgo;
+        _hasDockApprovedUptime = true;
+    }
+
+    public void TestTickDockWindowForTest() => TickDockWindow();
+
     /// <summary>Явный шаг модели (для теста, где физкадров нет): ровно один шаг
     /// `FlightModel` из текущего состояния тела с записью обратно — тот же код,
     /// что и `_IntegrateForces`.</summary>
@@ -2724,6 +3180,10 @@ public partial class Ship : RigidBody3D
         GlobalTransform = new Transform3D(new Basis(n.Rotation), n.Position);
         LinearVelocity = n.LinearVelocity;
         AngularVelocity = n.AngularVelocity;
+
+        // Шаг 5.8: машина фаз захвата — как в бою, после шага модели
+        // (`_PhysicsProcess` автора делает то же после физики).
+        TickDockPhases();
     }
 
     /// <summary>Собрать кадр ввода так, как это делает реальный шаг (клавиши или

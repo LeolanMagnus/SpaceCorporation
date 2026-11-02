@@ -317,7 +317,134 @@ public partial class NetworkManager : Node
     public StationState? FindStation(int stationNetId) =>
         _stations.TryGetValue(stationNetId, out var s) && GodotObject.IsInstanceValid(s) ? s : null;
 
+    /// <summary>Узел станции (Station) по адресу — для геометрии точки стыковки
+    /// (шаг 5.6). Это родитель StationState в сцене; отдельного реестра узлов нет.</summary>
+    public Station? FindStationNode(int stationNetId) =>
+        FindStation(stationNetId)?.GetParent() as Station;
+
     public IReadOnlyDictionary<int, StationState> Stations => _stations;
+
+    // ─────────────────────── стыковка (Этап 5, шаг 5.4) ───────────────────────
+    // Единственная карта «активные стыковки» живёт на autoload — переживает
+    // смену сцены, как реестры attach-точек (§3.4 п.1). Писать в неё и в
+    // StationState/NetState обязан только сервер (он же авторитет кораблей,
+    // В14=B). Инвариант двух сторон:
+    //   NetState.DockStationNetId == stationNetId  ↔  StationState.DockShipNetId == shipNetId
+    // оба обнуляются в AbortDock.
+
+    private readonly Dictionary<int, (int PeerId, int StationNetId, DockState State)> _dockRequests = new();
+
+    /// <summary>Счётчик отказов стыковки (для assert'ов теста и debug-панели).</summary>
+    public int RejectedDockCount { get; private set; }
+
+    /// <summary>Счётчик ведёт сервер (Ship.AcceptDockFrom зовёт это): инкремент
+    /// извне не нарушает авторитет — отказ фиксируется на авторитетной стороне.</summary>
+    public void NoteDockRejection() => RejectedDockCount++;
+
+    public int ActiveDockCount => _dockRequests.Count;
+
+    public bool HasDockRequest(int shipNetId) => _dockRequests.ContainsKey(shipNetId);
+
+    public (int PeerId, int StationNetId, DockState State)? FindDockRequest(int shipNetId) =>
+        _dockRequests.TryGetValue(shipNetId, out var e) ? e : null;
+
+    /// <summary>Начать сделку (сервер). Возвращает false с причиной — если у
+    /// корабля уже есть сделка или станция занята ДРУГИМ кораблём
+    /// («одна станция — один захватчик», п.9).</summary>
+    public bool BeginDock(int shipNetId, int peerId, int stationNetId, out string reason)
+    {
+        reason = "";
+        if (_dockRequests.TryGetValue(shipNetId, out var cur))
+        {
+            if (cur.StationNetId == stationNetId)
+            {
+                reason = "duplicate"; // повторный запрос на ту же станцию — не ошибка повторного входа
+                return false;
+            }
+            reason = "ship-busy";
+            RejectedDockCount++;
+            GD.Print($"Dock: ship#{shipNetId} уже стыкуется к ст#{cur.StationNetId} — " +
+                     $"повторная сделка отклонена ({reason})");
+            return false;
+        }
+        var st = FindStation(stationNetId);
+        if (st == null)
+        {
+            reason = "no-station";
+            RejectedDockCount++;
+            return false;
+        }
+        if (st.DockShipNetId != 0 && st.DockShipNetId != shipNetId)
+        {
+            reason = "station-busy";
+            RejectedDockCount++;
+            GD.Print($"Dock: ст#{stationNetId} уже занята ship#{st.DockShipNetId} — " +
+                     $"ship#{shipNetId} отказ ({reason})");
+            return false;
+        }
+        _dockRequests[shipNetId] = (peerId, stationNetId, DockState.Requested);
+        DebugInfoBus.Report($"dock: begin ship#{shipNetId} peer {peerId} -> st#{stationNetId}");
+        return true;
+    }
+
+    /// <summary>Сменить фазу сделки (единственный писатель обеих сторон — В20 §3.4):
+    /// пишет и в NetState корабля, и в StationState станции. Возвращает false,
+    /// если сделки/узла нет — молча плодить рассогласование нельзя.</summary>
+    public bool SetDockPhase(int shipNetId, DockState phase)
+    {
+        if (!_dockRequests.TryGetValue(shipNetId, out var e))
+        {
+            GD.PushError($"Dock: SetDockPhase({phase}) для ship#{shipNetId} — сделки нет");
+            return false;
+        }
+        var ship = FindShip(shipNetId);
+        var st = FindStation(e.StationNetId);
+        if (ship?.Net == null || st == null)
+        {
+            GD.PushError($"Dock: SetDockPhase({phase}) — нет узла корабля или станции " +
+                         $"(ship#{shipNetId}, st#{e.StationNetId})");
+            return false;
+        }
+        _dockRequests[shipNetId] = (e.PeerId, e.StationNetId, phase);
+        ship.Net.DockStateValue = (byte)phase;
+        ship.Net.DockStationNetId = phase == DockState.None ? 0 : e.StationNetId;
+        if (st.GetParent() is Station stationNode)
+            stationNode.SetDockStateServerOnly(phase, shipNetId);
+        else
+        {
+            // Станция без обёртки Station (теоретически) — пишем поля напрямую.
+            st.DockStateValue = (byte)phase;
+            st.DockShipNetId = phase == DockState.None ? 0 : shipNetId;
+            st.DockApproved = phase >= DockState.Approved && phase < DockState.Docked;
+        }
+        DebugInfoBus.Report($"dock: ship#{shipNetId} фаза -> {phase.ToString().ToLower()}");
+        return true;
+    }
+
+    /// <summary>Отменить сделку (п.8; вызывается и при OnPeerLeft — шаг 5.11):
+    /// обнуляет ОБЕ стороны и снимает реестр. Повторный AbortDock безопасен (no-op).</summary>
+    public void AbortDock(int shipNetId, string why)
+    {
+        if (!_dockRequests.TryGetValue(shipNetId, out var e))
+            return; // уже снято (AbortDock идемпотентен — повтор после OnPeerLeft)
+        _dockRequests.Remove(shipNetId);
+        var ship = FindShip(shipNetId);
+        if (ship?.Net != null)
+        {
+            ship.Net.DockStateValue = (byte)DockState.None;
+            ship.Net.DockStationNetId = 0;
+        }
+        var st = FindStation(e.StationNetId);
+        if (st?.GetParent() is Station stationNode)
+            stationNode.SetDockStateServerOnly(DockState.None, 0);
+        else if (st != null)
+        {
+            st.DockStateValue = (byte)DockState.None;
+            st.DockShipNetId = 0;
+            st.DockApproved = false;
+        }
+        DebugInfoBus.Report($"dock: abort ship#{shipNetId} ({why})");
+    }
 
     // ------------------------------------------- пилот кораблей (§4 В3 п.3, В14=B)
     //
@@ -341,6 +468,21 @@ public partial class NetworkManager : Node
     public bool PeerExists(int peerId) =>
         System.Array.IndexOf(Multiplayer.GetPeers(), peerId) >= 0 ||
         TestExtraPeers.Contains(peerId);
+
+    /// <summary>Шов теста (Этап 5, п.4 Stage5Test): изобразить роль клиента,
+    /// чтобы гейт <c>IsAuthoritySide</c> у серверных методов (SetDockStateServerOnly)
+    /// был проверен детерминированно в headless. Возвращает прежнюю роль — тест
+    /// обязан восстановить её этим значением. Реальной сети шов не создаёт.</summary>
+    public NetRole TestSetRoleForTest(NetRole next)
+    {
+        var prev = Role;
+        if (prev != next)
+        {
+            Role = next;
+            DebugInfoBus.Report($"role(test-seam): {prev.ToString().ToLower()} -> {next.ToString().ToLower()}");
+        }
+        return prev;
+    }
 
     /// <summary>Назначить пилота корабля (только сервер). peerId = 1 — сервер:
     /// корабль летает по входным кадрам серверного пилота (offline-режим) либо
@@ -737,6 +879,35 @@ public partial class NetworkManager : Node
         // §2.4 (R4): снять адресата из вещания ДО удаления слота (в т.ч. если
         // пир ушёл ещё до спавна — early-return ниже иначе пропустил бы чистку).
         _broadcaster?.RemoveClient(peerId);
+
+        // Шаг 5.11 (п.30–п.32): обрыв пира посреди стыковки. Правило: сделку
+        // ДО Docked отменяем полностью (AbortDock: DockApproved → false,
+        // DockState → None, dock-заморозка снята — корабль снова летит по
+        // инерции, как после Detach в BUG-009); Docked НЕ отменяем — запись из
+        // реестра убираем, но состояние остаётся: посаженный без пилота корабль
+        // стоит на Freeze до прилёта следующего (п.31). Идёт ДО early-return:
+        // пир мог уйти и без слота игрока.
+        if (_dockRequests.Count > 0)
+        {
+            var stale = new System.Collections.Generic.List<(int ShipNetId, DockState State)>();
+            foreach (var (shipNetId, e) in _dockRequests)
+                if (e.PeerId == peerId)
+                    stale.Add((shipNetId, e.State));
+            foreach (var (shipNetId, state) in stale)
+            {
+                if (state < DockState.Docked)
+                {
+                    AbortDock(shipNetId, $"пилот {peerId} отключился");
+                }
+                else
+                {
+                    _dockRequests.Remove(shipNetId);
+                    DebugInfoBus.Report($"dock: пир {peerId} ушёл, ship#{shipNetId} " +
+                                        "остаётся Docked (реестр очищен, состояние сохранено)");
+                }
+            }
+        }
+
         if (!_peerPlayers.TryGetValue(peerId, out var player))
             return; // слота нет (например, пир отвалился до RequestSpawn)
         if (_peerKeys.TryGetValue(peerId, out var key))

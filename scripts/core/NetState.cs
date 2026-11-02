@@ -43,6 +43,18 @@ public partial class NetState : Node
     /// 0 = не назначен — `Ship._Ready()` обязан сообщить об этом в отладку.</summary>
     [Export] public int ShipNetId { get; set; }
 
+    // ─────────────────── Этап 5 (шаг 5.3): стыковка ───────────────────
+    // Фаза стыковки этого корабля (byte enum DockState) и адрес станции, к
+    // которой она идёт. Нужны пиру-не-пилоту для отрисовки (огни/док-бикон) и
+    // пилоту для гейта предсказания (5.9: на dock-фазе кадры не шлёт).
+    // Писает только сервер (NetState-поля корабля — «правда сервера», как SimTick).
+
+    /// <summary>Фаза сделки (<c>(DockState)DockStateValue</c>), 0 = None.</summary>
+    [Export] public byte DockStateValue { get; set; }
+
+    /// <summary>StationNetId цели стыковки (0 — нет сделки).</summary>
+    [Export] public int DockStationNetId { get; set; }
+
     /// <summary>Адрес выдаёт НЕ этот узел: в сети номер назначает сервер до
     /// `AddChild` (§4 В4 п.3), иначе два пира выдали бы разные номера одному
     /// кораблю. В offline (`Role == Offline`, один процесс) адрес выдаёт

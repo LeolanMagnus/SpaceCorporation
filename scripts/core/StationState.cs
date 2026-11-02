@@ -36,6 +36,22 @@ public partial class StationState : Node
     [Export] public Vector3 NetPosition { get; set; }
     [Export] public Quaternion NetRotation { get; set; } = Quaternion.Identity;
 
+    // ─────────────────── Этап 5 (шаг 5.2): стыковка ───────────────────
+    // Единый писатель этих трёх полей — СЕРВЕР-авторитет (он же писатель полей
+    // Hp у корабля, Этап 4 шаг 4.5): станция — приёмник. Типизированный доступ
+    // — через обёртки Station.DockingState (Godot не реплицирует enum-свойства,
+    // в буфере лежит byte, порядок значений зафиксирован в DockState).
+
+    /// <summary>«Огни горят»: сервер разрешил стыковку этого корабля к станции.
+    /// Спавн-снимок + OnChange-дельта (StationReplication.tres).</summary>
+    [Export] public bool DockApproved { get; set; }
+
+    /// <summary>Адрес корабля, которому разрешена/идёт стыковка (0 — нет).</summary>
+    [Export] public int DockShipNetId { get; set; }
+
+    /// <summary>Фаза сделки как <c>byte</c> (значения <see cref="DockState"/>).</summary>
+    [Export] public byte DockStateValue { get; set; }
+
     /// <summary>Адрес выдаёт сервер ДО AddChild (по образцу
     /// <see cref="TargetState._EnterTree"/>); на клиенте узел создаёт спавнер, и
     /// StationNetId придёт с репликой. Клиенту адрес не выдаём (Role==Client).</summary>

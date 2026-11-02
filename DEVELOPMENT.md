@@ -512,15 +512,110 @@ headless-экспорт сервера (это Этап 7, `prototype-plan.md:14
 
 ---
 
+## Этап 5 — Стыковка: серверная сделка Requested→Docked ✅ (зафиксирован)
+
+> Критерий готовности (`prototype-plan.md:118`): «стыковка запускается клиентом, но
+> выполняется сервером; все клиенты видят одинаковое состояние; при отключении
+> клиента посреди стыковки сервер корректно завершает или отменяет процесс».
+
+### Что сделано (шаги 5.1–5.15, `stage5-plan.md`)
+
+- **5.1 — чистое ядро (`Docking.cs`):** enum `DockState` (байт, порядок фиксирован:
+  None→Requested→Approved→Capturing→Latched→Docked), константы (`DockRange = 90`,
+  `DockSpeedLimit = 8`, `DockWindowSec = 5`, пружина `SpringK/SpringC/MaxSpringAccel`)
+  и чистые функции (`InZone`, `AlignError`, `IsLatched`, `IsDocked`) — без узлов,
+  проверяются вне дерева сцены (по образцу `CollisionDamage`, стадия 4).
+- **5.2/5.3 — поля-источники:** у `NetState` — `DockStateValue` + `DockStationNetId`,
+  у `StationState` — `DockStateValue` + `DockShipNetId` + `DockApproved`; записывает
+  их только авторитет (`Station.SetDockStateServerOnly` с PushError-гейтом, п.4).
+  Транспорт — `OnChange`-реплика синхронизатора (`.tres`-конфиги, пути через `:`),
+  батч SnapshotBroadcaster не тронут — `rec/s` не растёт.
+- **5.4/5.5 — серверный реестр сделок (`NetworkManager`):** `BeginDock` / `SetDockPhase`
+  / `AbortDock` + карта активных сделок; гейты: только сервер двигает фазы (п.12),
+  запрос от чужого пира отклоняется (п.12-13), повторный запрос по активной сделке
+  — отказ (п.14), авто-сброс Approved по `DockWindowSec` (п.16).
+- **5.6 — серверные гейты запроса:** `Docking.InZone` + `|v| <= DockSpeedLimit`
+  (п.17: 400 м и 120 м/с → отказ; после телепорта — принят); урон при валидном
+  запросе не успевают натаранить (`DockSpeedLimit = 8 < ApproachSpeed = 12`).
+- **5.7 — «огни» станции:** `DockApproved`-реплика → `DockBeacon.Visible` у всех
+  клиентов (п.18-п.20, второй транспорт не нужен).
+- **5.8 — пружина захвата:** в `_IntegrateForces` авторитета на фазах Capturing/
+  Latched: `a = k·Δx − c·v` с клампом ускорения (п.21: корабль из 60 м за 2 с
+  доходит до latch-гейта 3 м; п.22: без осцилляции).
+- **5.9 — «наша» станция без урона:** контакт с целью сделки в фазах Capturing+
+  не даёт урона и отскока, чужая станция — даёт (п.24-п.25).
+- **5.10 — финальный замок:** `Docked` → `LinearVelocity = AngularVelocity = 0`,
+  поза в `DockingPoint`, `Freeze = true` у авторитета (единственная точка записи —
+  `ApplyAuthority`, п.29).
+- **5.11 — обрыв пира:** `OnPeerLeft` → `AbortDock` незавершённой сделки (состояния
+  корабля и станции сбрасываются, п.30); завершённая (`Docked`) посадка переживает
+  обрыв — состояние и `Freeze` сохранены (п.31); карта активных сделок пустеет (п.32).
+- **5.12 — кнопка «Teleport to Docking Zone»:** только сервер (`HasAuthority`-гейт
+  в `_Ready` + снятие по ручке в `_ExitTree`, п.33); телепорт ставит корабль в
+  `DockPoint + (20,0,0)` с нулевой скоростью — после него тот же запрос проходит
+  гейты (п.34).
+- **5.13 — debug-info:** в источник `Ship#{id}` добавлены `dock = <фаза>`,
+  `dockStn = <адрес|—>`; у станции — новый блок `Station#{id}: dock / docker / lights`
+  со снятием в `_ExitTree`. Прежние ключи (`mode/auth/frozen/HP`) не переписаны —
+  assert'ы Stage3Test п.26 / Stage4Test п.26 зелёные (п.35 + общий прогон).
+
+### Итоговая проверка Этапа 5 (шаг 5.15)
+
+Финальный прогон всех наборов (все зелёные, регресса нет):
+
+| Набор | Assert'ов | Провалов |
+|---|---|---|
+| `run-tests.sh` (Stage1Test) | 104 | 0 |
+| `run-tests.sh res://tests/Stage2Test.tscn` | 83 | 0 |
+| `run-tests.sh res://tests/Stage3Test.tscn` | 78 | 0 |
+| `run-tests.sh res://tests/Stage4Test.tscn` | 84 | 0 |
+| `run-tests.sh res://tests/NetTest.tscn` | 123 | 0 |
+| `run-tests.sh res://tests/Stage5Test.tscn` | **138** | 0 |
+| `dotnet run --project tools/CodecTest` (R1) | 103046 | 0 |
+| `dotnet run --project tools/BroadcasterTest` (R3) | 27 | 0 |
+| `dotnet run --project tools/SpatialIndexTest` (R2) | 25 | 0 |
+| `dotnet run --project tools/StandTest` (R9) | 11 | 0 |
+
+Критерии готовности Этапа 5 (`prototype-plan.md:118`):
+
+- **(а) «стыковка запускается клиентом, но выполняется сервером»** — Stage5Test
+  п.10 (клиентский шов `TestRequestDock` → серверный `BeginDock`) + п.12–п.13
+  (гейты: фазы двигает только сервер; чужой запрос отклонён) + п.21–п.23 (пружина,
+  latch, Docked — всё в серверных путях). ✅
+- **(б) «все клиенты видят одинаковое состояние»** — п.19/п.23 (dock-поля репликой
+  `OnChange` доезжают до копии: `DockStateValue`/`DockApproved` совпадают), п.30
+  (сброс виден всем), п.35 (панель у сервера и копии показывает одну фазу). ✅
+- **(в) «при отключении клиента посреди стыковки сервер корректно завершает или
+  отменяет процесс»** — п.30 (обрыв до `Docked`: `AbortDock`, стороны сброшены) +
+  п.31 (завершённая посадка пережила обрыв с сохранением `Freeze`) + п.32 (карта
+  сделок пустеет). ✅
+
+Демо-замеры (шаг 5.14): `LATENCY=100 RUN_SECONDS=14 ./run-net-demo.sh 2` — трафик
+НЕ вырос: `rec/s = 80` (2 корабля × 40 Гц, как в Этапе 4; dock-поля — `OnChange`,
+в покое дельт нет; единичные всплески `rec/s = 84` = шум), `KB/s ≈ 7,6` (диапазон
+7,5–7,8), `hardRollbacks = 3` у пилота — столько же, сколько до Этапа 5 (всплеска
+нет; следствие 5.9 — пружина не порождает реконсиляционных откатов).
+
+### Что НЕ делается на Этапе 5
+
+магнитные ботинки, выход из кресла на палубу, шлюзы (Этап 6); `AttachPoint`-посадка
+игрока внутрь станции; урон станции от тарана (MaxHp есть, счётчик не двигается —
+кандидат Этапа 6); отмена стыковки кнопкой игрока (Abort есть только как серверный
+API); сохранение dock-состояния между сессиями.
+
+---
+
 ## Как запустить и проверить
 
 ```
 godot --path .        # игра: F3 → «Debug Mode» → панель → чекбокс «Pause world» + кнопки
                       #       Test / BusButton / Nudge Ship / Detach Player / Attach Player to Seat
                       #       (для тяги паузу лучше выключить)
-./run-tests.sh        # dotnet build + 89 проверок приёмки, exit code 0
+./run-tests.sh        # dotnet build + автотест приёмки Stage1Test (104 проверки), exit code 0
 ./run-tests.sh res://tests/ProbeNest.tscn   # прогон гипотезы крепления игрока к сценам
 ./run-tests.sh res://tests/Stage4Test.tscn  # станция + урон от столкновений + HP (Этап 4, 84 проверок)
+./run-tests.sh res://tests/Stage5Test.tscn  # стыковка: серверная сделка + пружина + обрыв пира (Этап 5, 138 проверок)
+LATENCY=100 RUN_SECONDS=14 ./run-net-demo.sh 2  # LATENCY-демо 2 пира с 100 мс задержки (шаг 5.14)
 PYTHONIOENCODING=utf-8 python tools/traffic_estimate.py  # бюджет трафика (§ Этап 2.5),
                       #   exit code 0 = нормативный пресет проходит все пороги
 ```

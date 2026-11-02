@@ -80,3 +80,15 @@ properties/6/replication_mode = 0
 properties/7/path = NodePath("NetState:AppliedMask")
 properties/7/spawn = false
 properties/7/replication_mode = 0
+
+; Шаг 5.3 (Этап 5): фаза стыковки и адрес станции-цели. В отличие от позы,
+; эти два поля — НЕ в батче SnapshotBroadcaster (запись батча фиксированного
+; формата, менять её в этой стадии нельзя), поэтому для них синхронизатор —
+; ЕДИНСТВЕННЫЙ транспорт: OnChange (2), спавн-снимок для поздно зашедшего пира
+; (spawn = true). Редкие события (сделка 1 раз) — на трафик не влияют (замер 5.14).
+properties/8/path = NodePath("NetState:DockStateValue")
+properties/8/spawn = true
+properties/8/replication_mode = 2
+properties/9/path = NodePath("NetState:DockStationNetId")
+properties/9/spawn = true
+properties/9/replication_mode = 2
