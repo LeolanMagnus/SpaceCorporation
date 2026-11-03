@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/LiquidSpaceTest.cs" id="1_test"]
+
+; Этап 6 — автотест «жидкого космоса» (план liquid-space-plan.md, п.1–п.10).
+; Корень — Node3D (по образцу Stage2Test): только числа, но сценарий единообразный
+; и камера/свет создаются кодом; прогон: ./run-tests.sh res://tests/LiquidSpaceTest.tscn
+[node name="LiquidSpaceTest" type="Node3D"]
+script = ExtResource("1_test")

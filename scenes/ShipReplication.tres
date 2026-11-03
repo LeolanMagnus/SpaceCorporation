@@ -92,3 +92,11 @@ properties/8/replication_mode = 2
 properties/9/path = NodePath("NetState:DockStationNetId")
 properties/9/spawn = true
 properties/9/replication_mode = 2
+
+; Этап 6: флаг поддержки пилотирования («жидкий космос»). Тот же транспорт и
+; тот же режим, что у dock-полей: событие редкое (переключение клавишей T через
+; RPC пилота), OnChange-дельта стоит дешевле отдельного потока; spawn = true —
+; поздно зашедший пир обязан увидеть режим корабля сразу (дебаг-строка assist).
+properties/10/path = NodePath("NetState:PilotAssist")
+properties/10/spawn = true
+properties/10/replication_mode = 2

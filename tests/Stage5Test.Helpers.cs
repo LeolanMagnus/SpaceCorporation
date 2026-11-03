@@ -180,6 +180,11 @@ public partial class Stage5Test
         _shipB = _spawner.SpawnShipFromScene(_station!.GlobalPosition + new Vector3(500, 0, 0), "ShipDockB");
         Check(_shipA != null && _shipB != null, "п.7: второй корабль заспавнен (ShipDockB)");
         if (_shipA == null || _shipB == null) return;
+        // Этап 6: тесты дока пишут скорость напрямую (TestSetVelocity: пружина
+        // захвата 20 м/с, таран дока 120 м/с). Пилот-ассист гасил бы эти скорости
+        // между шагами — тестам дока нужен прежний режим чистой инерции.
+        _shipA.SetPilotAssist(false);
+        _shipB.SetPilotAssist(false);
         Check(_shipB.Net!.ShipNetId != _shipA.Net!.ShipNetId,
               "п.7: у второго корабля адрес из общего счётчика (не столкнулись)");
 

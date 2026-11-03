@@ -273,6 +273,10 @@ public partial class Stage4Test
             return;
         }
         ship.SetPhysicsProcess(false); // движок не двигает тело в headless
+        // Этап 6: арена пишет скорость напрямую (таран 40 м/с). Пилот-ассист
+        // («жидкий космос») погасил бы её раньше момента удара — тестам старой
+        // физики тарана нужен прежний режим чистой инерции.
+        ship.SetPilotAssist(false);
         ship.Freeze = true;
         ship.FreezeMode = RigidBody3D.FreezeModeEnum.Static;
         ship.GlobalPosition = pos;

@@ -178,6 +178,32 @@ public partial class Ship : RigidBody3D
     public FlightParams Flight;
 
     /// <summary>
+    /// Комплектация корабля модулями (Этап 6): единственный источник скоростных
+    /// характеристик. `Flight` собирается из неё в `_Ready` и при каждой замене
+    /// модуля (`EquipModule`). Меняется до `_Ready` (тесты выключают ассист) и
+    /// в рантайме — пересчёт мгновенный.
+    /// </summary>
+    public ShipLoadout Loadout = new();
+
+    /// <summary>
+    /// Поддержка пилотирования (Этап 6, «жидкий космос»): при отпущенных клавишах
+    /// тяги скорость гасится тем же ускорением, что набирается. true по умолчанию
+    /// (требование задачи); false = классическая инерция Newton's Cradle.
+    /// Экспортируется, чтобы тесты и отладка переключали его прямо в сцене.
+    /// </summary>
+    [Export] public bool PilotAssist
+    {
+        get => Loadout.PilotAssist;
+        set => Loadout.PilotAssist = value;
+    }
+
+    /// <summary>
+    /// Базовые параметры корпуса до модулей (Mass/демпфирование из свойств тела),
+    /// снимок из `_Ready`: `EquipModule` пересобирает `Flight` = Loadout.Build(base).
+    /// </summary>
+    private FlightParams _baseFlight;
+
+    /// <summary>
     /// Максимальная угловая скорость корабля, рад/с (модуль `AngularVelocity` —
     /// т.е. ограничена и каждая ось, и любая комбинация: тангаж, рыскание, крен).
     /// Это характеристика конкретного корабля: у freighter она меньше, у
@@ -478,6 +504,7 @@ public partial class Ship : RigidBody3D
     private DebugButtonHandle? _nudgeHandle;
     private DebugButtonHandle? _interpHandle;
     private DebugButtonHandle? _godHandle;
+    private DebugButtonHandle? _assistHandle;
 
     /// <summary>Зарегистрированы ли кнопки этого корабля (BuildDebugButtons уже
     /// отработал). `ApplyPilot` вызывается и внутри `_Ready()` — до регистрации, —
@@ -527,6 +554,254 @@ public partial class Ship : RigidBody3D
     /// <summary>Текущий тик корабля (для автотестов и шага 2.4).</summary>
     public uint Tick => _tick;
 
+    // ── Этап 6: переключение пилот-ассиста (клавиша T) ──────────────────────
+    // Флаг живёт на СЕРВЕРЕ (NetState.PilotAssist, OnChange-реплика): сервер —
+    // единственный писатель (RpcTogglePilotAssist с гейтом «только пилот»),
+    // остальные пиры читают реплику. Пилот-клиент для отзывчивости инвертирует
+    // флаг ЛОКАЛЬНО в момент нажатия T и ждёт подтверждения:
+    //  • значение в реплике == ожидаемому — предсказание уже строится с новым
+    //    флагом, расхождения нет, откатов нет (п.13 «жестких откатов нет»);
+    //  • сервер сказал ДРУГОЕ (отказ/гонка) — редкий жёсткий откат: локальный
+    //    флаг меняется на серверный и вся неподтверждённая история переигрывается
+    //    с новым флагом (`ReplayInputsAfter(AppliedTick)` — тот же механизм,
+    //    что и у реконсиляции позиции).
+    // Кадровая часть: T не уходит в маска-битах (переключение — событие, а не
+    // состояние), поэтому после T сервер, применяя кадры из очереди, до применения
+    // кадра с тиком ≥ T сам переключает флаг (RPC приходит раньше кадров) и
+    // переигрывает историю с тика T. Клиент же обязан моделировать с новым
+    // флагом кадры (T, T+AssumeWindow]: на них действует `_assistExpected`
+    // (ожидаемое состояние). Разница клиент/сервер по тикам ≤ RTT·60 м/с — на
+    // практике 1-2 кадра, ошибка на порядок ниже порога жёсткого откатa.
+
+    /// <summary>Ожидаемое (после T) состояние ассиста на сервере; null = нет
+    /// неподтверждённого переключения.</summary>
+    private bool? _assistExpected;
+    /// <summary>Тик, на котором локально применено неподтверждённое переключение.</summary>
+    private uint _assistAppliedTick;
+    /// <summary>Сколько шагов ещё НЕ класть кадры в очередь отправки после T
+    /// (см. RPC-комментарий: RPC обязан догнать очередь кадров).</summary>
+    private int _assistMuteFrames;
+    private const int AssistMuteFrames = 3;
+    /// <summary>Флаг проинициализирован репликой (первое чтение/событие).</summary>
+    private bool _assistSeenInit;
+
+    /// <summary>На каком флаге ассиста моделировать (предсказывать) шаг с тиком t:
+    /// ожидаемое состояние, если переключение ещё не подтверждено и t сразу после
+    /// него; иначе — локальный флаг (он = подтверждённая реплика).</summary>
+    private bool AssistForTick(uint t)
+        => _assistExpected != null && t > _assistAppliedTick &&
+           t <= _assistAppliedTick + AssumeWindowTicks
+            ? _assistExpected.Value : Loadout.PilotAssist;
+    private const uint AssumeWindowTicks = 90; // 1.5 с — окно доверия ожидаемому состоянию
+
+    /// <summary>Обработать серверное значение флага (событие реплики или опрос).
+    /// Сверка с ожидаемым состоянием пилота: подтверждение → снимаем ожидание;
+    /// отказ/чужое значение → жёсткий откат предсказания (редкий путь).</summary>
+    private void OnAssistReplica(bool serverVal)
+    {
+        if (!_assistSeenInit) // спавн-синхронизация: принять значение без драмы
+        {
+            _assistSeenInit = true;
+            if (serverVal != Loadout.PilotAssist)
+                SetPilotAssist(serverVal);
+            _assistExpected = null;
+            return;
+        }
+        if (_assistExpected == serverVal)
+        {
+            // Подтверждение нашего T (или эхо собственного RPC у host): предсказание
+            // уже шло с новым флагом — сверки и переигровки не требуются (п.13).
+            _assistExpected = null;
+            return;
+        }
+        if (_assistExpected != null)
+        {
+            // Сервер ответил ДРУГИМ против нашего ожидания: ожидаемое состояние
+            // было ошибочным — откатываем локальный флаг и пересчитываем всю
+            // неподтверждённую историю с серверным значением. Это и есть
+            // документированный редкий путь «жёсткий откат при отказе сервера».
+            _assistExpected = null;
+            SetPilotAssist(serverVal);
+            if (_hasPrediction && Net != null)
+                ReplayInputsAfter((uint)Net.AppliedTick);
+        }
+        else if (serverVal != Loadout.PilotAssist)
+        {
+            // Смена флага без нашего запроса — переключение другого игрока
+            // (или наше серверное эхо у host): принять как истину.
+            SetPilotAssist(serverVal);
+        }
+    }
+
+    /// <summary>Локально применить переключение ассиста (клавиша T / кнопка
+    /// дебага). Пилот: инверсия сразу + пометка ожидаемого состояния + короткая
+    /// пауза отправки кадров; сервер-авторитет: применить сразу и переиграть
+    /// историю (свои кадры уже применены со старым флагом). Не-пилот-клиент:
+    /// ничего (флаг — право пилота, см. отказ RPC).</summary>
+    public void RequestTogglePilotAssist()
+    {
+        if (!IsLocalPilot)
+        {
+            GD.PrintErr("ship: переключение ассиста запросил НЕ пилот — игнор " +
+                        $"(pilot = {PilotPeerId})");
+            return;
+        }
+        bool next = !_assistExpected.GetValueOrDefault(Loadout.PilotAssist);
+        if (HasAuthority)
+        {
+            // Сервер (offline/host): применить сразу и написать реплику.
+            SetPilotAssist(next);
+            if (Net != null) Net.PilotAssist = (byte)(next ? 1 : 0);
+            _assistExpected = null;
+            _assistSeenInit = true;
+            ReplayAllApplied(); // сервер: история уже прожата со старым флагом
+            return;
+        }
+        // Пилот-клиент: ожидаемое состояние + локальная инверсия предсказания.
+        _assistExpected = next;
+        _assistAppliedTick = _tick;
+        _assistMuteFrames = AssistMuteFrames;
+        SetPilotAssist(next); // Loadout + Flight сразу: следующее предсказание — новое
+        RpcTogglePilotAssistRpc(next);
+    }
+
+    /// <summary>Сервер: переиграть ВСЮ применённую историю кадров заново с
+    /// текущими `Flight` (смена флага/модуля посреди буфера).</summary>
+    private void ReplayAllApplied()
+    {
+        if (_serverQueue.Count == 0 && _serverAppliedTick == 0)
+            return; // очередь пуста: переигрывать нечего
+        uint from = _serverAppliedTick > _serverQueue.Count
+            ? _serverAppliedTick - (uint)_serverQueue.Count : 0;
+        ReplayAppliedFramesFrom(from);
+    }
+
+    /// <summary>Сервер: переиграть уже извлечённые из очереди кадры с тиком &gt;
+    /// `from` поверх текущего состояния. Кадровая история сервера хранится в
+    /// кольце `_pending` (тот же механизм, что у клиентского `ReplayInputsAfter`):
+    /// при смене флага/модуля посреди буфера состояние пересчитывается с новыми
+    /// `Flight`, иначе серверные тики от `from` до `_serverAppliedTick` остались
+    /// бы прожатыми со СТАРЫМ флагом, и реконсиляция пилота выдала бы ложный
+    /// жёсткий откат сразу после T (п.13 требует обратного).</summary>
+    private void ReplayAppliedFramesFrom(uint from)
+    {
+        // Кольцо `_pending` пишет каждый шаг и offline-пилот, и сервер: слот с
+        // f.Tick == t содержит кадр, применённый на шаге тика t. Переигрываем
+        // кадры (from, _serverAppliedTick] тем же StepPrediction, что и шаг.
+        uint to = _serverAppliedTick;
+        if (to <= from) return;
+        if (to - from > PendingRingSize - 2)
+            from = to - (uint)(PendingRingSize - 2); // за кольцом переигрывать нечем
+        // `Ship.Rotation` — эйлеровы углы RigidBody3D, `FlightState.Rotation` —
+        // кватернион: конвертируем через Basis (тем же путём, что и шаг модели).
+        var st = new FlightState
+        {
+            Position = Position,
+            Rotation = Basis.FromEuler(Rotation).GetRotationQuaternion().Normalized(),
+            LinearVelocity = LinearVelocity,
+            AngularVelocity = AngularVelocity,
+        };
+        for (uint t = from + 1; t <= to; t++)
+        {
+            InputFrame f = _pending[t & (PendingRingSize - 1)];
+            if (f.Tick != t)
+                continue; // дыра (кадр не применялся этим тиком) — пропускаем
+            st = StepPrediction(st, f, FlightModel.FixedDt);
+        }
+        Position = st.Position;
+        Rotation = new Basis(st.Rotation).GetEuler();
+        LinearVelocity = st.LinearVelocity;
+        AngularVelocity = st.AngularVelocity;
+    }
+
+    /// <summary>Серверный приём переключения ассиста от пилота (флаг T). Гейт:
+    /// запрос принимает только ПИЛОТ этого корабля (иначе чужой piron менял бы
+    /// физику чужого корабля — отказ, документированный путь «сервер сказал
+    /// ДРУГОЕ» у клиента). Транспорт как у RpcRequestDocking: событие редкое,
+    /// надёжный канал 1 — RPC обязан опередить ненадёжные кадры ввода.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcTogglePilotAssistRpc(bool on)
+    {
+        int sender = Multiplayer.GetRemoteSenderId();
+        if (sender != PilotPeerId)
+        {
+            GD.PrintErr($"ship: RpcTogglePilotAssist от пира {sender}, а пилот = " +
+                        $"{PilotPeerId} — отказ (не пилот не переключает ассист)");
+            return; // отказ: реплика не меняется, клиент откатится по OnAssistReplica
+        }
+        ApplyServerPilotAssist(on);
+    }
+
+    /// <summary>Серверная истина: применить переключение и опубликовать реплику.
+    /// Шов автотеста (`TestRpcToggleAssistForTest`) зовёт прямо этот путь, как
+    /// `TestSetPilotForTest` зовёт серверные гейты без копии логики.</summary>
+    private void ApplyServerPilotAssist(bool on)
+    {
+        if (Net != null) Net.PilotAssist = (byte)(on ? 1 : 0);
+        if (HasAuthority)
+        {
+            // Мы и есть сервер: флаг на нас уже подействовал бы через SetPilotAssist;
+            // синхронизируем Loadout с репликой и переигрываем применённую историю.
+            if (Loadout.PilotAssist != on)
+            {
+                SetPilotAssist(on);
+                ReplayAllApplied();
+            }
+        }
+        // У сервера с внешним пилотом флаг нужен СРАЗУ: кадры из очереди, которые
+        // придут позже RPC, уже применяются с новым флагом (комментарий в шаге 4).
+    }
+
+    /// <summary>Шов теста: имитировать RPC-приём переключения от пира X без UDP.
+    /// Возвращает true, если сервер принял (X — пилот).</summary>
+    public bool TestRpcToggleAssistForTest(int senderPeer, bool on)
+    {
+        if (senderPeer != PilotPeerId)
+            return false;
+        ApplyServerPilotAssist(on);
+        return true;
+    }
+
+    /// <summary>Тестовый шов (п.13, п.14): имитировать переключение ассиста на
+    /// реальном корабле так, как его делает игрок (клавиша T). Возвращает новое
+    /// значение флага. В offline это полный путь (сервер = пилот).</summary>
+    public bool TestTogglePilotAssistForTest()
+    {
+        RequestTogglePilotAssist();
+        return Loadout.PilotAssist;
+    }
+
+    /// <summary>Локальное состояние флага для дебага/тестов.</summary>
+    public bool PilotAssistLocal => Loadout.PilotAssist;
+
+    /// <summary>Последнее увиденное значение реплики `Net.PilotAssist` (255 =
+    /// ещё не видел). Опрос каждый физшаг у не-авторитета: OnChange-дельта
+    /// Synchronizer приходит «молча» (свойство меняется без события для нас), а
+    /// сравнить байт — копейки, и это тот же паттерн, что у стража `SimTick`.</summary>
+    private byte _lastAssistReplica = 255;
+
+    /// <summary>Опросить реплику флага и, если она сдвинулась, провести сверку
+    /// (`OnAssistReplica`). Вызывается у не-авторитета каждый физшаг.</summary>
+    private void PollAssistReplica()
+    {
+        if (Net == null || Net.PilotAssist == _lastAssistReplica)
+            return;
+        _lastAssistReplica = Net.PilotAssist;
+        OnAssistReplica(Net.PilotAssist != 0);
+    }
+
+    /// <summary>Клавиша T (`toggle_pilot_assist`): переключение пилот-ассиста.
+    /// Берёт только локальный пилот этого корабля — `RequestTogglePilotAssist`
+    /// сам отклоняет не-пилота, но проверку делаем ДО вызова, чтобы в сцене с
+    /// несколькими кораблями каждый не печатал ошибку на каждое нажатие.</summary>
+    public override void _UnhandledKeyInput(InputEvent @event)
+    {
+        if (@event is InputEventKey k && k.Pressed && !k.Echo &&
+            k.IsActionPressed("toggle_pilot_assist") && IsLocalPilot)
+            RequestTogglePilotAssist();
+    }
+
     /// <summary>Кадр ввода, поданный на последнем шаге (для отладки и шага 2.4).</summary>
     public InputFrame LocalInput => _localInput;
 
@@ -540,6 +815,72 @@ public partial class Ship : RigidBody3D
     /// С шага 2.3 для корабля это «мы сервер».</summary>
     public bool IsServerAuthority => HasAuthority;
 
+    // ── Этап 6: комплектация модулями ────────────────────────────────────────
+
+    /// <summary>
+    /// Пересобрать `Flight` из `Loadout` поверх базовых параметров корпуса.
+    /// Вызывается в `_Ready` и при каждой замене модуля / переключении ассиста.
+    /// </summary>
+    private void RebuildFlight() => Flight = Loadout.Build(_baseFlight);
+
+    /// <summary>
+    /// Поставить модуль (по id из каталога) в слот его вида и пересчитать `Flight`.
+    /// false — если id неизвестен (модуль не меняется). Этап 6: улучшение корабля
+    /// = замена модуля на уровне выше.
+    /// </summary>
+    public bool EquipModule(string id)
+    {
+        if (!Loadout.Equip(id)) return false;
+        RebuildFlight();
+        return true;
+    }
+
+    /// <summary>
+    /// Включить/выключить поддержку пилотирования (Этап 6, Т) и пересчитать
+    /// `Flight`. Вызывается и из сети (RPC-переключение), и из тестов: тестам
+    /// арены (таран, стыковочная пружина) нужен прежний режим чистой инерции.
+    /// </summary>
+    public void SetPilotAssist(bool on)
+    {
+        Loadout.PilotAssist = on;
+        RebuildFlight();
+    }
+
+    /// <summary>Вынуть модуль из слота вида `kind` и пересчитать `Flight`.</summary>
+    public void UnequipModule(ModuleKind kind)
+    {
+        Loadout.EquipKind(kind, null);
+        RebuildFlight();
+    }
+
+    // ── Этап 6: швы для LiquidSpaceTest (п.13–15) ────────────────────────────
+
+    /// <summary>
+    /// Тестовый шов (п.13): симулирует переключение флага `PilotAssist` на тике
+    /// `t` (в середине прогона предсказания клиента). Эмулирует поведение
+    /// `TogglePilotAssist`: инвертирует `Loadout.PilotAssist`, помечает ожидаемым
+    /// новое значение (`_assistExpected`) и пересобирает `Flight` с новым флагом.
+    /// Вызывается внутри прогона предсказания в `Ship.ReplayInputsAfter(t)` —
+    /// там, где клиент переигрывает буфер на серверных тиках с новым значением
+    /// (ожидаемое состояние) и не видит ошибок расхождения с репликой.
+    /// </summary>
+    public void ApplyAssistToggleForTest(uint t)
+    {
+        // Инвертируем локальный флаг (Loadout.PilotAssist).
+        Loadout.PilotAssist = !Loadout.PilotAssist;
+        RebuildFlight();
+        // Помечаем ожидаемое состояние (как реальное T): `_assistExpected` — это
+        // новое значение, и все кадры `> t` в истории переигровки строятся с ним.
+        _assistExpected = Loadout.PilotAssist;
+        _assistAppliedTick = t;
+    }
+
+    /// <summary>Счётчик жёстких откатов предсказания (reconciile-рассинхрон, шаг 2.4).
+    /// В тесте п.13 ожидаем: переключение флага в середине прогона НЕ должно
+    /// добавлять откатов (переигровка с новым флагом сходится с сервером).</summary>
+    public int AssistRollbacks => HardRollbackCount;
+
+
     public override void _Ready()
     {
         GravityScale = 0f;
@@ -551,10 +892,12 @@ public partial class Ship : RigidBody3D
         // сдвинуть (пробуждение по импульсу есть, а по нашей тяге — нет).
         CanSleep = false;
 
-        // Параметры модели из свойств тела (см. документацию Flight выше).
-        // Тяги подобраны под массу 1200 кг: 90 кН ≈ 75 м/с² — «дистанционный»
-        // разгон, при котором корпус 2×1×4 м управляем в висячей сцене Main.
-        Flight = new FlightParams
+        // Параметры корпуса (масса/демпфирование) + комплектация модулями
+        // (Этап 6): тяга, лимиты и форсаж теперь приходят из Loadout.Build —
+        // единственный источник скоростных характеристик корабля. Базовые тяги
+        // (90 кН / 40 кН·м при массе 1200 кг) остаются в base как «мнение корпуса
+        // без модулей»: пустой loadout даёт побитово прежние числа (тест п.11).
+        _baseFlight = new FlightParams
         {
             Mass = Mass,
             LinearThrust = 90000f,
@@ -564,6 +907,7 @@ public partial class Ship : RigidBody3D
             BoostMultiplier = 2f,
             MaxAngularSpeed = MaxAngularSpeed, // потолок угловой скорости корпуса
         };
+        RebuildFlight();
 
         CollisionLayer = CollisionLayers.Ship;
         CollisionMask = CollisionLayers.ShipMask;
@@ -606,6 +950,9 @@ public partial class Ship : RigidBody3D
                 // Без auth/frozen/|err| реконсиляцию и смену пилота отлаживать нечем (§3.1 п.6).
                 $"auth = {GetMultiplayerAuthority()}, pilot = {PilotPeerId}, " +
                 $"mode = {(IsInteractionMode ? "INTERACT" : "PILOT")}, " +
+                // Этап 6: режим «жидкого космоса» этого корабля (клавиша T):
+                // без строки нечем проверить, что реплика флага доехала до пира.
+                $"assist = {(PilotAssistLocal ? "ON" : "OFF")}, " +
                 $"frozen = {Freeze}, " +
                 // Шаг 5.13 (п.35): dock-фаза и адрес станции в сделке — без них
                 // сделку в панели отладить нечем. Ключи добавлены, прежние
@@ -679,6 +1026,13 @@ public partial class Ship : RigidBody3D
                 "Toggle Interpolation", ToggleInterpolation);
         }
 
+        // Этап 6: кнопка переключения ассиста — локальному пилоту (любой роли:
+        // offline-хосту с авторитетом и клиенту-пилоту). Не-пилоту кнопки нет:
+        // флаг — право пилота, кнопка только сбила бы его запросом-отказом.
+        if (IsLocalPilot)
+            _assistHandle = DebugInfoBus.RegisterDebugButton(
+                "Toggle Pilot Assist (T)", RequestTogglePilotAssist);
+
         _debugButtonsBuilt = true;
         _debugButtonsAuthority = HasAuthority;
     }
@@ -692,10 +1046,12 @@ public partial class Ship : RigidBody3D
         DebugInfoBus.RemoveDebugButton(_godHandle);
         DebugInfoBus.RemoveDebugButton(_teleportHandle); // 5.12: снимаем по ручке (не задев чужие)
         DebugInfoBus.RemoveDebugButton(_interpHandle);
+        DebugInfoBus.RemoveDebugButton(_assistHandle); // Этап 6: кнопка ассиста
         _nudgeHandle = null;
         _godHandle = null;
         _teleportHandle = null;
         _interpHandle = null;
+        _assistHandle = null;
     }
 
     public override void _ExitTree()
@@ -2361,6 +2717,11 @@ public partial class Ship : RigidBody3D
             return;
         }
 
+        // Этап 6: сверка реплики флага ассиста у ЛЮБОГО не-авторитета (пилот —
+        // предсказание, наблюдатель — дебаг-строка). OnChange-дельта меняет
+        // свойство без callback — сравниваем байт, как страж сравнивает SimTick.
+        PollAssistReplica();
+
         // Пилот-клиент (не-авторитет, В14=B): каждый физшаг собирает кадр ввода,
         // кладёт его в кольцевой буфер, шлёт серверу И тут же интегрирует им своё
         // предсказание, а тело (вместе с картинкой и камерой — они дети тела)
@@ -2408,7 +2769,17 @@ public partial class Ship : RigidBody3D
             // буфер исходящих и «дозревает» через N мс — так измеряется поведение
             // при RTT ≈ 2×N, не трогая ENet. При N=0 буфер пустеет в тот же шаг,
             // поведение идентично прежнему.
-            EnqueueInputForSend(frame);
+            //
+            // Этап 6: сразу после T (переключение ассиста) новые кадры НЕ уходят
+            // серверу несколько шагов: надёжный RPC переключения (канал 1) обязан
+            // догнать очередь ненадёжных кадров ввода — иначе сервер применил бы
+            // кадр с тиком ≥ T со СТАРЫМ флагом, а предсказание пилота шло бы уже
+            // с новым, и сверка выдала бы ложный жёсткий откат. Кольцо и локальное
+            // предсказание при этом двигаются как обычно.
+            if (_assistMuteFrames > 0)
+                _assistMuteFrames--;
+            else
+                EnqueueInputForSend(frame);
             // Отправить всё, что «дозрело» к этому физшагу (при N=0 — текущий кадр).
             FlushSendBuffer();
 

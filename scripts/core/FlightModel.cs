@@ -74,6 +74,15 @@ public struct FlightParams
     public float LinearThrust;
     /// <summary>Момент по каждой оси, Н·м.</summary>
     public float AngularThrust;
+    /// <summary>
+    /// Линейное ускорение тяги, м/с² (Этап 6, Р2). > 0 ⇒ модель берёт ускорение
+    /// НАПРЯМУЮ, минуя LinearThrust/Mass — это путь модулей и ассиста (модуль
+    /// описывает м/с²). 0 (структурный ноль) ⇒ как раньше: LinearThrust/Mass,
+    /// поэтому существующие прогоны считают ровно те же числа.
+    /// </summary>
+    public float ThrustAccel;
+    /// <summary>Угловое ускорение момента, рад/с². > 0 ⇒ напрямую; 0 ⇒ AngularThrust/Mass.</summary>
+    public float AngularAccel;
     /// <summary>Линейное демпфирование, 1/с (экспоненциальное затухание).</summary>
     public float LinearDamping;
     /// <summary>Угловое демпфирование, 1/с.</summary>
@@ -92,6 +101,40 @@ public struct FlightParams
     /// тандем с телом, затухание демпфером) считают ровно те же числа.
     /// </summary>
     public float MaxAngularSpeed;
+
+    // --- Этап 6: пилот-ассист и потолок линейной скорости («жидкий космос») ---
+    // Все четыре поля имеют «структурный ноль = прежнее поведение»: старые
+    // тестовые прогоны (Params() в Stage2Test и пр.) оставляют их нулевыми и
+    // считают ровно те же числа, что и до Этапа 6.
+
+    /// <summary>
+    /// Поддержка пилотирования ВКЛЮЧЕНА. true ⇒ при отсутствии линейного ввода
+    /// скорость гасится постоянным ускорением `AssistDragAccel` («жидкий космос»).
+    /// false (структурный ноль) ⇒ инерция сохраняется вечно — текущее поведение.
+    /// </summary>
+    public bool PilotAssist;
+    /// <summary>
+    /// Величина торможения ассиста, м/с². По условию равна `ThrustAccel`:
+    /// «падает с таким же ускорением, как набирается». Действует ТОЛЬКО при
+    /// пустом линейном вводе (см. шаг 5b в `Step`) — иначе при равных ускорениях
+    /// тяга и торможение обнулили бы друг друга и корабль не сдвинулся бы.
+    /// 0 = ассист не тормозит.
+    /// </summary>
+    public float AssistDragAccel;
+    /// <summary>
+    /// Потолок линейной скорости («макс. скорость стрейфа»), м/с. 0/меньше =
+    /// без ограничения (структурный ноль = прежнее поведение). Клиппится
+    /// ОСЕВОЙ клиппинг по мировым осям (направление сохраняется; при общем
+    /// лимите на все оси это то же, что покомпонентная проекция на локальные).
+    /// </summary>
+    public float MaxLinearSpeed;
+    /// <summary>
+    /// «Текучесть» при выключенном РСУ/питании: экспоненциальное демпфирование
+    /// линейной скорости, 1/с. Отдельно от `AssistDragAccel` (это торможение) и
+    /// от `LinearDamping` (на нём висят старые тесты). В прототипе = 0 и в `Step`
+    /// пока не участвует — задел под «выключенное РСУ = космос чуть густой».
+    /// </summary>
+    public float FreeDriftDamping;
 
     /// <summary>Значения по умолчанию = то, что сейчас стоит на Ship.cs:86-87.</summary>
     public static FlightParams Default()
@@ -114,10 +157,12 @@ public struct FlightParams
 ///
 ///   1. позиция += линейная скорость (до изменений) * dt
 ///   2. ориентация *= поворот от угловой скорости (до изменений) * dt
-///   3. скорости меняются: тяга/момент, затем демпфирование exp(-k*dt)
+///   3. скорости меняются: тяга/момент, затем [Этап 6] торможение пилот-ассиста
+///      (только при пустом линейном вводе), затем демпфирование exp(-k*dt),
+///      затем лимиты: MaxAngularSpeed, [Этап 6] MaxLinearSpeed (осевой клиппинг)
 ///
-/// Демпфирование считается моделью, а не движком, и обязательно: без него
-/// корабль разгоняется до бесконечности.
+/// Демпфирование считается моделью, а не движком: без него
+/// корабль разгоняется до бесконечности (в режиме ассиста — см. 5b).
 /// </summary>
 public static class FlightModel
 {
@@ -168,7 +213,10 @@ public static class FlightModel
 
         // --- 3. Тяга: локальные оси, мировое ускорение ---
         float boost = ((f.Mask & InputMask.Boost) != 0) ? Mathf.Max(1f, p.BoostMultiplier) : 1f;
-        float accelScale = (p.Mass > 0f ? p.LinearThrust / p.Mass : 0f) * boost;
+        // Этап 6 (Р2): ThrustAccel > 0 ⇒ ускорение берётся напрямую (путь модулей
+        // и ассиста); 0 ⇒ как раньше, LinearThrust/Mass (старые тесты побитово целы).
+        float accelScale = (p.ThrustAccel > 0f ? p.ThrustAccel
+                         : (p.Mass > 0f ? p.LinearThrust / p.Mass : 0f)) * boost;
 
         // Ось Z знакоразвёрнута: «вперёд» в контенте Godot — это локальная -Z
         // (см. Ship.tscn, импульс в ProbeNest идёт по -Z).
@@ -185,7 +233,8 @@ public static class FlightModel
         // рыскание, Z — крен), но угловая скорость хранится в мировых, поэтому
         // момент переводится в мировые тем же базисом. Иначе предсказание пилота
         // и сервер сошлись бы только при identity-ориентации.
-        float angAccelScale = (p.Mass > 0f ? p.AngularThrust / p.Mass : 0f) * boost;
+        float angAccelScale = (p.AngularAccel > 0f ? p.AngularAccel
+                              : (p.Mass > 0f ? p.AngularThrust / p.Mass : 0f)) * boost;
         // BUG-010: Q/E — крен вокруг локальной Z (продольной) оси корпуса. Знак:
         // «вперёд» у корпуса это −Z, поэтому положительный момент вокруг +Z по
         // правилу правой руки (X→Y) поднимает правый борт = крен ВЛЕВО.
@@ -198,6 +247,17 @@ public static class FlightModel
         // --- 5. Скорости ---
         n.LinearVelocity = s.LinearVelocity + worldThrust * dt;
         n.AngularVelocity = s.AngularVelocity + basis * localTorque * angAccelScale * dt;
+
+        // --- 5b. Этап 6 (Р1): торможение пилот-ассиста, «жидкий космос» ---
+        // Кинематическое (постоянное ускорение), а НЕ экспонента: требование
+        // заказчика «падает с таким же ускорением, как набирается». Гейт по
+        // ОТСУТСТВИЮ линейного ввода обязателен: при AssistDragAccel == ThrustAccel
+        // (а по условию они равны!) постоянно включённое торможение компенсировало
+        // бы тягу, и корабль не сдвинулся бы вообще. Порядок «тяга → торможение →
+        // демпфирование → потолок» даёт: зажатая клавиша = разгон до потолка,
+        // отпущенная = чистое падение до нуля без проскока.
+        if (p.PilotAssist && p.AssistDragAccel > 0f && (f.Mask & InputMask.LinearBits) == 0u)
+            n.LinearVelocity = BrakeToZero(n.LinearVelocity, p.AssistDragAccel, dt);
 
         // --- 6. Демпфирование (модель, не движок) ---
         if (p.LinearDamping > 0f)
@@ -213,7 +273,43 @@ public static class FlightModel
             n.AngularVelocity.LengthSquared() > p.MaxAngularSpeed * p.MaxAngularSpeed)
             n.AngularVelocity = n.AngularVelocity.Normalized() * p.MaxAngularSpeed;
 
+        // --- 7b. Этап 6 (Р3): потолок линейной скорости («макс. скорость стрейфа») ---
+        // В САМОМ КОНЦЕ шага: ни тяга, ни импульсы/внешние записи скорости, ни
+        // доводка не могут оставить состояние выше лимита (ровно та же логика,
+        // что у гейта MaxAngularSpeed на входе/выходе). ОСЕВОЙ клиппинг: режем
+        // только вышедшие за лимит компоненты, вектор не схлопываем в сферу —
+        // иначе диагональное движение тормозило бы вдоль разрешённых осей.
+        if (p.MaxLinearSpeed > 0f)
+            n.LinearVelocity = ClampLinearSpeed(n.LinearVelocity, p.MaxLinearSpeed);
+
         return n;
+    }
+
+    /// <summary>
+    /// Кинематическое торможение до нуля (Этап 6, Р1): |Δv| = dragAccel·dt,
+    /// строго к нулю без проскока через него (при |v| ≤ dragAccel·dt отдаём
+    /// ровно Vector3.Zero). Чистая функция, тот же стиль, что `ClampLookRadians`:
+    /// детерминирована, без состояния.
+    /// </summary>
+    public static Vector3 BrakeToZero(Vector3 v, float dragAccel, float dt)
+    {
+        if (dragAccel <= 0f || dt <= 0f) return v;
+        float len = v.Length();
+        if (len <= dragAccel * dt) return Vector3.Zero;
+        return v - v * (dragAccel * dt / len);
+    }
+
+    /// <summary>
+    /// Осевой клиппинг скорости к лимиту (Этап 6, Р3): каждая мировая ось
+    /// ограничивается ±maxSpeed независимо. Направление сохраняется, вектор НЕ
+    /// схлопывается в сферу. maxSpeed ≤ 0 = без ограничения (structural-off).
+    /// </summary>
+    public static Vector3 ClampLinearSpeed(Vector3 v, float maxSpeed)
+    {
+        return new Vector3(
+            Mathf.Clamp(v.X, -maxSpeed, maxSpeed),
+            Mathf.Clamp(v.Y, -maxSpeed, maxSpeed),
+            Mathf.Clamp(v.Z, -maxSpeed, maxSpeed));
     }
 
     /// <summary>
