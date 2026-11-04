@@ -100,3 +100,11 @@ properties/9/replication_mode = 2
 properties/10/path = NodePath("NetState:PilotAssist")
 properties/10/spawn = true
 properties/10/replication_mode = 2
+
+; Тип корабля (три пресета полётной модели: курьер/грузовик/контейнеровоз).
+; Тот же транспорт и режим, что у PilotAssist: смена редкая (дебаг-кнопка через
+; RPC пилота → пишет сервер), OnChange-дельта; spawn = true — поздно зашедший
+; пир обязан сразу построить корпус и характеристики по типу корабля.
+properties/11/path = NodePath("NetState:ShipTypeValue")
+properties/11/spawn = true
+properties/11/replication_mode = 2

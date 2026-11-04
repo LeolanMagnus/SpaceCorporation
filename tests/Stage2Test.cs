@@ -606,8 +606,14 @@ public partial class Stage2Test : Node3D
 
                 Check(_ship.GetNodeOrNull<Node3D>("MouseCatcher") != null,
                     "п.6b: у посаженного в идущей игре корабля есть узел-сборщик мыши");
+                // added 2026-08: дефолтный вид пилота — «из глаз», chase-камера
+                // включается по V. Прицел мы меряем именно chase-камерой, поэтому
+                // включаем её тем же публичным путём, что и клавиша V.
+                Check(_ship.GetNodeOrNull<Camera3D>("ChaseCamera") == null,
+                    "п.6b: в дефолтном виде «из глаз» chase-камеры ещё нет");
+                _ship.TogglePilotCamera();
                 Check(_ship.GetNodeOrNull<Camera3D>("ChaseCamera") != null,
-                    "п.6b: у посаженного корабля есть камера-преследователь (ею и меряем прицел)");
+                    "п.6b: после V у корабля есть камера-преследователь (ею и меряем прицел)");
                 Check(GetViewport()?.GetCamera3D() == _ship.GetNodeOrNull<Camera3D>("ChaseCamera"),
                     "п.6b: камера корабля стала активной в вьюпорте");
 
@@ -1066,6 +1072,154 @@ public partial class Stage2Test : Node3D
 
             s.QueueFree();
             s2.QueueFree();
+        }
+
+        // ======================================================================
+        GD.Print("[Stage2Test] п.12b: AngularRiseTime — набор вращения стартует с 0 " +
+                 "и растёт до максимума, пока зажата клавиша");
+        // ======================================================================
+        {
+            FlightParams rp = Params();
+            rp.AngularThrust = 1000f;   // a = 1000/100 = 10 рад/с²
+            rp.Mass = 100f;
+            rp.MaxAngularSpeed = 1f;    // потолок команды
+            rp.AngularRiseTime = 0.9f;  // 95% команды за 0.9 с (τ = 0.3 с)
+            rp.AngularDamping = 5f;     // в режиме следования НЕ участвует
+            var roll = InputFrame.FromMask(1, InputMask.TorqueRollLeft);
+            var empty = new InputFrame { Tick = 2 };
+
+            // Срез времени: сколько секунд ушло на 95% потолка.
+            FlightState s = FlightState.Park();
+            float t = 0f;
+            int step95 = -1;
+            for (int i = 0; i < 400; i++)
+            {
+                var st = FlightModel.Step(s, rp, roll, dt);
+                s = st; t += dt;
+                if (step95 < 0 && st.AngularVelocity.Length() >= 0.95f) step95 = i + 1;
+            }
+            float t95 = step95 * dt;
+            Check(Math.Abs(t95 - 0.9f) < 0.03f,
+                $"п.12b: 95% потолка набирается за заданное время ({t95:F3} с ≈ 0.9 с)");
+
+            // Старт РОВНО с нуля: первый же шаг даёт прирост, но не «пинок».
+            FlightState s0 = FlightState.Park();
+            var first = FlightModel.Step(s0, rp, roll, dt);
+            float w1 = first.AngularVelocity.Length();
+            Check(w1 < 1f * (dt / 0.3f) + 1e-6f,
+                $"п.12b: первый шаг — малый прирост, не импульс ({w1:F6} рад/с)");
+
+            // Монотонность и отсутствие «затухания после пика» во время удержания.
+            float prev = -1f; bool monotonic = true, overshoot = false;
+            s0 = FlightState.Park();
+            for (int i = 0; i < 600; i++)
+            {
+                s0 = FlightModel.Step(s0, rp, roll, dt);
+                float w = s0.AngularVelocity.Length();
+                if (w < prev - 1e-9f) monotonic = false;
+                if (w > 1f + 1e-6f) overshoot = true;
+                prev = w;
+            }
+            Check(monotonic, "п.12b: |ω| растёт монотонно всё удержание клавиши");
+            Check(!overshoot, $"п.12b: перелёта через потолок нет (итог {prev:F6})");
+            Check(Math.Abs(prev - 1f) < 1e-4f,
+                  $"п.12b: ω встаёт на потолок и ДЕРЖИТСЯ на нём (10 с удержания: {prev:F6})");
+
+            // Отпустили — команда «ноль», и спад идёт тем же законом и с той же
+            // τ, что и набор: симметрия времени раскрутки и остановки. Демпфер
+            // AngularDamping в режиме следования не участвует (иначе спад шёл бы
+            // быстрее набора). За 3τ = 0.9 с ω падает до 5% потолка.
+            s0 = FlightState.Park();
+            for (int i = 0; i < 600; i++) s0 = FlightModel.Step(s0, rp, roll, dt);
+            float wDecayStart = s0.AngularVelocity.Length();
+            int stepDown95 = -1;
+            float tDown = 0f;
+            for (int i = 0; i < 400; i++)
+            {
+                s0 = FlightModel.Step(s0, rp, empty, dt);
+                tDown += dt;
+                if (stepDown95 < 0 && s0.AngularVelocity.Length() <= 0.05f * wDecayStart)
+                    stepDown95 = i + 1;
+            }
+            float tDown95 = stepDown95 * dt;
+            Check(Math.Abs(tDown95 - 0.9f) < 0.03f,
+                  $"п.12b: 95% спад после отпускания — за то же время, что и набор " +
+                  $"({tDown95:F3} с ≈ {t95:F3} с разгона)");
+            Check(s0.AngularVelocity.Length() < 1e-4f,
+                  $"п.12b: после долгогоidle ω легла в ноль ({s0.AngularVelocity.Length():E3})");
+
+            // Монотонность спада: без «пинка» вниз и без отскока.
+            s0 = FlightState.Park();
+            for (int i = 0; i < 600; i++) s0 = FlightModel.Step(s0, rp, roll, dt);
+            prev = 1e9f; monotonic = true;
+            prev = s0.AngularVelocity.Length();
+            for (int i = 0; i < 400; i++)
+            {
+                s0 = FlightModel.Step(s0, rp, empty, dt);
+                float w = s0.AngularVelocity.Length();
+                if (w > prev + 1e-9f) monotonic = false;
+                prev = w;
+            }
+            Check(monotonic, "п.12b: |ω| убывает монотонно всё время после отпускания");
+
+            // Корабль из каталога (живой курьер): раскрутка от Q/E — не «пинок».
+            if (GD.Load<PackedScene>("res://scenes/Ship.tscn") is PackedScene riseScene)
+            {
+                Ship s3 = riseScene.Instantiate<Ship>();
+                AddChild(s3);
+                s3.TestSetPilotForTest(1);
+                s3.TestSetVelocity(Vector3.Zero);
+                var kf = InputFrame.FromMask(30_000, InputMask.TorqueRollLeft);
+                float cap = s3.MaxAngularSpeed;
+                float wAtRamp = 0f, wEnd = 0f, prevW = -1f;
+                bool rises = true;
+                int riseFrames95 = 0;
+                // Курьер: AngularRiseTime = 0.6 с ⇒ τ = 0.2 с (τ не может быть
+                // меньше физ. предела сопел Mk1: ωcap/a = 6/33.3 = 0.18 с).
+                for (int i = 0; i < 55; i++) // ~0.92 с удержания Q
+                {
+                    kf.Tick = (uint)(30_000 + i + 1);
+                    s3.TestSetInputForTest(kf);
+                    s3.TestStepForTest(dt);
+                    float w = s3.AngularVelocity.Length();
+                    if (w < prevW - 1e-9f) rises = false;
+                    if (riseFrames95 == 0 && w >= 0.95f * cap) riseFrames95 = i + 1;
+                    prevW = w;
+                    if (i == 11) wAtRamp = w;  // 0.2 с = одна τ
+                    wEnd = w;
+                }
+                // За одну τ апериодическая система набирает 63% команды; старый
+                // импульсный режим к этому моменту уже упёрся бы в потолок.
+                Check(wAtRamp > 0.3f * cap && wAtRamp < 0.75f * cap,
+                    $"п.12b: курьер на середине разгона (0.2 с) идёт в {wAtRamp / cap:P0} " +
+                    $"своего потолка, а не уже на пределе");
+                Check(rises, "п.12b: живой курьер — |ω| растёт монотонно всё удержание Q");
+                Check(Math.Abs(wEnd - cap) < 0.1f * cap,
+                    $"п.12b: и держится на потолке после выхода ({wEnd:F3} ≈ {cap})");
+
+                // Симметрия на ЖИВОМ курьере: отпустили Q — спад идёт той же τ,
+                // значит на 95% спуска (до 5% потолка) уходит то же время, что и
+                // на набор (0.6 с = 36 кадров). Старый вид давал бы здесь ~вдвое
+                // меньше/больше: быстрый набор + медленный спад по AngularDamping.
+                int fallFrames = 0;
+                prevW = wEnd; bool monotonicFall = true;
+                for (int i = 0; i < 200; i++)
+                {
+                    var idle = new InputFrame { Tick = (uint)(30_000 + 55 + i + 1) };
+                    s3.TestSetInputForTest(idle);
+                    s3.TestStepForTest(dt);
+                    float w = s3.AngularVelocity.Length();
+                    if (fallFrames == 0 && w <= 0.05f * cap) fallFrames = i + 1;
+                    if (w > prevW + 1e-9f) monotonicFall = false;
+                    prevW = w;
+                }
+                Check(fallFrames > 0 && Math.Abs(fallFrames - riseFrames95) <= 6,
+                      $"п.12b: живой курёр остановил вращение за {fallFrames} кадров " +
+                      $"(разгон до 95% — {riseFrames95} кадров): симметрия разгона и остановки");
+                Check(monotonicFall,
+                    "п.12b: после отпускания Q живой курьер не отскакивает и не пикует");
+                s3.QueueFree();
+            }
         }
     }
 

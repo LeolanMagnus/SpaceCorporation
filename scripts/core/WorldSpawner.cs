@@ -340,8 +340,15 @@ public partial class WorldSpawner : Node3D
     }
 
     /// <summary>Спавн одного корабля: адрес выдаётся ДО AddChild — иначе первый
-    /// снимок реплики уйдёт с ShipNetId = 0, и RPC корабля потеряются (§3.1 п.8).</summary>
-    public Ship? SpawnShipFromScene(Vector3? position = null, string? nameOverride = null)
+    /// снимок реплики уйдёт с ShipNetId = 0, и RPC корабля потеряются (§3.1 п.8).
+    ///
+    /// <paramref name="shipType"/> — тип корпуса из ShipStatCatalog: сервер пишет
+    /// его в реплику NetState.ShipTypeValue ДО AddChild, и Ship._Ready строит по
+    /// нему массу/габариты/цвет/базу полётной модели (у пиров тот же байт приезжает
+    /// спавн-снимком репликации — spawn=true). По умолчанию — запись каталога
+    /// DefaultShip (курьер), см. scripts/core/ShipTypes.cs.</summary>
+    public Ship? SpawnShipFromScene(Vector3? position = null, string? nameOverride = null,
+                                    ShipType shipType = ShipStatCatalog.DefaultType)
     {
         var scene = GD.Load<PackedScene>("res://scenes/Ship.tscn");
         if (scene == null)
@@ -354,6 +361,10 @@ public partial class WorldSpawner : Node3D
         // из инстанса напрямую (§3.1 п.8).
         var shipNetState = ship.GetNode<NetState>("NetState");
         NetworkManager.Instance?.AssignNetIdIfUnset(shipNetState);
+        // Тип корпуса — тоже ДО AddChild: Ship._Ready читает байт из реплики при
+        // построении корпуса и _baseFlight (характеристики для полётной модели
+        // корабль получает из общего каталога по типу — требование дизайна).
+        shipNetState.ShipTypeValue = (byte)ShipStatCatalog.Find(shipType).Type;
         if (nameOverride != null)
             ship.Name = nameOverride;
         // BUG-008 (рецидив): первоначальный пилот пишем в реестр ДО AddChild.

@@ -25,6 +25,13 @@ public partial class Player : CharacterBody3D
 
     [Export] public NodePath CameraRigPath { get; set; } = "CameraRig";
 
+    /// <summary>Автопристёжка к точке по умолчанию на первом физическом шаге.
+    /// По умолчанию ВКЛЮЧЕНА (added 2026-08): игрок спавнится пристёгнутым к
+    /// креслу пилота и видит дефолтный вид «из глаз» (своя камера Camera3D).
+    /// V (`toggle_pilot_camera`) переключает вид из кресла на chase-камеру
+    /// корабля и обратно, F (`detach`) отстёгивает.</summary>
+    [Export] public bool AutoAttachOnSpawn { get; set; } = true;
+
     /// <summary>Точка крепления, к которой пристёгнут игрок (null — свободен).</summary>
     public AttachPoint? AttachedTo { get; private set; }
 
@@ -174,9 +181,17 @@ public partial class Player : CharacterBody3D
         // §3.5 п.4: автопристёгивание — только серверу и offline. На клиенте
         // крепление приходит репликой ApplyAttach, и _awaitingDefaultPoint не должен
         // заставлять клиента крепиться самому (иначе Reparent разойдётся с сервером).
+        // AutoAttachOnSpawn = true (added 2026-08): игрок спавнится пристёгнутым в
+        // кресле пилота и сразу видит дефолтный вид «из глаз» (своя Camera3D);
+        // V переключает вид на chase-камеру корабля, F отстёгивает.
+        if (!AutoAttachOnSpawn || !_awaitingDefaultPoint)
+        {
+            _awaitingDefaultPoint = false;
+            return;
+        }
         var nm = NetworkManager.Instance;
         bool authoritySide = nm == null || !nm.HasRealPeer || nm.IsServer;
-        if (!_awaitingDefaultPoint || !authoritySide)
+        if (!authoritySide)
             return;
 
         if (AttachToDefaultPoint())
@@ -462,6 +477,74 @@ public partial class Player : CharacterBody3D
     /// <summary>RPC-рассылка состояния принимается только от сервера (id = 1):
     /// в авторитетной сервером модели именно он рассылает Apply* всем (§2.5).</summary>
     private bool IsFromServer() => Multiplayer.GetRemoteSenderId() == 1;
+
+    // ------------------- клавиши V (вид пилота) и F (отстегнуться), added 2026-08
+
+    /// <summary>
+    /// Ввод локального игрока двумя действиями (added 2026-08):
+    ///   V  `toggle_pilot_camera` — сменить вид из кресла пилота: «из глаз»
+    ///      (дефолт пристёгнутого — своя камера Camera3D) ⇄ chase-камера корабля.
+    ///      Работает только когда игрок пристёгнут к креслу корабля, где он пилот:
+    ///      режим вида — локальное свойство корабля, по сети он не летит.
+    ///   F  `detach` — отстегнуться (раньше F была клавишей запроса стыковки;
+    ///      запрос стыковки переезжает в окно радиосвязи, следующая стадия).
+    /// Событие, а не физический шаг: как у F3 в DebugLayer — `_Input` +
+    /// `IsActionPressed`, затем SetInputAsHandled, чтобы клавиша не утёкла в кадр
+    /// ввода корабля (битов V и F маска пилота не содержит — `torque_yaw_right`
+    /// переехал на B, — но страховка от будущих коллизий).
+    /// Пути те же, что у дебаг-кнопок: клиенту RPC, хосту/offline — серверная
+    /// сердцевина напрямую (§3.5 п.3).
+    /// </summary>
+    public override void _Input(InputEvent @event)
+    {
+        if (!_isLocal)
+            return;
+
+        if (@event.IsActionPressed("toggle_pilot_camera"))
+        {
+            TogglePilotCameraView();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+
+        if (@event.IsActionPressed("detach"))
+        {
+            if (IsAttached)
+                OnButtonDetach();
+            GetViewport().SetInputAsHandled();
+        }
+    }
+
+    /// <summary>V: переключить вид пилота (только если мы пристёгнуты к креслу
+    /// корабля, которым управляем локально). Возвращает false, если переключать
+    /// нечего — игрок не в кресле пилота.</summary>
+    public bool TogglePilotCameraView()
+    {
+        Ship? ship = PilotedShip();
+        if (ship == null)
+        {
+            GD.Print("Player: V — вид пилота доступен только пристёгнутым в кресле " +
+                     "корабля, которым управляешь сам");
+            return false;
+        }
+        ship.TogglePilotCamera();
+        return true;
+    }
+
+    /// <summary>Корабль, к креслу которого игрок пристёгнут И который является
+    /// пилотируемым для этого пира (локальный пилот). Иначе null: у пассажира
+    /// своей камеры-вида нет, chase-камеру чужого корабля включать нельзя.</summary>
+    private Ship? PilotedShip()
+    {
+        if (!IsAttached || AttachedTo == null || AttachedTo.Kind != AttachPoint.KindOf.Seat)
+            return null;
+        for (Node n = AttachedTo.GetParent(); n != null; n = n.GetParent())
+        {
+            if (n is Ship ship && ship.IsLocalPilot)
+                return ship;
+        }
+        return null;
+    }
 
     // ------------------------------------------------------ дебаг-кнопки
 

@@ -360,42 +360,98 @@ public partial class Stage1Test : Node
                 _nudgeFrame = _frame;
                 break;
 
-            // --- шаг 1.6: крепление игрока к сценам (задел на этап 6)
+            // --- шаг 1.6: спавн пристёгнутым + V-переключатель вида пилота + F-отстёжка
             case 16:
+                // Новый дефолт (added 2026-08): игрок спавнится ПРИСТЁГНУТЫМ
+                // (Player.AutoAttachOnSpawn = true) и видит дефолтный вид «из глаз»
+                // — свою камеру; V (`toggle_pilot_camera`) переключает вид на
+                // chase-камеру корабля; F (`detach`) отстёгивает (F больше НЕ клавиша
+                // запроса стыковки — стыковка переезжает в окно радиосвязи).
+                Check(InputMap.HasAction("toggle_pilot_camera"),
+                      "в InputMap есть действие toggle_pilot_camera");
+                bool vBound = false;
+                foreach (var ev in InputMap.ActionGetEvents("toggle_pilot_camera"))
+                {
+                    if (ev is InputEventKey k && (k.Keycode == Key.V || k.PhysicalKeycode == Key.V))
+                        vBound = true;
+                }
+                Check(vBound, "toggle_pilot_camera привязан к V через InputMap");
+                Check(InputMap.HasAction("detach"), "в InputMap есть действие detach");
+                bool fBound = false;
+                foreach (var ev in InputMap.ActionGetEvents("detach"))
+                {
+                    if (ev is InputEventKey k && (k.Keycode == Key.F || k.PhysicalKeycode == Key.F))
+                        fBound = true;
+                }
+                Check(fBound, "detach привязан к F через InputMap");
+                // Клавиша F освобождена из-под стыковки: действие есть, клавиши нет.
+                Check(InputMap.HasAction("request_docking") &&
+                      InputMap.ActionGetEvents("request_docking").Count == 0,
+                      "у request_docking нет клавиши (стыковка — через окно радиосвязи)");
+                Check(!InputMap.HasAction("toggle_attach"),
+                      "старого действия toggle_attach в InputMap больше нет");
                 Check(_player != null && _player.IsAttached,
-                      "Player авто-пристёгнут к точке по умолчанию");
-                Check(_player?.AttachedTo?.Name == "Seat",
-                      $"точка по умолчанию — кресло корабля Seat (получено {_player?.AttachedTo?.Name})");
-                Check(_player != null && _player.GetParent() == _ship?.GetNodeOrNull<Node>("ShipHull/AttachPoints/Seat"),
-                      "после пристёжки игрок — узел внутри иерархии корабля");
+                      "по умолчанию игрок спавнится пристёгнутым (AutoAttachOnSpawn = true)");
+                Check(_player?.GetActiveCamera()?.Current == true,
+                      "дефолтный вид пристёгнутого — своя камера игрока (Camera3D current)");
+                Check(_ship != null && _ship.GetNodeOrNull<Camera3D>("ChaseCamera") == null,
+                      "в дефолтном виде «из глаз» chase-камера корабля не создаётся");
                 break;
             case 17:
-                var detachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons"),
-                                           "Detach Player");
-                Check(detachBtn != null, "Player зарегистрировал кнопку «Detach Player»");
-                detachBtn?.EmitSignal(BaseButton.SignalName.Pressed);
+                // V: вид пилота переключается на chase-камеру корабля.
+                SendV();
                 break;
             case 18:
-                Check(_player != null && !_player.IsAttached, "Detach: игрок больше ни к чему не пристёгнут");
-                // §3.5 п.1: мировой корень берается явно (Player.FindWorldRoot),
-                // после detach игрок возвращается в Main — не в GameRoot и не в Ship.
-                Check(_player != null && _player.GetParent() == _main,
-                      "Detach: игрок вернулся в мировой корень Main");
+                Check(_player != null && _player.IsAttached,
+                      "V: игрок остаётся пристёгнутым (V меняет только вид)");
+                Check(_player?.AttachedTo?.Name == "Seat",
+                      $"V: точка пристёжки — кресло корабля Seat (получено {_player?.AttachedTo?.Name})");
+                Check(_player != null && _player.GetParent() == _ship?.GetNodeOrNull<Node>("ShipHull/AttachPoints/Seat"),
+                      "пристёгнутый игрок — узел внутри иерархии корабля");
+                var chaseCam = _ship?.GetNodeOrNull<Camera3D>("ChaseCamera");
+                Check(chaseCam != null && GetViewport()?.GetCamera3D() == chaseCam,
+                      "V: активной стала камера корабля (ChaseCamera)");
+                Check(_player?.GetNodeOrNull<Node3D>("CameraRig")?.GetNodeOrNull<Camera3D>("Camera3D")?.Current == false,
+                      "V: камера игрока погашена (в вьюпорте ровно одна current)");
                 break;
             case 19:
+                // V второй раз: возврат к дефолтному виду «из глаз».
+                SendV();
+                break;
+            case 20:
+                Check(_player != null && _player.IsAttached,
+                      "V повторно: игрок всё ещё пристёгнут");
+                Check(_ship != null && GetViewport()?.GetCamera3D() == _player?.GetActiveCamera(),
+                      "V повторно: камера игрока снова активна в вьюпорте");
+                Check(_ship != null && _ship.GetNodeOrNull<Camera3D>("ChaseCamera") == null,
+                      "V повторно: chase-камера удалена");
+                break;
+            case 21:
+                // F: отстегнуться.
+                SendF();
+                break;
+            case 22:
+                Check(_player != null && !_player.IsAttached, "F: игрок отстёгнут");
+                Check(_player != null && _player.GetParent() == _main,
+                      "F: игрок вернулся в мировой корень Main");
+                Check(_ship != null && _ship.GetNodeOrNull<Camera3D>("ChaseCamera") == null,
+                      "F: у отстёгнутого корабля chase-камеры нет");
+                break;
+            case 23:
                 var attachBtn = FindButton(_layer.GetNode<VBoxContainer>("DebugRoot/DebugPanel/VBox/Scroll/Buttons"),
                                            "Attach Player to Seat");
                 Check(attachBtn != null, "Player зарегистрировал кнопку «Attach Player to Seat»");
                 attachBtn?.EmitSignal(BaseButton.SignalName.Pressed);
                 break;
-            case 20:
+            case 24:
                 var seat = _ship?.GetNodeOrNull<AttachPoint>("ShipHull/AttachPoints/Seat");
                 Check(_player != null && _player.IsAttached && _player.AttachedTo == seat,
-                      "повторная пристёжка работает (игрок снова в кресле)");
+                      "пристёжка кнопкой работает (игрок в кресле)");
                 Check(_player != null && seat != null &&
                       _player.Position.DistanceTo(seat.PlayerOffset) < 0.001f,
                       $"пристёгнутый игрок стоит в позе точки (локально {_player?.Position})");
                 break;
+
             case 25:
                 // Этап 6 (режим «жидкого космоса»): после импульса и отпуска клавиш
                 // пилот-ассист (по умолчанию ВКЛ) гасит скорость тем же ускорением,
@@ -425,6 +481,122 @@ public partial class Stage1Test : Node
                 // на паузе физика не шагает: положение корабля замирает
                 _shipFrozenPos = _ship?.GlobalPosition ?? Vector3.Zero;
                 break;
+
+            // --- ЭТАП 7: типы кораблей (три примитивных корпуса + полётная
+            // модель из отдельного каталога ShipStatCatalog, выбор через
+            // дебаг-панель). Offline-игрок пристёгнут = локальный пилот,
+            // авторитет тот же пир — кнопка применяет тип синхронно.
+            case 30:
+                if (_ship is Ship shipType)
+                {
+                    var typeButtons = _layer.GetNode<VBoxContainer>(
+                        "DebugRoot/DebugPanel/VBox/Scroll/Buttons");
+                    Check(FindButton(typeButtons, "ShipType: Courier (курьер)") != null &&
+                          FindButton(typeButtons, "ShipType: Hauler (грузовик)") != null &&
+                          FindButton(typeButtons, "ShipType: Container Freighter (контейнеровоз)") != null,
+                          "в дебаг-панели есть все три кнопки выбора типа корабля");
+                    Check(ShipStatCatalog.DefaultShip.Type == ShipType.Courier,
+                          "тип корабля по умолчанию — Courier");
+                    Check(Mathf.IsEqualApprox(_ship.Mass, 1200f) &&
+                          Mathf.IsEqualApprox(shipType.Flight.Mass, 1200f) &&
+                          Mathf.IsEqualApprox(shipType.Flight.LinearThrust, 90000f),
+                          $"спавн по умолчанию = курьер: mass = {_ship.Mass:F0}, " +
+                          $"thrust = {shipType.Flight.LinearThrust:F0}");
+                    Check(_ship.GetNode<CollisionShape3D>("CollisionShape3D").Shape
+                              is BoxShape3D courierBox &&
+                          courierBox.Size == new Vector3(2f, 1f, 4f),
+                          "коллайдер курьера — 2×1×4 (каталог)");
+                    FindButton(typeButtons, "ShipType: Hauler (грузовик)")?
+                        .EmitSignal(BaseButton.SignalName.Pressed);
+                }
+                break;
+
+            case 31:
+                if (_ship is Ship s31)
+                {
+                    // Характеристики полётной модели берутся из каталога (пустой
+                    // loadout → Flight == база типа): у грузовика они другие.
+                    Check(Mathf.IsEqualApprox(_ship.Mass, 5200f),
+                          $"грузовик: масса тела = {_ship.Mass:F0} кг (каталог 5200)");
+                    // Макс. линейную скорость проверять тут нельзя: на этом
+                    // корабле уже стоят движки Mk1/Mk2 (кейсы 12–13), и по
+                    // семантике Этапа 6 мнение модуля перезаписывает базовый
+                    // лимит корпуса. Берём параметр базы, который модули не
+                    // трогают: угловое демпфирование каталога (1,0).
+                    Check(Mathf.IsEqualApprox(s31.Flight.LinearThrust, 150000f) &&
+                          Mathf.IsEqualApprox(s31.Flight.AngularThrust, 75000f) &&
+                          Mathf.IsEqualApprox(s31.Flight.MaxAngularSpeed, 2.2f) &&
+                          Mathf.IsEqualApprox(s31.Flight.AngularDamping, 1.0f),
+                          $"грузовик: Flight из каталога (thrust = " +
+                          $"{s31.Flight.LinearThrust:F0}, ωmax = {s31.Flight.MaxAngularSpeed:F1}, " +
+                          $"ωdamp = {s31.Flight.AngularDamping:F1})");
+                    // Время отклика на руль (Q/E) тоже едет из каталога до живого
+                    // Flight: мост Loadout.Build поле не трогает, база целая.
+                    Check(s31.Flight.AngularRiseTime > 0f,
+                          $"грузовик: AngularRiseTime из каталога дожил до Flight " +
+                          $"({s31.Flight.AngularRiseTime:F2} с)");
+                    Check(_ship.GetNode<CollisionShape3D>("CollisionShape3D").Shape
+                              is BoxShape3D haulerBox &&
+                          haulerBox.Size == new Vector3(3.5f, 2.5f, 8f),
+                          "грузовик: коллайдер перестроен под габариты корпуса");
+                    Check(_ship.GetNode<MeshInstance3D>("ShipHull/Hull").Mesh
+                              is BoxMesh haulerMesh &&
+                          haulerMesh.Size == new Vector3(3.5f, 2.5f, 8f),
+                          "грузовик: картинка корпуса = те же габариты, что коллайдер");
+                    var acc31 = _ship.GetNodeOrNull<Node3D>("ShipHull/HullAccessories");
+                    Check(acc31 != null && acc31.GetChildCount() == 2,
+                          $"грузовик: навесы силуэта пересобраны (получено {acc31?.GetChildCount() ?? -1})");
+                    Check(_ship.GetNode<MeshInstance3D>("ShipHull/Hull").MaterialOverride
+                              is StandardMaterial3D haulerMat &&
+                          haulerMat.AlbedoColor.B < 0.4f,
+                          "грузовик: корпус перекрашен (оранжевый: B = " +
+                          $"{(_ship.GetNode<MeshInstance3D>("ShipHull/Hull").MaterialOverride as StandardMaterial3D)?.AlbedoColor.B:F2})");
+                    FindButton(_layer.GetNode<VBoxContainer>(
+                            "DebugRoot/DebugPanel/VBox/Scroll/Buttons"),
+                        "ShipType: Container Freighter (контейнеровоз)")
+                        ?.EmitSignal(BaseButton.SignalName.Pressed);
+                }
+                break;
+
+            case 32:
+                if (_ship is Ship s32)
+                {
+                    // Контейнеровоз: «чуть больше среднего и тоже неповоротливый».
+                    Check(Mathf.IsEqualApprox(_ship.Mass, 10000f),
+                          $"контейнеровоз: масса тела = {_ship.Mass:F0} кг (каталог 10000)");
+                    Check(Mathf.IsEqualApprox(s32.Flight.LinearThrust, 160000f) &&
+                          Mathf.IsEqualApprox(s32.Flight.AngularThrust, 110000f) &&
+                          Mathf.IsEqualApprox(s32.Flight.AngularDamping, 2.2f) &&
+                          Mathf.IsEqualApprox(s32.Flight.MaxAngularSpeed, 1.2f),
+                          $"контейнеровоз: Flight из каталога (thrust = " +
+                          $"{s32.Flight.LinearThrust:F0}, ωmax = {s32.Flight.MaxAngularSpeed:F1})");
+                    Check(_ship.GetNode<CollisionShape3D>("CollisionShape3D").Shape
+                              is BoxShape3D freighterBox &&
+                          freighterBox.Size == new Vector3(5f, 3.5f, 14f),
+                          "контейнеровоз: коллайдер 5×3.5×14 (крупнее грузовика)");
+                    FindButton(_layer.GetNode<VBoxContainer>(
+                            "DebugRoot/DebugPanel/VBox/Scroll/Buttons"),
+                        "ShipType: Courier (курьер)")
+                        ?.EmitSignal(BaseButton.SignalName.Pressed);
+                }
+                break;
+
+            case 33:
+                // Смена не в одну сторону: обратный переход к курьеру обязан
+                // вернуть и характеристики, и габариты, и массу.
+                if (_ship is Ship s33)
+                {
+                    Check(Mathf.IsEqualApprox(_ship.Mass, 1200f) &&
+                          Mathf.IsEqualApprox(s33.Flight.LinearThrust, 90000f) &&
+                          Mathf.IsEqualApprox(s33.Flight.MaxAngularSpeed, 6f),
+                          $"обратная смена вернула курьера: mass = {_ship.Mass:F0}, " +
+                          $"thrust = {s33.Flight.LinearThrust:F0}");
+                    Check(_ship.GetNode<CollisionShape3D>("CollisionShape3D").Shape
+                              is BoxShape3D backBox && backBox.Size == new Vector3(2f, 1f, 4f),
+                          "обратная смена: коллайдер снова 2×1×4");
+                }
+                break;
+
             case 39:
                 var p = _ship?.GlobalPosition ?? Vector3.Zero;
                 Check(p.DistanceTo(_shipFrozenPos) < 0.0001f,
@@ -469,6 +641,44 @@ public partial class Stage1Test : Node
         {
             Keycode = Key.F3,
             PhysicalKeycode = Key.F3,
+            Pressed = false,
+        });
+    }
+
+    /// <summary>V (действие `toggle_pilot_camera`): смена вида пилота «из глаз» ⇄
+    /// chase. PushInput — те же реальные события, что у живого игрока.</summary>
+    private void SendV()
+    {
+        GetViewport().PushInput(new InputEventKey
+        {
+            Keycode = Key.V,
+            PhysicalKeycode = Key.V,
+            Pressed = true,
+            Echo = false,
+        });
+        GetViewport().PushInput(new InputEventKey
+        {
+            Keycode = Key.V,
+            PhysicalKeycode = Key.V,
+            Pressed = false,
+        });
+    }
+
+    /// <summary>F (действие `detach`): отстегнуться от кресла. Те же реальные
+    /// события, что у живого игрока (added 2026-08).</summary>
+    private void SendF()
+    {
+        GetViewport().PushInput(new InputEventKey
+        {
+            Keycode = Key.F,
+            PhysicalKeycode = Key.F,
+            Pressed = true,
+            Echo = false,
+        });
+        GetViewport().PushInput(new InputEventKey
+        {
+            Keycode = Key.F,
+            PhysicalKeycode = Key.F,
             Pressed = false,
         });
     }

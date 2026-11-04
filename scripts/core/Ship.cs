@@ -203,6 +203,125 @@ public partial class Ship : RigidBody3D
     /// </summary>
     private FlightParams _baseFlight;
 
+    // ─────────────────── Тип корабля (курьер / грузовик / контейнеровоз) ──────
+    // Характеристики полётной модели каждого типа лежат в общем каталоге
+    // ShipStatCatalog (scripts/core/ShipTypes.cs) — их наполняют дизайнеры, код
+    // корабля их не знает. При спавне Ship берёт запись по типу из реплики
+    // NetState.ShipTypeValue (по умолчанию Courier) и строит из неё массу тела,
+    // _baseFlight и вид корпуса. Смена типа во время полёта — только через
+    // RequestShipType (дебаг-панель локального пилота → RPC → сервер).
+
+    /// <summary>Тип корабля (истина этой копии: у сервера — что он записал,
+    /// у пиров — что приехала реплика).</summary>
+    public ShipType ShipType => _shipType;
+    private ShipType _shipType = ShipStatCatalog.DefaultType;
+    /// <summary>Активная запись каталога для текущего типа.</summary>
+    private ShipTypeSpec _shipTypeSpec = ShipStatCatalog.Find(ShipStatCatalog.DefaultType);
+    /// <summary>Последний увиденный байт реплики типа (255 = ещё не видел).
+    /// OnChange-дельта меняет свойство без callback — сравниваем байт, как в
+    /// PollAssistReplica.</summary>
+    private byte _lastShipTypeReplica = 255;
+
+    /// <summary>Применить запись каталога к ТЕЛУ, корпусу и базе полёта этой
+    /// копии. Идемпотентна; вызывается при спавне и при каждой смене типа.</summary>
+    private void ApplyShipTypeSpec(ShipTypeSpec spec, bool fromExportCeiling)
+    {
+        _shipType = spec.Type;
+        _shipTypeSpec = spec;
+
+        // Масса тела (RigidBody3D): импульсы, отскоки, тараны (этапы 4/5).
+        Mass = spec.Mass;
+        // Момент инерции — по форме коробки каталога (Godot ждёт главные оси
+        // вектором); иначе у «среднего» корпуса инерция осталась бы курьерская.
+        float hx = spec.HullSize.X, hy = spec.HullSize.Y, hz = spec.HullSize.Z;
+        float ixx = spec.Mass * (hy * hy + hz * hz) / 12f;
+        float iyy = spec.Mass * (hx * hx + hz * hz) / 12f;
+        float izz = spec.Mass * (hx * hx + hy * hy) / 12f;
+        Inertia = new Vector3(ixx, iyy, izz);
+
+        // Примитивный корпус: габариты — и у коллизии, и у картинки (провалить
+        // меш сквозь коллизию нельзя), цвет — из каталога. Узлы переиспользуют
+        // созданные в сцене (Ship.tscn), если они уже есть.
+        var collision = GetNodeOrNull<CollisionShape3D>("CollisionShape3D");
+        if (collision?.Shape is BoxShape3D box)
+            box.Size = spec.HullSize;
+        var hull = GetNodeOrNull<MeshInstance3D>("ShipHull/Hull");
+        if (hull?.Mesh is BoxMesh bm)
+            bm.Size = spec.HullSize;
+        if (hull != null)
+        {
+            if (hull.MaterialOverride is not StandardMaterial3D mat)
+            {
+                mat = new StandardMaterial3D();
+                hull.MaterialOverride = mat;
+            }
+            mat.AlbedoColor = spec.HullColor;
+        }
+        // Ствол — срез носа: при смене корпуса смещаем Muzzle на новый нос.
+        var muzzle = GetNodeOrNull<Node3D>("Muzzle");
+        if (muzzle != null)
+            muzzle.Position = new Vector3(0f, 0f, -spec.HullSize.Z * 0.5f);
+        // Навесные примитивы силуэта (только картинка): пересобираем с нуля —
+        // их набор зависит от типа (контейнеры, груз, кили). Узел-обёртка живёт
+        // под ShipHull, сами меш-инстансы пересоздаются при каждой смене типа.
+        RebuildHullAccessories(spec);
+
+        // Посадочная точка — на крыше корпуса (иначе игрок провалится в трюм).
+        var seat = GetNodeOrNull<Node3D>("ShipHull/AttachPoints/Seat");
+        if (seat != null)
+            seat.Position = new Vector3(0f, spec.HullSize.Y * 0.5f, 0.2f);
+
+        // Потолок угловой скорости корпуса (экспорт до _Ready — см. MakeBaseFlight).
+        if (!fromExportCeiling)
+            MaxAngularSpeed = spec.Base.MaxAngularSpeed;
+
+        LinearDamp = spec.Base.LinearDamping;
+        AngularDamp = spec.Base.AngularDamping;
+    }
+
+    /// <summary>Пересобрать навесные примитивы силуэта корпуса (чистая картинка,
+    /// без коллизий). Обёртка `HullAccessories` под `ShipHull` создаётся по мере
+    /// надобности; содержимое выбрасывается целиком — набор зависит от типа.</summary>
+    private void RebuildHullAccessories(ShipTypeSpec spec)
+    {
+        var hull = GetNodeOrNull<Node3D>("ShipHull");
+        if (hull == null)
+            return;
+        var wrap = hull.GetNodeOrNull<Node3D>("HullAccessories");
+        if (wrap == null)
+        {
+            wrap = new Node3D { Name = "HullAccessories" };
+            hull.AddChild(wrap);
+        }
+        foreach (Node child in wrap.GetChildren())
+            child.QueueFree();
+        for (int i = 0; i < spec.Accessories.Length; i++)
+        {
+            var (offset, size, color) = spec.Accessories[i];
+            var mi = new MeshInstance3D
+            {
+                Name = $"Accessory{i}",
+                Mesh = new BoxMesh { Size = size },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = color },
+                Position = offset,
+            };
+            wrap.AddChild(mi);
+        }
+    }
+
+    /// <summary>Установить тип этой копии локально (спавн/применение реплики):
+    /// записать тип + спецификацию, применить к телу/корпусу, пересобрать базу.</summary>
+    private void SetShipTypeLocal(ShipTypeSpec spec, bool fromExportCeiling = false)
+    {
+        ApplyShipTypeSpec(spec, fromExportCeiling);
+        _baseFlight = spec.Base;
+        if (fromExportCeiling)
+            _baseFlight.MaxAngularSpeed = MaxAngularSpeed; // экспорт до _Ready (тест п.12)
+        else
+            _baseFlight.MaxAngularSpeed = spec.Base.MaxAngularSpeed;
+        RebuildFlight();
+    }
+
     /// <summary>
     /// Максимальная угловая скорость корабля, рад/с (модуль `AngularVelocity` —
     /// т.е. ограничена и каждая ось, и любая комбинация: тангаж, рыскание, крен).
@@ -505,6 +624,10 @@ public partial class Ship : RigidBody3D
     private DebugButtonHandle? _interpHandle;
     private DebugButtonHandle? _godHandle;
     private DebugButtonHandle? _assistHandle;
+    /// <summary>Кнопки выбора типа корабля (по одной на запись каталога) — тоже
+    /// по ручкам этого корабля, см. комментарий к _nudgeHandle.</summary>
+    private readonly DebugButtonHandle?[] _typeHandles =
+        new DebugButtonHandle?[ShipStatCatalog.Types.Length];
 
     /// <summary>Зарегистрированы ли кнопки этого корабля (BuildDebugButtons уже
     /// отработал). `ApplyPilot` вызывается и внутри `_Ready()` — до регистрации, —
@@ -519,6 +642,9 @@ public partial class Ship : RigidBody3D
     /// тот корабль: в мире два корабля, у каждого своя «Nudge Ship», а тест ищет
     /// кнопку по тексту и берёт первую найденную.</summary>
     private bool? _debugButtonsAuthority;
+    /// <summary>Пир-пилот, под которого собраны кнопки (смена пилота меняет
+    /// набор: кнопки ассиста и выбора типа корабля — только локальному пилоту).</summary>
+    private int _debugButtonsPilot = -1;
     /// <summary>Состояние окна, которое пилотирование временно перехватывает:
     /// режим мыши и включён ли ввод у узла. Возвращаем при освобождении.</summary>
     private Input.MouseModeEnum _prevMouseMode = Input.MouseModeEnum.Visible;
@@ -791,6 +917,87 @@ public partial class Ship : RigidBody3D
         OnAssistReplica(Net.PilotAssist != 0);
     }
 
+    // ─────────────── Смена типа корабля (дебаг: три пресета корпуса) ─────────
+    // Тот же путь, что у PilotAssist, но без кадровой предикции: смена типа —
+    // редкое дебаг-событие, его последствия (масса, тяги, габариты) применяются
+    // сервером сразу и приезжают репликой; локальный пилот-клиент предсказывает
+    // мгновенно, а сверка по байту реплики откатит его в случае отказа.
+
+    /// <summary>Запросить тип корабля (дебаг-панель локального пилота).
+    /// Offline/host — применяем сразу; пилот-клиент — предсказание + RPC.</summary>
+    public void RequestShipType(ShipType type)
+    {
+        if (!IsLocalPilot)
+        {
+            GD.PrintErr($"ship: RequestShipType({type}) — локальный игрок не пилот " +
+                        $"этого корабля (pilot = {PilotPeerId}) — отказ");
+            return;
+        }
+        if (Net == null)
+        {
+            // Offline-корпус без NetState: применяем локально (нет реплики).
+            ApplyShipTypeSpec(ShipStatCatalog.Find(type), fromExportCeiling: false);
+            _baseFlight = _shipTypeSpec.Base;
+            RebuildFlight();
+            return;
+        }
+        if (HasAuthority)
+        {
+            ApplyServerShipType((byte)type);
+            return;
+        }
+        // Пилот-клиент: БЕЗ предсказания (в отличие от PilotAssist). Смена типа —
+        // дебаг-событие: предсказывать тут нечего, а откатывать предсказание при
+        // отказе сервера было бы дороже, чем один RTT ожидания реплики — тип
+        // приедет OnChange-дельтой и применится у всех пиров за один шаг опроса.
+        RpcSetShipTypeRpc((byte)type);
+    }
+
+    /// <summary>Серверный приём смены типа от пилота. Гейт и транспорт — как у
+    /// RpcTogglePilotAssistRpc: только пилот, надёжный канал 1.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcSetShipTypeRpc(byte typeValue)
+    {
+        int sender = Multiplayer.GetRemoteSenderId();
+        if (sender != PilotPeerId)
+        {
+            GD.PrintErr($"ship: RpcSetShipType от пира {sender}, а пилот = " +
+                        $"{PilotPeerId} — отказ (не пилот не меняет тип корабля)");
+            return; // отказ: реплика не меняется, клиент откатится по PollShipTypeReplica
+        }
+        ApplyServerShipType(typeValue);
+    }
+
+    /// <summary>Серверная истина: записать тип в реплику и применить к себе
+    /// (реплика разойдётся по пирам сама, spawn + OnChange).</summary>
+    private void ApplyServerShipType(byte typeValue)
+    {
+        var spec = ShipStatCatalog.FindByByte(typeValue);
+        if (typeValue != (byte)spec.Type)
+            GD.PrintErr($"ship: неизвестный байт типа {typeValue} — применяем " +
+                        $"{spec.DisplayName} (запись каталога по умолчанию)");
+        if (Net == null) return;
+        Net.ShipTypeValue = (byte)spec.Type;
+        if (HasAuthority && _shipType != spec.Type)
+            SetShipTypeLocal(spec); // сервер: масса/корпус/база полёта сразу
+    }
+
+    /// <summary>Опросить байт реплики типа и применить смену у не-авторитета.
+    /// Паттерн PollAssistReplica: OnChange-дельта приходит молча (свойство
+    /// изменилось без события), сверка байта — копейки за физшаг.</summary>
+    private void PollShipTypeReplica()
+    {
+        if (Net == null || Net.ShipTypeValue == _lastShipTypeReplica)
+            return;
+        _lastShipTypeReplica = Net.ShipTypeValue;
+        // Ложной «смены на спавне» тут не бывает: _Ready уже применил тип из
+        // спавн-снимка и запомнил байт как виденный, так что в опрос попадает
+        // только настоящая смена сервера.
+        if (_shipType != (ShipType)Net.ShipTypeValue)
+            SetShipTypeLocal(ShipStatCatalog.FindByByte(Net.ShipTypeValue));
+    }
+
     /// <summary>Клавиша T (`toggle_pilot_assist`): переключение пилот-ассиста.
     /// Берёт только локальный пилот этого корабля — `RequestTogglePilotAssist`
     /// сам отклоняет не-пилота, но проверку делаем ДО вызова, чтобы в сцене с
@@ -892,27 +1099,36 @@ public partial class Ship : RigidBody3D
         // сдвинуть (пробуждение по импульсу есть, а по нашей тяге — нет).
         CanSleep = false;
 
-        // Параметры корпуса (масса/демпфирование) + комплектация модулями
-        // (Этап 6): тяга, лимиты и форсаж теперь приходят из Loadout.Build —
-        // единственный источник скоростных характеристик корабля. Базовые тяги
-        // (90 кН / 40 кН·м при массе 1200 кг) остаются в base как «мнение корпуса
-        // без модулей»: пустой loadout даёт побитово прежние числа (тест п.11).
-        _baseFlight = new FlightParams
+        // Тип корабля и его характеристики из общего каталога ShipStatCatalog
+        // (требование: набор характеристик полётной модели хранится ОТДЕЛЬНО от
+        // кода корабля — его наполняют и балансят дизайнеры). Тип берётся из
+        // реплики NetState.ShipTypeValue: у сервера-спавнера это значение до
+        // AddChild, у пиров — спавн-снимок репликации (spawn=true). Байт
+        // неизвестный/отсутствующий → Courier (значение по умолчанию задачи).
+        //
+        // Net читаем ДО построения _baseFlight: характеристики типа определяют
+        // и массу тела, и базу полётной модели, и вид корпуса.
+        Net = GetNodeOrNull<NetState>("NetState");
+        _lastShipTypeReplica = Net?.ShipTypeValue ?? 255;
+        // Экспорт MaxAngularSpeed, заданный ДО AddChild (шов теста п.12 стадии 2:
+        // настройка корабля в сцене/кодом должна доживать до Flight). Он значим
+        // только для типа по умолчанию (Courier — тип сцены); для остальных
+        // говорит каталог. Снимаем экспорт ДО применения спека (тот перезапишет).
+        bool exportCeiling = Net == null || Net.ShipTypeValue == (byte)ShipType.Courier;
+        float exportCeilingValue = MaxAngularSpeed;
+        SetShipTypeLocal(ShipStatCatalog.FindByByte(Net?.ShipTypeValue
+                                                   ?? (byte)ShipType.Courier),
+                         fromExportCeiling: false);
+        if (exportCeiling && exportCeilingValue != 6f)
         {
-            Mass = Mass,
-            LinearThrust = 90000f,
-            AngularThrust = 40000f,
-            LinearDamping = LinearDamp,   // 0 → инерция сохраняется (тест этапа 1)
-            AngularDamping = AngularDamp, // 1.5 → вращение гаснет само
-            BoostMultiplier = 2f,
-            MaxAngularSpeed = MaxAngularSpeed, // потолок угловой скорости корпуса
-        };
+            // Ненулевая настройка в сцене/кодом приоритетнее каталога для Courier.
+            MaxAngularSpeed = exportCeilingValue;
+            _baseFlight.MaxAngularSpeed = exportCeilingValue;
+        }
         RebuildFlight();
 
         CollisionLayer = CollisionLayers.Ship;
         CollisionMask = CollisionLayers.ShipMask;
-
-        Net = GetNodeOrNull<NetState>("NetState");
         // Шаг 3.3: ствол — начало визуального луча (Ship.tscn: Muzzle, pos (0,0,-2)).
         _muzzle = GetNodeOrNull<Node3D>("Muzzle");
         // Этап 4, шаг 4.7: форма корпуса для IntersectShape-запроса контакта со
@@ -1030,11 +1246,27 @@ public partial class Ship : RigidBody3D
         // offline-хосту с авторитетом и клиенту-пилоту). Не-пилоту кнопки нет:
         // флаг — право пилота, кнопка только сбила бы его запросом-отказом.
         if (IsLocalPilot)
+        {
             _assistHandle = DebugInfoBus.RegisterDebugButton(
                 "Toggle Pilot Assist (T)", RequestTogglePilotAssist);
 
+            // Тип корабля (дебаг-выбор из трёх пресетов): локальному пилоту —
+            // по кнопке на каждый тип каталога. Запрос идёт через RequestShipType
+            // (гейт пилота на сервере), поэтому кнопка дублирует разрешение, а
+            // не обходит его. Регистрация — по ручкам этого корабля (как у
+            // _nudgeHandle): метки кнопок не различают корабли.
+            for (int i = 0; i < ShipStatCatalog.Types.Length; i++)
+            {
+                var spec = ShipStatCatalog.Types[i];
+                ShipType captured = spec.Type; // захват в замыкание (цикловая переменная)
+                _typeHandles[i] = DebugInfoBus.RegisterDebugButton(
+                    $"ShipType: {spec.DisplayName}", () => RequestShipType(captured));
+            }
+        }
+
         _debugButtonsBuilt = true;
         _debugButtonsAuthority = HasAuthority;
+        _debugButtonsPilot = PilotPeerId;
     }
 
     /// <summary>Снять СОБСТВЕННЫЕ кнопки корабля (по ручкам). Массовое снятие по
@@ -1047,6 +1279,11 @@ public partial class Ship : RigidBody3D
         DebugInfoBus.RemoveDebugButton(_teleportHandle); // 5.12: снимаем по ручке (не задев чужие)
         DebugInfoBus.RemoveDebugButton(_interpHandle);
         DebugInfoBus.RemoveDebugButton(_assistHandle); // Этап 6: кнопка ассиста
+        for (int i = 0; i < _typeHandles.Length; i++)
+        {
+            DebugInfoBus.RemoveDebugButton(_typeHandles[i]); // выбор типа корабля
+            _typeHandles[i] = null;
+        }
         _nudgeHandle = null;
         _godHandle = null;
         _teleportHandle = null;
@@ -1060,6 +1297,11 @@ public partial class Ship : RigidBody3D
         // этот узел, и после освобождения корабля (DespawnShip, §3.9 п.16) шина
         // звала бы мёртвую лямбду каждый кадр → ObjectDisposedException (§3.11 п.9).
         DebugInfoBus.RemoveInfoSource($"Ship#{Net?.ShipNetId ?? 0}");
+        // added 2026-08: узел уходит — глушить chase-камеру и отпускать мышь
+        // нужно и при удалении корабля пилотом: иначе current-камера игрока,
+        // погашенная при V, так и осталась бы погашенной без владельца.
+        ReleaseChaseCamera();
+        ReleasePilotInput();
         // Кнопки — только свои, по ручкам (BUG-008-рецидив): снятие по метке задевает
         // кнопки других кораблей (у них та же метка законно). Ручки покрывают и
         // «страховку» из баг-листа: отложенная заявка в _pendingButtons убирается
@@ -1118,7 +1360,12 @@ public partial class Ship : RigidBody3D
         // пилот авторитет не получает (§3.5 п.8), так что обычная пристёжка/отстёжка
         // набор не меняет. Пересборка «на всякий случай» переставляла кнопку в
         // конец панели и ломала автотест инерции (Stage1Test п.25).
-        if (_debugButtonsBuilt && _debugButtonsAuthority != HasAuthority)
+        // Кнопки пилота (ассист, выбор типа корабля) существуют только для
+        // ЛОКАЛЬНОГО пилота — значит смена пилота сама по себе меняет набор,
+        // даже когда авторитет не менялся (В14=B). Держим роль под руками:
+        // сравнение с прежним пиром дешевле, чем пересборка на всякий случай.
+        if (_debugButtonsBuilt && (_debugButtonsAuthority != HasAuthority
+                                   || _debugButtonsPilot != PilotPeerId))
             BuildDebugButtons();
 
         GD.Print($"ship#{Net?.ShipNetId ?? 0}: pilot -> {peerId}, " +
@@ -1189,15 +1436,19 @@ public partial class Ship : RigidBody3D
         SetProcessInput(IsLocalPilot);
         if (!IsLocalPilot)
         {
+            // Роли локального пилота нет: ни ввода, ни камеры; режим вида сбрасываем.
             ReleaseChaseCamera();
-            ReleaseMouseCatcher();
+            ReleasePilotInput();
+            _pilotChaseView = false;
         }
         else
         {
             // Пилот уже здесь (например, роль сменилась Offline → Host, а корабль
-            // был создан до смены): сборщик мыши и камера нужно и в этом случае.
-            EnsureMouseCatcher();
-            EnsureChaseCamera();
+            // был создан до смены): сборщик мыши нужен и в этом случае.
+            EnsurePilotInput();
+            // Камера: по умолчанию — вид «из глаз» пристёгнутого пилота (его
+            // Camera3D), chase-камера включается только по V (added 2026-08).
+            ApplyPilotCamera();
         }
     }
 
@@ -2722,6 +2973,11 @@ public partial class Ship : RigidBody3D
         // свойство без callback — сравниваем байт, как страж сравнивает SimTick.
         PollAssistReplica();
 
+        // Тип корабля (дебаг-пресеты корпуса): тот же опрос байта реплики. При
+        // смене пересобираются масса тела, габариты/цвет корпуса и _baseFlight —
+        // следующие предсказания пилота пойдут уже с новыми характеристиками.
+        PollShipTypeReplica();
+
         // Пилот-клиент (не-авторитет, В14=B): каждый физшаг собирает кадр ввода,
         // кладёт его в кольцевой буфер, шлёт серверу И тут же интегрирует им своё
         // предсказание, а тело (вместе с картинкой и камерой — они дети тела)
@@ -3394,6 +3650,15 @@ public partial class Ship : RigidBody3D
     /// </summary>
     private void EnsureChaseCamera()
     {
+        // Запоминаем текущую камеру ДО момента, когда chase-камера войдёт в дерево:
+        // в Godot присвоение Current = true в момент AddChild переключает вьюпорт на
+        // неё, и afterward GetCamera3D() вернёт уже её — освобождать было бы нечего
+        // (bug found 2026-08 при переходе на посадку по V: после отстёжки в вьюпорте
+        // не оставалось активной камеры — камера игрока «гаслась» вьюпортом
+        // автоматически и обратно уже не включалась).
+        if (_chaseCam == null && (_silencedCam == null || !GodotObject.IsInstanceValid(_silencedCam)))
+            _silencedCam = GetViewport()?.GetCamera3D();
+
         if (_chaseCam == null)
         {
             _chaseCam = new Camera3D
@@ -3415,16 +3680,64 @@ public partial class Ship : RigidBody3D
         }
 
         // Камера игрока: гасим, чтобы она не спорила с камерой корабля.
-        if (_silencedCam == null || !GodotObject.IsInstanceValid(_silencedCam))
-            _silencedCam = GetViewport()?.GetCamera3D() == _chaseCam
-                ? null
-                : GetViewport()?.GetCamera3D();
-        if (_silencedCam != null && _silencedCam != _chaseCam)
+        if (_silencedCam == _chaseCam)
+            _silencedCam = null;
+        if (_silencedCam != null && GodotObject.IsInstanceValid(_silencedCam))
             _silencedCam.Current = false;
+    }
 
-        // Захват мыши: режим ставим ТОЛЬКО когда его ещё не перехватывали, и
-        // обязательно возвращаем прежний при освобождении (иначе после выхода из
-        // корабля курсор исчезнет навсегда).
+    /// <summary>Отдать камеру обратно: у корабля больше нет локального пилота либо
+    /// пилот перешёл в вид «из глаз» (V, added 2026-08).</summary>
+    private void ReleaseChaseCamera()
+    {
+        if (_chaseCam != null && GodotObject.IsInstanceValid(_chaseCam))
+        {
+            _chaseCam.Current = false;
+            _chaseCam.QueueFree();
+            _chaseCam = null;
+        }
+        if (_silencedCam != null && GodotObject.IsInstanceValid(_silencedCam))
+            _silencedCam.Current = true;
+        _silencedCam = null;
+    }
+
+    // ─── Вид пилота: «из глаз» ⇄ chase (V, added 2026-08) ────────────────────
+
+    /// <summary>Локальный режим вида этого пилота (не сетевой: у каждого пира он
+    /// свой, как и сама chase-камера). false = «из глаз» (камера игрока, дефолт
+    /// пристёгнутого пилота), true = chase за кормой.</summary>
+    private bool _pilotChaseView;
+
+    /// <summary>Клавиша V локально: переключить вид пилота «из глаз» ⇄ chase.
+    /// Вызывается только локальным игроком (Player) по действию
+    /// `toggle_pilot_camera` — по сети ничего не летит.</summary>
+    public void TogglePilotCamera()
+    {
+        if (!IsLocalPilot)
+            return;
+        _pilotChaseView = !_pilotChaseView;
+        ApplyPilotCamera();
+        GD.Print($"ship#{Net?.ShipNetId ?? 0}: вид пилота → " +
+                 (_pilotChaseView ? "chase" : "из глаз"));
+    }
+
+    /// <summary>Привести вьюпорт к выбранному виду: chase — создать камеру и
+    /// погасить чужую; «из глаз» — убрать chase и вернуть чужую (камеру игрока).</summary>
+    private void ApplyPilotCamera()
+    {
+        if (_pilotChaseView)
+            EnsureChaseCamera();
+        else
+            ReleaseChaseCamera();
+    }
+
+    /// <summary>Завести ввод пилота: сборщик мыши + захват курсора + режим Pilot.
+    /// Мышь ставим ТОЛЬКО когда её ещё не перехватывали, и обязательно возвращаем
+    /// прежний режим при отпускании (иначе после выхода из корабля курсор исчезнет
+    /// навсегда).</summary>
+    private void EnsurePilotInput()
+    {
+        EnsureMouseCatcher();
         if (!_capturedInput)
         {
             _capturedInput = true;
@@ -3437,20 +3750,11 @@ public partial class Ship : RigidBody3D
         }
     }
 
-    /// <summary>Отдать камеру и мыши обратно: корабль перестал пилотироваться
-    /// (пассажир, выход, смена авторитета, удаление узла).</summary>
-    private void ReleaseChaseCamera()
+    /// <summary>Отпустить ввод пилота: корабль перестал пилотироваться локально
+    /// (отстёжка F, выход, смена авторитета, удаление узла).</summary>
+    private void ReleasePilotInput()
     {
-        if (_chaseCam != null && GodotObject.IsInstanceValid(_chaseCam))
-        {
-            _chaseCam.Current = false;
-            _chaseCam.QueueFree();
-            _chaseCam = null;
-        }
-        if (_silencedCam != null && GodotObject.IsInstanceValid(_silencedCam))
-            _silencedCam.Current = true;
-        _silencedCam = null;
-
+        ReleaseMouseCatcher();
         if (_capturedInput)
         {
             _capturedInput = false;

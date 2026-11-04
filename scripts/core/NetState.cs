@@ -68,6 +68,17 @@ public partial class NetState : Node
     /// <summary>Пилот-ассист включён (<c>Loadout.PilotAssist</c>, 1 = ВКЛ).</summary>
     [Export] public byte PilotAssist { get; set; } = 1;
 
+    // ─────────────────── Тип корабля (три пресета полётной модели) ──────────
+    // Тип корабля (byte enum <c>ShipType</c>, 0 = Courier): по нему Ship при
+    // спавне берёт из ShipStatCatalog набор характеристик полётной модели,
+    // массу и вид корпуса. Пишет тип ТОЛЬКО сервер (по RPC локального пилота
+    // из дебаг-панели), транспорт — как у PilotAssist: OnChange-дельта +
+    // спавн-снимок для поздно зашедшего пира. Смена редкая (дебаг-кнопка),
+    // на трафик не влияет.
+
+    /// <summary>Тип корабля (<c>(ShipType)ShipTypeValue</c>), 0 = Courier.</summary>
+    [Export] public byte ShipTypeValue { get; set; } = (byte)ShipType.Courier;
+
     /// <summary>Адрес выдаёт НЕ этот узел: в сети номер назначает сервер до
     /// `AddChild` (§4 В4 п.3), иначе два пира выдали бы разные номера одному
     /// кораблю. В offline (`Role == Offline`, один процесс) адрес выдаёт
