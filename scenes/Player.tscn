@@ -25,4 +25,4 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 1.2)
 [node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=1766801107]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3233267, 0)
 current = true
-far = 400.0
+far = 4000.0

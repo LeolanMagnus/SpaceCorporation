@@ -418,6 +418,12 @@ public partial class NetworkManager : Node
             st.DockApproved = phase >= DockState.Approved && phase < DockState.Docked;
         }
         DebugInfoBus.Report($"dock: ship#{shipNetId} фаза -> {phase.ToString().ToLower()}");
+        DebugInfoBus.Report($"dock: ship#{shipNetId} фаза -> {phase.ToString().ToLower()}");
+        // H6 (hud-plan): событие «пристыкован» — в комм-лог HUD (один вызов на
+        // событие). Пока событие локальное (хост/сервер); у чистого клиента
+        // комм-лог об этом не узнает — RPC-рассылка событий будет позже.
+        if (phase == DockState.Docked)
+            HudEventBus.Report($"Docked at Station #{e.StationNetId} — 0 m");
         return true;
     }
 
@@ -1474,6 +1480,40 @@ public partial class NetworkManager : Node
             return;
         double rtt = peer.GetStatistic(ENetPacketPeer.PeerStatistic.RoundTripTime);
         parts.Add($"{id}={rtt:F0}ms");
+    }
+
+    /// <summary>Пинг до сервера (RTT), мс; -1 — соединения нет (offline/хост без
+    /// внешних пиров). Читает статистику ENet — не обнуляет счётчики (в отличие
+    /// от PopStatistic). Нужен HUD (Этап H6, левый верх).</summary>
+    public int PingMs
+    {
+        get
+        {
+            if (Multiplayer.MultiplayerPeer is not ENetMultiplayerPeer enet)
+                return -1;
+            // У клиента пир-сервер в GetPeers() не состоит — спрашиваем id = 1;
+            // на сервере — минимальный RTT среди подключённых клиентов.
+            int best = -1;
+            if (IsClient)
+            {
+                var peer = enet.GetPeer(1);
+                if (peer != null)
+                    best = (int)peer.GetStatistic(ENetPacketPeer.PeerStatistic.RoundTripTime);
+            }
+            else
+            {
+                foreach (long id in Multiplayer.GetPeers())
+                {
+                    var peer = enet.GetPeer((int)id);
+                    if (peer == null)
+                        continue;
+                    int rtt = (int)peer.GetStatistic(ENetPacketPeer.PeerStatistic.RoundTripTime);
+                    if (best < 0 || rtt < best)
+                        best = rtt;
+                }
+            }
+            return best;
+        }
     }
 
     /// <summary>Строка Net для панели и stdout (§2.7): роль, self, пиры, число

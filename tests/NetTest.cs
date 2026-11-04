@@ -340,6 +340,30 @@ public partial class NetTest : Node
         ship!.Net!.NetPosition = target;
         GD.Print("INFO  п.14: offline-часть: NetPosition изменён на " +
                  $"{ship.Net.NetPosition} — реплика второму пиру проверяется в сетевом стенде");
+
+        // ── Этап H4 (hud-plan.md §1): фракция ────────────────────────────────
+        // Спавнер пишет фракцию корабля ДО AddChild, значит уже в спавн-снимке
+        // пир видит Player. В конфиге корабля путь есть, транспорт — холодный
+        // статичный (spawn=true + OnChange, как ShipTypeValue).
+        var factionPath = new NodePath("NetState:FactionValue");
+        Check(cfg.HasProperty(factionPath) &&
+              cfg.PropertyGetSpawn(factionPath) &&
+              cfg.PropertyGetReplicationMode(factionPath) == SceneReplicationConfig.ReplicationMode.OnChange,
+              "H4: NetState:FactionValue в конфиге корабля со spawn=true и OnChange");
+        Check(ship.Net!.FactionValue == (byte)Faction.Player,
+              $"H4: заспавненный корабль имеет фракцию Player (получено {ship.Net.FactionValue})");
+        // Конфиг мишени (живой спавн мишени требует серверной роли — здесь
+        // проверяем сам ресурс: путь с subname и транспорт spawn+OnChange).
+        var tcfg = GD.Load<SceneReplicationConfig>("res://scenes/TargetReplication.tres");
+        Check(tcfg != null, "H4: TargetReplication.tres грузится");
+        if (tcfg != null)
+        {
+            var tfaction = new NodePath("TargetState:FactionValue");
+            Check(tcfg.HasProperty(tfaction) &&
+                  tcfg.PropertyGetSpawn(tfaction) &&
+                  tcfg.PropertyGetReplicationMode(tfaction) == SceneReplicationConfig.ReplicationMode.OnChange,
+                  "H4: TargetState:FactionValue в конфиге мишени со spawn=true и OnChange");
+        }
     }
 
     // ------------------------------------------------------------ п.15

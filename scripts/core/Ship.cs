@@ -1737,6 +1737,9 @@ public partial class Ship : RigidBody3D
                     health.DamageTakenCount++;
                     _lastCollisionTimeSec = nowSec;
                     _hasLastCollisionTime = true;
+                    // H6 (hud-plan): событие в комм-лог HUD — ровно один вызов
+                    // на событие, шина ничего не знает про UI.
+                    HudEventBus.Report($"Damage {dmg} — hull {health.Hp}/{health.MaxHp}");
                     GD.Print($"ship#{Net?.ShipNetId ?? 0}: урон {dmg} от станции " +
                              $"#{stationNetId} (|vn| = {Mathf.Abs(vn):F1} м/с), " +
                              $"Hp = {health.Hp}/{health.MaxHp}, ударов = {health.DamageTakenCount}");
@@ -3707,6 +3710,10 @@ public partial class Ship : RigidBody3D
     /// свой, как и сама chase-камера). false = «из глаз» (камера игрока, дефолт
     /// пристёгнутого пилота), true = chase за кормой.</summary>
     private bool _pilotChaseView;
+
+    /// <summary>Текущий вид локального пилота: true = chase за кормой,
+    /// false = «из глаз». Читает HUD (статус-бар, иконка CAM), пишет только V.</summary>
+    public bool PilotChaseView => _pilotChaseView;
 
     /// <summary>Клавиша V локально: переключить вид пилота «из глаз» ⇄ chase.
     /// Вызывается только локальным игроком (Player) по действию

@@ -1,8 +1,9 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/Environment.tscn" id="1_env"]
 [ext_resource type="PackedScene" path="res://scenes/TestStand.tscn" id="2_stand"]
 [ext_resource type="PackedScene" path="res://scenes/DebugLayer.tscn" id="5_debug"]
+[ext_resource type="PackedScene" path="res://scenes/HudLayer.tscn" id="7_hud"]
 [ext_resource type="Script" path="res://scripts/core/WorldSpawner.cs" id="6_spawner"]
 
 ; Главная сцена (§3.6): только инстансы отдельных сцен + данные сцены.
@@ -47,3 +48,5 @@ script = ExtResource("6_spawner")
 spawn_path = NodePath("..")
 
 [node name="DebugLayer" parent="." instance=ExtResource("5_debug")]
+
+[node name="HudLayer" parent="." instance=ExtResource("7_hud")]

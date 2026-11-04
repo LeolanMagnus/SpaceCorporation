@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeHudTarget.cs" id="1_probe"]
+
+; Probe Этапа H3: выбор цели (Tab-цикл) + маркер-рамка следует за целью,
+; клампится к краю когда цель за экраном/за камерой. Offline-мир Main.tscn.
+[node name="ProbeHudTarget" type="Node3D"]
+script = ExtResource("1_probe")

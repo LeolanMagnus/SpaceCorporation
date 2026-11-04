@@ -197,7 +197,7 @@ public partial class WorldSpawner : Node3D
             _fallbackCamera = new Camera3D
             {
                 Name = "ServerCamera",
-                Far = 400.0f,
+                Far = 4000.0f,
                 // Не реагирует на ввод и не мешает дебаг-слою; просто даёт viewport
                 // активную камеру, чтобы мир был виден без игрока (§3.11 п.10).
                 ProcessMode = ProcessModeEnum.Always,
@@ -365,6 +365,10 @@ public partial class WorldSpawner : Node3D
         // построении корпуса и _baseFlight (характеристики для полётной модели
         // корабль получает из общего каталога по типу — требование дизайна).
         shipNetState.ShipTypeValue = (byte)ShipStatCatalog.Find(shipType).Type;
+        // Этап H4 (hud-plan.md §1): фракция — тоже ДО AddChild (спавн-снимок
+        // читает свойства при входе узла в дерево). Пока все заспавненные корабли
+        // — игроцкие; враждебные/союзные появятся с ботами.
+        shipNetState.FactionValue = (byte)Faction.Player;
         if (nameOverride != null)
             ship.Name = nameOverride;
         // BUG-008 (рецидив): первоначальный пилот пишем в реестр ДО AddChild.
@@ -425,7 +429,11 @@ public partial class WorldSpawner : Node3D
         var body = scene.Instantiate<RigidBody3D>();
         // Адрес мишени из общего счётчика — ДО AddChild (цель узла TargetState
         // берём из инстанса: Net у TargetState заполняется в _Ready/_EnterTree).
-        NetworkManager.Instance?.AssignTargetNetIdIfUnset(body.GetNode<TargetState>("TargetState"));
+        var tState = body.GetNode<TargetState>("TargetState");
+        NetworkManager.Instance?.AssignTargetNetIdIfUnset(tState);
+        // Этап H4 (hud-plan.md §1): фракция мишени — враждебная (маркер HUD
+        // красится по фракции). Пишется ДО AddChild — спавн-снимок.
+        tState.FactionValue = (byte)Faction.Hostile;
         body.Name = UniqueChildName("Target");
         AddChild(body);
         body.GlobalPosition = position;

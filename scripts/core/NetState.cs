@@ -79,6 +79,15 @@ public partial class NetState : Node
     /// <summary>Тип корабля (<c>(ShipType)ShipTypeValue</c>), 0 = Courier.</summary>
     [Export] public byte ShipTypeValue { get; set; } = (byte)ShipType.Courier;
 
+    // ─────────────────── Этап H4 (hud-plan.md §1): фракция ───────────────────
+    // Фракция корабля (byte enum <c>Faction</c>, 0 = Neutral). Пишет авторитет
+    // при спавне (в сети — сервер ДО AddChild, в offline — спавнер); транспорт
+    // как у ShipTypeValue: спавн-снимок + ON_CHANGE (значение статичное, трафик
+    // не создаёт). Нужен HUD: цвет цели/своего корабля по фракции.
+
+    /// <summary>Фракция (<c>(Faction)FactionValue</c>), 0 = Neutral.</summary>
+    [Export] public byte FactionValue { get; set; } = (byte)Faction.Neutral;
+
     /// <summary>Адрес выдаёт НЕ этот узел: в сети номер назначает сервер до
     /// `AddChild` (§4 В4 п.3), иначе два пира выдали бы разные номера одному
     /// кораблю. В offline (`Role == Offline`, один процесс) адрес выдаёт

@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeHudTop.cs" id="1_probe"]
+
+; Probe Этапа H6: верхние углы HUD — тег мира (роль+пиры+ping), objective-строка
+; цели («On: … — NN m» / «No target»), комм-лог-заглушка на шине HudEventBus:
+; кольцо 6 строк, fade-out, перенос длинного текста, панель в границах экрана.
+[node name="ProbeHudTop" type="Node"]
+script = ExtResource("1_probe")

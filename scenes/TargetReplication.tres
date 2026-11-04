@@ -49,3 +49,9 @@ properties/4/replication_mode = 2
 properties/5/path = NodePath("TargetState:NetAngularVelocity")
 properties/5/spawn = false
 properties/5/replication_mode = 2
+
+; Этап H4 (hud-plan.md §1): фракция мишени (byte enum Faction). Пишет авторитет
+; при спавне (WorldSpawner.SpawnTarget); OnChange — на случай смены фракции.
+properties/6/path = NodePath("TargetState:FactionValue")
+properties/6/spawn = true
+properties/6/replication_mode = 2

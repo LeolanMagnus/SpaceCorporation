@@ -108,3 +108,10 @@ properties/10/replication_mode = 2
 properties/11/path = NodePath("NetState:ShipTypeValue")
 properties/11/spawn = true
 properties/11/replication_mode = 2
+
+; Этап H4 (hud-plan.md §1): фракция корабля (byte enum Faction). Тот же
+; статичный транспорт, что у ShipTypeValue: спавн-снимок (spawn = true) +
+; OnChange-дельта при редкой смене авторитетом (перекрасить фракцию).
+properties/12/path = NodePath("NetState:FactionValue")
+properties/12/spawn = true
+properties/12/replication_mode = 2

@@ -66,3 +66,4 @@ replication_config = ExtResource("4_replcfg")
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=81930329]
 transform = Transform3D(1, 0, 0, 0, 0.8806664, 0.473737, 0, -0.473737, 0.8806664, 17.924896, 57.636856, 95.46109)
+far = 4000.0

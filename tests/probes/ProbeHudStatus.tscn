@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeHudStatus.cs" id="1_probe"]
+
+; Probe Этапа H2: статус-бар HUD наполняется живыми данными своего корабля
+; (класс/HP/скорость/режимы) в offline-мире Main.tscn.
+[node name="ProbeHudStatus" type="Node3D"]
+script = ExtResource("1_probe")
