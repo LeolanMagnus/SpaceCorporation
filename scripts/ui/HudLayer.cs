@@ -26,7 +26,10 @@ public partial class HudLayer : CanvasLayer
     // Слоты-заглушки H1 — публичные, чтобы Этапы H2/H3/H6 заполняли их, не трогая сцену.
     private Label _lblWorldTag = null!;
     private Label _lblObjective = null!;
-    private Label _lblRadarStub = null!;
+
+    // Радар (radar-plan, R2): источник контактов и панель-виджет.
+    private RadarSource _radarSource = null!;
+    private RadarPanel _radarView = null!;
 
     // Статус-бар (H2): узлы из сцены.
     private Label _lblShipClass = null!;
@@ -55,7 +58,6 @@ public partial class HudLayer : CanvasLayer
 
         _lblWorldTag = GetNode<Label>("HudRoot/TopLeft/WorldTag/LblWorldTag");
         _lblObjective = GetNode<Label>("HudRoot/TopRight/ObjectivePanel/LblObjective");
-        _lblRadarStub = GetNode<Label>("HudRoot/BottomRight/RadarPanel/RadarBox/RadarSlot/LblRadarStub");
 
         _lblShipClass = GetNode<Label>("HudRoot/BottomLeft/StatusPanel/StatusBox/ShipClass/LblShipClass");
         _barHp = GetNode<ProgressBar>("HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/HpBox/HpBar");
@@ -93,8 +95,13 @@ public partial class HudLayer : CanvasLayer
         var radarPanel = GetNode<PanelContainer>("HudRoot/BottomRight/RadarPanel");
         radarPanel.AddThemeStyleboxOverride("panel", HudTheme.PanelStyle());
 
-        var radarSlot = GetNode<PanelContainer>("HudRoot/BottomRight/RadarPanel/RadarBox/RadarSlot");
-        radarSlot.AddThemeStyleboxOverride("panel", HudTheme.SlotStyle(HudTheme.RadarBg, HudTheme.RadarBorder));
+        // Радар (radar-plan R2): источник контактов кормит панель-виджет;
+        // клики панели выбирают цель через TargetingService.
+        _radarSource = GetNode<RadarSource>("RadarSource");
+        _radarView = GetNode<RadarPanel>("HudRoot/BottomRight/RadarPanel/RadarBox/RadarView");
+        _radarView.Source = _radarSource;
+        _radarView.Targeting = _targeting;
+        _radarSource.TargetingServiceRef = _targeting;
     }
 
     private void SetPanelStyle(string path)
@@ -108,7 +115,6 @@ public partial class HudLayer : CanvasLayer
     {
         _lblWorldTag.Text = "OFFLINE";
         _lblObjective.Text = "No target";
-        _lblRadarStub.Text = "MINIMAP\n(radar stub —\nto be implemented)";
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -130,6 +136,14 @@ public partial class HudLayer : CanvasLayer
             // L — показать/скрыть подписи целей (H3).
             _targetMarker.LabelsOn = !_targetMarker.LabelsOn;
             _targetMarker.QueueRedraw();
+            GetViewport().SetInputAsHandled();
+        }
+        else if (@event.IsActionPressed("hud_radar"))
+        {
+            // R — показать/скрыть радар (radar-plan R2). Прямо всю панель
+            // BottomRight: и кольцо, и подпись «RADAR» — как переключение окна.
+            var panel = GetNode<Control>("HudRoot/BottomRight/RadarPanel");
+            panel.Visible = !panel.Visible;
             GetViewport().SetInputAsHandled();
         }
     }

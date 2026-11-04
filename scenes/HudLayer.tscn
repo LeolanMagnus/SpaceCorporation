@@ -4,6 +4,8 @@
 [ext_resource type="Script" path="res://scripts/ui/Crosshair.cs" id="2_cross"]
 [ext_resource type="Script" path="res://scripts/ui/TargetingService.cs" id="3_targeting"]
 [ext_resource type="Script" path="res://scripts/ui/TargetMarker.cs" id="4_marker"]
+[ext_resource type="Script" path="res://scripts/ui/RadarSource.cs" id="5_radar_src"]
+[ext_resource type="Script" path="res://scripts/ui/RadarPanel.cs" id="6_radar_view"]
 
 ; HUD в стиле X4 (hud-plan.md). Слой 5 — НИЖЕ DebugLayer (слой 10): панель F3
 ; никогда не перекрывается HUD, слои не конфликтуют (§5 плана).
@@ -301,21 +303,16 @@ layout_mode = 2
 
 [node name="LblRadarCap" type="Label" parent="HudRoot/BottomRight/RadarPanel/RadarBox"]
 layout_mode = 2
-text = "MINIMAP"
+text = "RADAR"
 
-[node name="RadarSlot" type="PanelContainer" parent="HudRoot/BottomRight/RadarPanel/RadarBox"]
-custom_minimum_size = Vector2(140, 140)
+[node name="RadarView" type="Control" parent="HudRoot/BottomRight/RadarPanel/RadarBox"]
+custom_minimum_size = Vector2(160, 160)
 layout_mode = 2
 size_flags_vertical = 3
+script = ExtResource("6_radar_view")
 
-[node name="LblRadarStub" type="Label" parent="HudRoot/BottomRight/RadarPanel/RadarBox/RadarSlot"]
-layout_mode = 2
-autowrap_mode = 3
-horizontal_alignment = 1
-vertical_alignment = 1
-text = "MINIMAP
-(radar stub —
-to be implemented)"
+[node name="RadarSource" type="Node" parent="."]
+script = ExtResource("5_radar_src")
 
 [node name="TargetMarker" type="Control" parent="HudRoot"]
 z_index = 10

@@ -434,6 +434,12 @@ public partial class WorldSpawner : Node3D
         // Этап H4 (hud-plan.md §1): фракция мишени — враждебная (маркер HUD
         // красится по фракции). Пишется ДО AddChild — спавн-снимок.
         tState.FactionValue = (byte)Faction.Hostile;
+        // Радар (radar-plan R2): поза — в буфер состояния ДО AddChild (тот же
+        // порядок, что у станции в SpawnStationFromScene и фракции выше):
+        // свойства со spawn=true читаются при входе узла в дерево, и RadarSource
+        // на пире берёт позицию мишени именно из TargetState.NetPosition. Без
+        // этой записи мишень для радара стояла бы в (0,0,0).
+        tState.NetPosition = position;
         body.Name = UniqueChildName("Target");
         AddChild(body);
         body.GlobalPosition = position;

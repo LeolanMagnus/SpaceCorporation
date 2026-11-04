@@ -1,0 +1,13 @@
+; Тест стадии 6 (radar-plan, этап R2): радар — сборщик контактов и модель.
+; Корень — Node, Main инстансится как в Stage5Test: миру нужен реальный
+; физический шаг и 3D-поддерево (WorldSpawner/NetworkManager поднимаются штатно).
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://tests/Stage6Test.cs" id="1_test"]
+[ext_resource type="PackedScene" path="res://scenes/Main.tscn" id="2_main"]
+
+[node name="Stage6Test" type="Node"]
+process_mode = 3
+script = ExtResource("1_test")
+
+[node name="Main" parent="." instance=ExtResource("2_main")]

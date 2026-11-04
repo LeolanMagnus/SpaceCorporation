@@ -73,6 +73,35 @@ public partial class TargetingService : Node
         TargetFaction = (byte)Faction.Neutral;
     }
 
+    /// <summary>Выбрать цель по сетевому адресу (клик по блипу радара, R3):
+    /// Ship/TargetState из реестров NetworkManager. true — цель найдена.</summary>
+    public bool Select(int netId)
+    {
+        var nm = NetworkManager.Instance;
+        if (nm == null || netId == 0)
+            return false;
+
+        if (nm.FindShip(netId) is Ship ship && GodotObject.IsInstanceValid(ship))
+        {
+            var h = ship.GetNodeOrNull<ShipHealthState>("ShipHealthState");
+            if (h != null && h.Hp <= 0)
+                return false;
+            var spec = ShipStatCatalog.FindByByte(ship.Net?.ShipTypeValue ?? (byte)ShipType.Courier);
+            TargetNode = ship;
+            TargetName = spec.DisplayName;
+            TargetFaction = ship.Net?.FactionValue ?? (byte)Faction.Neutral;
+            return true;
+        }
+        if (nm.FindTarget(netId) is TargetState t && GodotObject.IsInstanceValid(t) && t.Hp > 0)
+        {
+            TargetNode = t;
+            TargetName = $"Target #{t.TargetNetId}";
+            TargetFaction = t.FactionValue;
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>Жива ли ещё цель (вызывает HudLayer каждый кадр; если цель
     /// удалена или убита — снимает её и говорит перерисоваться).</summary>
     public bool ValidateTarget()

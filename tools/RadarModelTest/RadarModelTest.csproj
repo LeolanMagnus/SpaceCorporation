@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Тесты модели радара (этап R1 плана radar-plan.md). RadarModel намеренно
+       не зависит от Godot, поэтому собирается обычным консольным проектом и
+       гоняется без движка: dotnet run. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>RadarModelTest</AssemblyName>
+    <RootNamespace>RadarModelTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\scripts\core\NetTypes.cs" />
+    <Compile Include="..\..\scripts\ui\RadarTypes.cs" />
+    <Compile Include="..\..\scripts\ui\RadarModel.cs" />
+  </ItemGroup>
+
+</Project>
