@@ -103,6 +103,10 @@ public partial class Stage6Test : Node
                 // определится (или страховка AttachToDefaultPoint).
                 if (_source != null && _source.OwnShipForTest() != null)
                 {
+                    // Режимы дальности: штатный радар Mk1 — 800 м, а тесты
+                    // п.4-п.11 считают контакты до 2500 м: ставим RN-2 (2 км),
+                    // мощность радара корабля = 2000 (MaxRange модели).
+                    _source.OwnShipForTest()!.EquipModule("radar_rn2_mk2");
                     _phase = Phase.P1;
                 }
                 else if (_frame > 240)

@@ -42,10 +42,17 @@ public partial class RadarSource : Node
             Model.Sync(_buf);
         }
 
-        // 2) каждый кадр — экстраполяция + поворот на курс своего корабля.
-        var (center, vel, yaw) = OwnFrame();
-        _ = center; // центр в RelPos уже вшит при сборке; курс нужен для проекции
-        Model.Advance((float)delta, yaw);
+        // 2) каждый кадр — экстраполяция + поворот на полный локальный базис
+        // своего корабля (forward+up: roll и pitch тоже вращают радар).
+        var (center, vel, fwd, up) = OwnFrame();
+        _ = center; // центр в RelPos уже вшит при сборке; базис нужен для проекции
+        Model.Advance((float)delta, fwd.X, fwd.Y, fwd.Z, up.X, up.Y, up.Z);
+
+        // 3) мощность радара — характеристика корабля (Σ RadarRange по слотам
+        // Loadout); без корабля/модулей — ступень по умолчанию.
+        var own = OwnShipNode();
+        float max = own != null ? own.Loadout.RadarRange() : 0f;
+        Model.MaxRange = max > RadarModel.NearRange ? max : RadarModel.DefaultMaxRange;
     }
 
     /// <summary>Собрать относительные контакты в <paramref name="outBuf"/>
@@ -58,7 +65,7 @@ public partial class RadarSource : Node
         if (nm == null)
             return;
 
-        var (center, ownVel, _) = OwnFrame();
+        var (center, ownVel, _, _) = OwnFrame();
         var own = OwnShipNode();
 
         // --- корабли: позиция/скорость/фракция из реплики NetState ---
@@ -135,9 +142,11 @@ public partial class RadarSource : Node
     // ------------------------------------------------------------- свой корабль
 
     /// <summary>Кадры центра радара: позиция/скорость своего корабля (или игрока
-    /// без корабля) + курсовой yaw для проекции. yaw = atan2(fwd.X, fwd.Z) под
-    /// соглашение модели forward = (sin Y, cos Y).</summary>
-    private (Vector3 Center, Vector3 Vel, float Yaw) OwnFrame()
+    /// без корабля) + полный локальный базис (forward, up) для проекции:
+    /// forward = −Basis.Z (нос), up = Basis.Y (локальная вертикаль — нормаль
+    /// горизонтальной плоскости корабля). Roll/pitch меняют up → точки на
+    /// радаре ездят вместе с креном. Right модель считает как forward × up.</summary>
+    private (Vector3 Center, Vector3 Vel, Vector3 Fwd, Vector3 Up) OwnFrame()
     {
         var own = OwnShipNode();
         if (own != null)
@@ -147,8 +156,8 @@ public partial class RadarSource : Node
                 vel = rb.LinearVelocity; // локальная физика своего тела (картинка)
             else
                 vel = own.Net?.NetLinearVelocity ?? Vector3.Zero;
-            Vector3 fwd = -own.GlobalTransform.Basis.Z;
-            return (own.GlobalPosition, vel, Mathf.Atan2(fwd.X, fwd.Z));
+            var b = own.GlobalTransform.Basis;
+            return (own.GlobalPosition, vel, -b.Z, b.Y);
         }
 
         // Игрок без корабля (внутри отсека): центр = позиция игрока, курс —
@@ -157,10 +166,10 @@ public partial class RadarSource : Node
             if (n is Player p && GodotObject.IsInstanceValid(p) && p is Node3D p3)
             {
                 var cam = GetViewport()?.GetCamera3D();
-                Vector3 cf = cam != null ? -cam.GlobalTransform.Basis.Z : Vector3.Forward;
-                return (p3.GlobalPosition, Vector3.Zero, Mathf.Atan2(cf.X, cf.Z));
+                var b = cam != null ? cam.GlobalTransform.Basis : Basis.Identity;
+                return (p3.GlobalPosition, Vector3.Zero, -b.Z, b.Y);
             }
-        return (Vector3.Zero, Vector3.Zero, 0f);
+        return (Vector3.Zero, Vector3.Zero, Vector3.Forward, Vector3.Up);
     }
 
     /// <summary>Шов автотеста (Stage6): свой корабль центра радара.</summary>

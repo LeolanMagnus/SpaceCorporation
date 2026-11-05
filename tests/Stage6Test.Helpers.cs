@@ -148,7 +148,8 @@ public partial class Stage6Test
                 Check(!b.Stale && b.Fade > 0.99f, "п.5: блип живой (не Stale, Fade≈1)");
             }
         }
-        // Проекция при yaw=0: forward=(0,1) → ScreenY = RelPos.Z, ScreenX = RelPos.X.
+        // Проекция при yaw=0: forward=(0,1) → ScreenY = RelPos.Z,
+        // ScreenX = −RelPos.X (right=−X; у точки на оси X=0 знак не виден).
         if (_nearTarget != null && m.FindBlip(_nearTarget.TargetNetId) is { } bb)
         {
             Check(MathF.Abs(bb.ScreenY - 1200f) < 2f && MathF.Abs(bb.ScreenX) < 2f,
@@ -249,7 +250,8 @@ public partial class Stage6Test
               "п.9: гистерезис: Ship2 (16 м) держится в R=500");
 
         // Экстраполяция: синтетический контакт с RelVel=(10,0,0), за 1 с
-        // RelPos.X: 100 → 110; при yaw=0 ScreenX = RelPos.X.
+        // RelPos.X: 100 → 110; при yaw=0 (курс +Z) right = −X — контакт на +X
+        // слева от курса, ScreenX = −RelPos.X (праворукая система, без зеркала).
         var m2 = new RadarModel { Range = 1000f };
         var synthetic = new List<RadarContact>
         {
@@ -260,8 +262,8 @@ public partial class Stage6Test
         var sb = m2.FindBlip(999);
         Check(sb != null && MathF.Abs(sb.Contact.RelPos.X - 110f) < 0.5f,
               $"п.9: экстраполяция RelPos += RelVel*dt: X 100→110 (получено {sb?.Contact.RelPos.X:0.#})");
-        Check(sb != null && MathF.Abs(sb.ScreenX - 110f) < 0.5f && MathF.Abs(sb.ScreenY) < 0.5f,
-              $"п.9: ScreenX=RelPos.X при yaw=0 (получено {sb?.ScreenX:0.#},{sb?.ScreenY:0.#})");
+        Check(sb != null && MathF.Abs(sb.ScreenX + 110f) < 0.5f && MathF.Abs(sb.ScreenY) < 0.5f,
+              $"п.9: ScreenX=−RelPos.X при yaw=0 (получено {sb?.ScreenX:0.#},{sb?.ScreenY:0.#})");
 
         m.Range = RadarModel.DefaultRange;
     }
@@ -333,12 +335,23 @@ public partial class Stage6Test
         Check(tb != null && !tb.Contact.IsTarget,
               "п.11: после Clear() флаг цели снят");
 
-        // 11.4: колесо-зум: Range уже проходил в п.9; проверяем ступени панели.
-        panel.SetRangeStep(0);
-        Check(Mathf.Abs(m.Range - RadarPanel.RangeSteps[0]) < 0.01f,
-              $"п.11: SetRangeStep(0) -> R={m.Range} (ступень {RadarPanel.RangeSteps[0]})");
-        panel.SetRangeStep(2);
+        // 11.4: режимы дальности: Near 400 / Mid 2000 / Long = мощность корабля.
+        panel.SetMode(RadarRangeMode.Near);
+        Check(Mathf.Abs(m.Range - RadarModel.NearRange) < 0.01f,
+              $"п.11: SetMode(Near) -> R={m.Range}");
+        panel.SetMode(RadarRangeMode.Long);
+        Check(Mathf.Abs(m.Range - m.MaxRange) < 0.01f,
+              $"п.11: SetMode(Long) -> R={m.Range} = MaxRange {m.MaxRange}");
+        panel.CycleMode(); // Long -> Auto
+        Check(panel.Mode == RadarRangeMode.Auto, "п.11: CycleMode: Long -> Auto");
+        panel.ApplyAutoRange();
+        float nearest = m.NearestContactDistance();
+        Check(Mathf.Abs(m.Range - RadarModel.AutoRangeFor(nearest, m.MaxRange)) < 0.01f,
+              $"п.11: авто: ближайшая цель {nearest:0} м -> R={m.Range}");
+        panel.CycleMode(); // Auto -> Near (замкнули цикл)
+        Check(panel.Mode == RadarRangeMode.Near, "п.11: CycleMode: Auto -> Near");
+        panel.SetMode(RadarRangeMode.Mid);
         Check(Mathf.Abs(m.Range - RadarModel.DefaultRange) < 0.01f,
-              "п.11: возврат ступени 2 -> R=2000");
+              "п.11: SetMode(Mid) -> R=2000");
     }
 }

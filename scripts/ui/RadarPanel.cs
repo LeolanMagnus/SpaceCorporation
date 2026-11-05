@@ -6,19 +6,36 @@ using SpaceCorporation.UI;
 namespace SpaceCorporation;
 
 /// <summary>
-/// Радар-виджет (radar-plan.md §2.3, этап R2): квадратная панель в правом
-/// нижнем углу, всё рисуется вектором в _Draw() — кольцо-сетка, блипы,
-/// векторы скорости, «нос» сверху. Источник данных — <see cref="RadarSource"/>
-/// (его чистая RadarModel), панель только проецирует блипы модели в пиксели.
+/// Радар-виджет (radar-plan.md §2.3): квадратная панель в правом нижнем углу,
+/// всё рисуется вектором в _Draw() — псевдотрёхмерная сфера-каркас (внешний
+/// контур шара, эллипс-экватор = горизонтальная плоскость корабля, меридианы),
+/// блипы с линией проекции на эту плоскость, векторы скорости, «нос» сверху.
+/// Источник данных — <see cref="RadarSource"/> (его чистая RadarModel),
+/// панель только проецирует блипы модели в пиксели (орфографическая проекция).
+///
+/// Проекция псевдо-3D (ElevationDeg): горизонталь сжимается по вертикали в
+/// sin(наклон) раз, высота ΔY поднимает точку на cos(наклон)·ΔY. От блипа
+/// вниз/вверх к его следy на плоскости идёт тонкая линия-«штырь» — по ней
+/// видно, спереди/сзади объект (положение относительно эллипса) и
+/// сверху/снизу (штырь).
 ///
 /// R2: все блипы белые (заглушка фракций), станция — квадрат, мишень — ромб.
 /// Цвета по фракциям, клик-выбор, pinned-маркер — этап R3.
-/// Масштаб (радиус обзора) — колесо мыши по списку ступеней.
+/// Режим дальности (RadarRangeMode): ближний 400 м, средний 2 км, дальний —
+/// вся мощность радара корабля (RadarModel.MaxRange), и авторежим по
+/// ближайшей цели. Shift+R (HudLayer) цикляет Near→Mid→Long→Auto; колесо мыши
+/// по панели — ручной перебор трёх фиксированных ступеней. Текущий режим —
+/// мелкий текст в нижнем правом углу панели.
 /// </summary>
 public partial class RadarPanel : Control
 {
-    /// <summary>Ступени радиуса обзора, м (колесо циклически по ним).</summary>
-    public static readonly float[] RangeSteps = { 500f, 1000f, 2000f, 4000f };
+    /// <summary>Фиксированные ступени для ручного перебора колесом (без Auto).</summary>
+    private static readonly RadarRangeMode[] ManualModes =
+        { RadarRangeMode.Near, RadarRangeMode.Mid, RadarRangeMode.Long };
+
+    /// <summary>Короткие подписи режимов для текста под радаром.</summary>
+    private static readonly string[] ModeLabels =
+        { "400 м", "2 км", "макс", "авто" };
 
     /// <summary>Отступ кольца от края панели, px (под подписи дальности).</summary>
     private const float RingMargin = 14f;
@@ -26,17 +43,71 @@ public partial class RadarPanel : Control
     /// <summary>Радиус «попадания» блипа кликом, px (R3).</summary>
     public const float ClickRadius = 10f;
 
+    /// <summary>Наклон камеры радара над горизонтальной плоскостью корабля,
+    /// град (псевдо-3D сфера). 90° — строго сверху (старый плоский вид),
+    /// меньше — «сфера» раскрывается: экватор = локальная горизонталь
+    /// корабля, полюс — вверх/вниз по оси Y.</summary>
+    public const float ElevationDeg = 28f;
+
+    /// <summary>Сжатие экватора по вертикали: sin(наклон). Экватор-эллипс
+    /// имеет ry/rx = BetaSin. Кешируется (статический, меняется только в коде).</summary>
+    private static readonly float BetaSin = Mathf.Sin(Mathf.DegToRad(ElevationDeg));
+
+    /// <summary>Подъём точки на экране за единицу высоты ΔY: cos(наклон).</summary>
+    private static readonly float BetaCos = Mathf.Cos(Mathf.DegToRad(ElevationDeg));
+
+    /// <summary>Оттенок сетки псевдо-3D сферы (полусфера-каркас).</summary>
+    private static readonly Color GridDim = new(0.30f, 0.45f, 0.62f, 0.22f);
+    private static readonly Color GridMid = new(0.32f, 0.50f, 0.68f, 0.35f);
+
     /// <summary>Источник контактов (ставит HudLayer). null — пустой радар.</summary>
     public RadarSource? Source { get; set; }
 
     /// <summary>Сервис целей для клик-выбора (ставит HudLayer; R3).</summary>
     public TargetingService? Targeting { get; set; }
 
-    /// <summary>Индекс ступени радиуса (по умолчанию 2000 м).</summary>
-    public int RangeStepIndex { get; set; } = 2;
+    /// <summary>Текущий режим дальности (Auto — радиус пересчитывается каждый
+    /// кадр по ближайшей цели).</summary>
+    public RadarRangeMode Mode { get; private set; } = RadarRangeMode.Mid;
 
     /// <summary>Текущий радиус обзора, м (зеркало модели — источник правды).</summary>
     public float Range => Source?.Model.Range ?? RadarModel.DefaultRange;
+
+    /// <summary>Радиус ступени фиксированного режима (Long — мощность радара).</summary>
+    private float RangeFor(RadarRangeMode mode)
+    {
+        var m = Source?.Model;
+        return mode switch
+        {
+            RadarRangeMode.Near => RadarModel.NearRange,
+            RadarRangeMode.Long => m != null ? m.MaxRange : RadarModel.DefaultMaxRange,
+            _ => RadarModel.MidRange,
+        };
+    }
+
+    /// <summary>Применить режим: у фиксированных — выставить радиус сразу;
+    /// Auto — пересчитывать каждый кадр (<see cref="ApplyAutoRange"/>).</summary>
+    public void SetMode(RadarRangeMode mode)
+    {
+        Mode = mode;
+        if (Source != null && mode != RadarRangeMode.Auto)
+            Source.Model.Range = RangeFor(mode);
+        QueueRedraw();
+    }
+
+    /// <summary>Shift+R: перебор Near → Mid → Long → Auto → Near…</summary>
+    public void CycleMode() =>
+        SetMode((RadarRangeMode)(((int)Mode + 1) % ((int)RadarRangeMode.Auto + 1)));
+
+    /// <summary>Авторежим: радиус по дистанции ближайшей цели (ближе 400 м —
+    /// ближний, до 2 км — средний, дальше — вся мощность). Публично — и для
+    /// headless-теста.</summary>
+    public void ApplyAutoRange()
+    {
+        var m = Source?.Model;
+        if (m != null)
+            m.Range = RadarModel.AutoRangeFor(m.NearestContactDistance(), m.MaxRange);
+    }
 
     // Пиксельный радиус кольца и центр — для попаданий мыши и рисования.
     private float _ringPx = 1f;
@@ -53,16 +124,20 @@ public partial class RadarPanel : Control
     {
         // Модель обновляется в RadarSource (он выше по дереву и раньше по
         // порядкуprocess); панель только перерисовывает каждое кадр.
+        if (Mode == RadarRangeMode.Auto)
+            ApplyAutoRange();
         QueueRedraw();
     }
 
-    /// <summary>Установить ступень радиуса (клавиатура/колесо/тест).</summary>
-    public void SetRangeStep(int index)
+    /// <summary>Колесо по панели: ручной перебор фиксированных ступеней
+    /// Near → Mid → Long (выход из Auto при первом же скролле).</summary>
+    public void SetRangeStep(int dir)
     {
-        RangeStepIndex = Mathf.Clamp(index, 0, RangeSteps.Length - 1);
-        if (Source != null)
-            Source.Model.Range = RangeSteps[RangeStepIndex];
-        QueueRedraw();
+        int i = Mode == RadarRangeMode.Auto
+            ? (dir > 0 ? 0 : ManualModes.Length - 1)
+            : (int)Mode + dir;
+        i = ((i % ManualModes.Length) + ManualModes.Length) % ManualModes.Length;
+        SetMode(ManualModes[i]);
     }
 
     // ------------------------------------------------------------------ Draw
@@ -76,16 +151,33 @@ public partial class RadarPanel : Control
         var border = HudTheme.RadarBorder;
         var dim = new Color(border.R, border.G, border.B, 0.35f);
 
-        // Кольца дальности: внешнее (текущий R) + среднее (R/2) + крест.
-        DrawArc(_center, _ringPx, 0f, Mathf.Tau, 48, border, 1f);
-        DrawArc(_center, _ringPx * 0.5f, 0f, Mathf.Tau, 32, dim, 1f);
-        DrawLine(_center + Vector2.Left * _ringPx, _center + Vector2.Right * _ringPx, dim);
-        DrawLine(_center + Vector2.Up * _ringPx, _center + Vector2.Down * _ringPx, dim);
+        // ── Псевдотрёхмерная сфера (каркас) ─────────────────────────────
+        // Внешняя окружность — контур сферы радиуса R (орфографическая
+        // проекция шара при любом наклоне остаётся кругом). Эллипс-экватор —
+        // горизонтальное сечение: локальная горизонтальная плоскость корабля.
+        DrawArc(_center, _ringPx, 0f, Mathf.Tau, 64, border, 1f);
+        DrawEquatorEllipse(_center, _ringPx, border, dim);           // экватор R
+        DrawEquatorEllipse(_center, _ringPx * 0.5f, dim, dim);       // экватор R/2
+        DrawMeridians(_center, _ringPx);                              // меридианы
+        // Оси горизонтальной плоскости (хорды эллипса): вперёд-назад, влево-вправо.
+        DrawLine(_center + Vector2.Left * _ringPx, _center + Vector2.Right * _ringPx, GridDim);
+        DrawLine(_center + Vector2.Up * (_ringPx * BetaSin),
+                 _center + Vector2.Down * (_ringPx * BetaSin), GridDim);
+        // Вертикальная ось сферы (полюса «вверх/вниз» локальной вертикали корабля).
+        DrawLine(_center + Vector2.Up * (_ringPx * BetaCos),
+                 _center + Vector2.Down * (_ringPx * BetaCos), GridDim);
+        // Маркер своего корабля в центре горизонтальной плоскости.
+        var ownMark = new Color(border.R, border.G, border.B, 0.9f);
+        float mk = 3f;
+        DrawLine(_center + Vector2.Right * mk, _center + Vector2.Left * mk, ownMark, 1f);
+        DrawLine(_center + Vector2.Up * mk, _center + Vector2.Down * mk, ownMark, 1f);
 
-        // Подписи дальности у колец (1000/2000 м при R=2000).
+        // Подписи дальности у внешнего контура (1000/2000 м при R=2000).
         float r = Range;
         DrawSmallText($"{r:F0}", _center + Vector2.Right * (_ringPx - 2f) + Vector2.Up * 3f, dim);
-        DrawSmallText($"{r * 0.5f:F0}", _center + Vector2.Right * (_ringPx * 0.5f + 2f) + Vector2.Up * 3f, dim);
+        // Правый край эллипса (там же, где и у круга): вертикального смещения нет.
+        DrawSmallText($"{r * 0.5f:F0}", _center + Vector2.Right * (_ringPx * 0.5f + 2f)
+            + Vector2.Up * 3f, dim);
 
         // Стрелка-«нос» сверху: курс радара = курс своего корабля.
         var nose = new Color(border.R, border.G, border.B, 0.9f);
@@ -100,16 +192,24 @@ public partial class RadarPanel : Control
         if (model == null)
             return;
 
+        // Текущий режим — мелким в нижнем правом углу панели (right-align).
+        var modeColor = new Color(border.R, border.G, border.B, 0.8f);
+        DrawString(GetThemeDefaultFont(),
+                   new Vector2(Size.X - 6f - 80f, Size.Y - 13f),
+                   ModeLabels[(int)Mode], HorizontalAlignment.Right, 80, 9, modeColor);
+
         float scale = _ringPx / Mathf.Max(1f, model.Range);
 
         // Блипы: модель отдаёт отсортированными (дальние первыми) — рисуем по
-        // порядку, ближние ложатся поверх дальних.
+        // порядку, ближние ложатся поверх дальних. Псевдо-3D: точка поднимается
+        // над/опускается под эллипс-экватор по HeightOffset (ΔY), и от неё к
+        // её проекции на горизонтальную плоскость идёт тонкая линия-«штырь»
+        // (1 px): видно спереди/сзади (по экватору) и сверху/снизу (по штырю).
         foreach (var b in model.Blips)
         {
-            var pos = ProjectTo(center, ringPx, b.ScreenX, b.ScreenY, scale);
-            if (pos == null)
-                continue; // за кольцом (гистерезис 1.1R) — клиппинг по кольцу
-            Vector2 p = pos.Value;
+            if (!ProjectTo(center, ringPx, b.ScreenX, b.ScreenY, b.HeightOffset, scale,
+                           out Vector2 ground, out Vector2 p))
+                continue; // за контуром сферы — клиппинг
 
             // R3: цвет — по фракции контакта (Player/Hostile/Neutral…),
             // прозрачность — fade исчезнувших.
@@ -119,6 +219,14 @@ public partial class RadarPanel : Control
             // Подбитый контакт мигает (источник — ShipHealthState, через Damaged).
             if (b.Contact.Damaged)
                 color.A *= 0.55f + 0.45f * Mathf.Sin(Time.GetTicksMsec() * 0.012f);
+
+            // Линия проекции на плоскость корабля (только при заметной высоте).
+            if ((p - ground).LengthSquared() > 4f)
+            {
+                var drop = new Color(color.R, color.G, color.B, color.A * 0.45f);
+                DrawLine(ground, p, drop, 1f);
+                DrawCircle(ground, 1.2f, new Color(color.R, color.G, color.B, color.A * 0.5f));
+            }
 
             DrawBlip(b, p, color);
             DrawVelocity(b, p, scale, color);
@@ -142,14 +250,64 @@ public partial class RadarPanel : Control
         return (Size * 0.5f, ring);
     }
 
-    /// <summary>Экран X/Y модели (метры, вперёд=+Y) в пиксели центра радара.
-    /// null — точка за внешним кольцом (не рисуем).</summary>
-    private Vector2? ProjectTo(Vector2 center, float ringPx, float screenX, float screenY, float scale)
+    /// <summary>Псевдотрёхмерная проекция: экранная X/Y модели (метры; вперёд=+Y)
+    /// и высота ΔY в пиксели. center/ground — проекция на горизонтальную
+    /// плоскость корабля (эллипс-экватор), p — сама точка (приподнята на
+    /// ΔY·cos наклон·scale). false — точка за контуром сферы (не рисуем).</summary>
+    private static bool ProjectTo(Vector2 center, float ringPx, float screenX,
+        float screenY, float heightY, float scale, out Vector2 ground, out Vector2 p)
     {
-        var p = center + new Vector2(screenX * scale, -screenY * scale);
-        if ((p - center).Length() > ringPx * RadarModel.HysteresisOut())
-            return null;
-        return p;
+        float x = screenX * scale, y = screenY * scale;
+        ground = center + new Vector2(x, -y * BetaSin);
+        float dy = heightY * scale * BetaCos;
+        p = ground + Vector2.Up * dy;
+        // Клиппинг по контуру сферы (орфографический шар: радиус = ringPx),
+        // с запасом гистерезиса — как раньше по кольцу.
+        float lim = ringPx * RadarModel.HysteresisOut();
+        return (p - center).Length() <= lim;
+    }
+
+    /// <summary>Эллипс горизонтального сечения сферы (локальная горизонталь
+    /// корабля): дальняя половина тусклее передней (эффект «прозрачной сферы»).</summary>
+    private void DrawEquatorEllipse(Vector2 center, float radius, Color front, Color back)
+    {
+        float ry = radius * BetaSin;
+        var ptsFront = new Godot.Vector2[33];
+        var ptsBack = new Godot.Vector2[33];
+        for (int i = 0; i <= 32; i++)
+        {
+            float a = Mathf.Pi * i / 32f; // 0..π — ближняя половина (низ экрана)
+            var v = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
+            ptsFront[i] = center + new Vector2(v.X * radius, v.Y * ry);
+            ptsBack[i] = center + new Vector2(v.X * radius, -v.Y * ry);
+        }
+        DrawPolyline(ptsBack, back);
+        DrawPolyline(ptsFront, front);
+    }
+
+    /// <summary>Меридианы сферы (вертикальные эллипсы) — читают объём.</summary>
+    private void DrawMeridians(Vector2 center, float ringPx)
+    {
+        // Наклонная проекция: горизонталь меридиана сжимается по фазе так же,
+        // что и экватор (вклад cos-компоненты вдоль «вправо» — на всю ширину,
+        // вдоль «вперёд» — в BetaSin раз меньше).
+        for (int m = 0; m < 3; m++)
+        {
+            float lam = Mathf.Pi / 3f * m; // ориентация плоскости меридиана
+            float cx = Mathf.Cos(lam), sz = Mathf.Sin(lam);
+            var pts = new Godot.Vector2[49];
+            for (int i = 0; i <= 48; i++)
+            {
+                float a = Mathf.Tau * i / 48f;
+                float cosA = Mathf.Cos(a), sinA = Mathf.Sin(a);
+                // Точка сферы: горизонтальная составляющая (cosA) в направлении
+                // меридиана, вертикальная (sinA) — вверх.
+                float gx = cosA * cx * ringPx;
+                float gy = -cosA * sz * ringPx * BetaSin;
+                pts[i] = center + new Vector2(gx, gy - sinA * ringPx * BetaCos);
+            }
+            DrawPolyline(pts, m == 1 ? GridMid : GridDim);
+        }
     }
 
     /// <summary>Форма блипа по классу контакта (RadarShape).</summary>
@@ -179,22 +337,23 @@ public partial class RadarPanel : Control
         }
     }
 
-    /// <summary>Короткий штрих вектора скорости (масштаб метры→px, сclamp по длине).</summary>
+    /// <summary>Короткий штрих вектора скорости (масштаб метры→px, сclamp по длине).
+    /// Псевдо-3D: та же проекция, что и позиция — горизонтальная часть по
+    /// local-осям радара (forward/right своего корабля) плюс вертикальная
+    /// составляющая RelVel·up (нормаль горизонтальной плоскости корабля).</summary>
     private void DrawVelocity(RadarBlip b, Vector2 p, float scale, Color color)
     {
-        float vx = b.Contact.RelVel.X, vz = b.Contact.RelVel.Z;
-        float speed = MathF.Sqrt(vx * vx + vz * vz);
-        if (speed < 1f)
-            return; // почти неподвижен — штрих не нужен
-        // Проекция той же парой векторов, что и позиция (вперёд/вправо).
-        var model = Source!.Model;
-        float fx = Mathf.Sin(model.ForwardYaw), fz = Mathf.Cos(model.ForwardYaw);
-        float sx = vx * fz + vz * -fx;
-        float sy = vx * fx + vz * fz;
-        var dir = new Vector2(sx, -sy);
-        if (dir.LengthSquared() < 0.0001f)
-            return;
-        dir = dir.Normalized();
+        var m = Source!.Model;
+        var rv = b.Contact.RelVel;
+        // Горизонтальная часть в local-систему радара (те же оси, что у позиции).
+        float sx = rv.X * m.RightX + rv.Y * m.RightY + rv.Z * m.RightZ;
+        float sy = rv.X * m.FwdX + rv.Y * m.FwdY + rv.Z * m.FwdZ;
+        float h = rv.X * m.UpX + rv.Y * m.UpY + rv.Z * m.UpZ;
+        var dir = new Vector2(sx, -sy * BetaSin - h * BetaCos);
+        float speed = dir.Length();
+        if (speed < 0.1f)
+            return; // почти неподвижен на экране — штрих не нужен
+        dir /= speed;
         float len = Mathf.Min(4f + speed * scale * 0.25f, 14f);
         DrawLine(p, p + dir * len, new Color(color.R, color.G, color.B, color.A * 0.6f), 1f);
     }
@@ -206,11 +365,11 @@ public partial class RadarPanel : Control
         // Колесо — масштаб (R2).
         if (@event is InputEventMouseButton mb && mb.Pressed)
         {
-            // Колесо вверх — «приблизить» (меньше радиус → индекс ступени меньше).
+            // Колесо вверх — «приблизить»: ближняя ступень (Near→Mid→Long).
             if (mb.ButtonIndex == MouseButton.WheelUp)
-                SetRangeStep(RangeStepIndex - 1);
+                SetRangeStep(-1);
             else if (mb.ButtonIndex == MouseButton.WheelDown)
-                SetRangeStep(RangeStepIndex + 1);
+                SetRangeStep(+1);
             // ЛКМ по блипу — выбор цели (R3: TargetingService.Select).
             else if (mb.ButtonIndex == MouseButton.Left)
                 ClickSelect(mb.Position);
@@ -233,10 +392,10 @@ public partial class RadarPanel : Control
         float bestD2 = ClickRadius * ClickRadius;
         foreach (var b in model.Blips)
         {
-            var pos = ProjectTo(center, ringPx, b.ScreenX, b.ScreenY, scale);
-            if (pos == null)
+            if (!ProjectTo(center, ringPx, b.ScreenX, b.ScreenY, b.HeightOffset, scale,
+                           out _, out Vector2 p))
                 continue;
-            float d2 = (pos.Value - at).LengthSquared();
+            float d2 = (p - at).LengthSquared();
             if (d2 < bestD2)
             {
                 bestD2 = d2;
@@ -255,7 +414,10 @@ public partial class RadarPanel : Control
             return null;
         var (center, ringPx) = Layout();
         float scale = ringPx / Mathf.Max(1f, model.Range);
-        return ProjectTo(center, ringPx, b.ScreenX, b.ScreenY, scale);
+        if (!ProjectTo(center, ringPx, b.ScreenX, b.ScreenY, b.HeightOffset, scale,
+                       out _, out Vector2 p))
+            return null;
+        return p;
     }
 
     /// <summary>Клик по блипу → цель (блип в ClickRadius px от курсора).</summary>

@@ -4,10 +4,24 @@ using SpaceCorporation.Net;
 
 namespace SpaceCorporation.UI;
 
+/// <summary>Режим дальности радара (перебор по Shift+R, см. RadarPanel).
+/// Near/Mid — фиксированные ступени, Long — вся мощность радара корабля
+/// (RadarModel.MaxRange), Auto — ступень выбирается по ближайшей цели.</summary>
+public enum RadarRangeMode
+{
+    Near,   // 400 м
+    Mid,    // 2 км
+    Long,   // мощность радара корабля
+    Auto,   // по ближайшей цели
+}
+
 /// <summary>
 /// Один блип радара после фильтрации/поворота (<see cref="RadarModel"/>).
 /// Позиция уже в системе координат панели: ScreenY — «вперёд по курсу»,
-/// ScreenX — «вправо», HeightOffset — ΔY (рисочка гравидара). Метры.
+/// ScreenX — «вправо», HeightOffset — высота над local-горизонталью корабля
+/// (проекция RelPos на up; рисочка гравидара). Метры. Все три — проекции
+/// RelPos на полный локальный базис своего корабля (forward/right/up):
+/// roll и pitch центра перемещают контакты между этими осями.
 /// </summary>
 public sealed class RadarBlip
 {
@@ -49,13 +63,70 @@ public sealed class RadarModel
     /// (столько же, до чего дотягивает выход гистерезиса в Sync).</summary>
     public static float HysteresisOut() => 1f + Hysteresis;
 
-    /// <summary>Текущий радиус обзора, м (500/1000/2000/4000 у панели).</summary>
-    public float Range { get; set; } = DefaultRange;
+    /// <summary>Текущий радиус обзора, м. Ограничен снизу ближней ступенью,
+    /// сверху — мощностью радара корабля (<see cref="MaxRange"/>).</summary>
+    public float Range
+    {
+        get => _range;
+        set => _range = MathF.Min(MathF.Max(value, NearRange), MaxRange);
+    }
 
-    public const float DefaultRange = 2000f;
+    private float _range = DefaultRange;
 
-    /// <summary>Курс центра (свой корабль), рад вокруг Y. forward = (sin Y, cos Y).</summary>
-    public float ForwardYaw { get; private set; }
+    public const float DefaultRange = MidRange;
+
+    // ------------------------------------------------------- режимы дальности
+
+    /// <summary>Ступени режимов дальности, м: ближний/средний; дальний — вся
+    /// мощность радара корабля (<see cref="MaxRange"/>).</summary>
+    public const float NearRange = 400f;
+    public const float MidRange = 2000f;
+
+    /// <summary>Мощность радара корабля, м — верхняя граница Range и радиус
+    /// «дальнего» режима. Ставит RadarSource из Loadout корабля.</summary>
+    public float MaxRange { get; set; } = DefaultMaxRange;
+
+    public const float DefaultMaxRange = 4000f;
+
+    /// <summary>Радиус, который выберет авторежим при дистанции ближайшей
+    /// цели <paramref name="nearestDist"/>: <see cref="NearRange"/>, если
+    /// цель ближе 400 м; <see cref="MidRange"/>, если ближе 2 км; иначе —
+    /// вся мощность <paramref name="maxRange"/>. Нет целей — средняя ступень.
+    /// Чистый хелпер (тестируется без движка).</summary>
+    public static float AutoRangeFor(float nearestDist, float maxRange)
+    {
+        if (float.IsNaN(nearestDist) || nearestDist <= NearRange) return NearRange;
+        if (nearestDist <= MidRange) return MidRange;
+        return maxRange;
+    }
+
+    /// <summary>Название авторежима для отбора: ближний/средний, если цель
+    /// попадает в ступень, иначе дальний (мощность).</summary>
+    public static RadarRangeMode PickAutoMode(float nearestDist) =>
+        nearestDist <= NearRange ? RadarRangeMode.Near
+        : nearestDist <= MidRange ? RadarRangeMode.Mid
+        : RadarRangeMode.Long;
+
+    /// <summary>Курс центра (свой корабль), рад вокруг Y. forward = (sin Y, cos Y).
+    /// Свойство-адаптер для yaw-перегрузки Advance (совместимость тестов);
+    /// полный базис задаёт перегрузка с forward/up (roll/pitch тоже).</summary>
+    public float ForwardYaw
+    {
+        get => MathF.Atan2(FwdX, FwdZ);
+        private set { FwdX = MathF.Sin(value); FwdZ = MathF.Cos(value); UpX = 0f; UpY = 1f; UpZ = 0f; }
+    }
+
+    // Локальный базис корабля в мировых осях: forward — курс «нос», up —
+    // локальная вертикаль (нормаль горизонтальной плоскости корабля),
+    // right = forward × up (правая рука). Roll/pitch вращают up → точки на
+    // радаре ездят вместе с креном.
+    public float FwdX, FwdY, FwdZ;
+    public float UpX, UpY, UpZ;
+
+    /// <summary>Ось «вправо» = forward × up (X,Z — для горизонтальных векторов).</summary>
+    public float RightX => FwdY * UpZ - FwdZ * UpY;
+    public float RightY => FwdZ * UpX - FwdX * UpZ;
+    public float RightZ => FwdX * UpY - FwdY * UpX;
 
     // Кэш блипов по NetId — переживает сборки; затухание и гистерезис живут здесь.
     private readonly Dictionary<int, RadarBlip> _blips = new(64);
@@ -118,16 +189,23 @@ public sealed class RadarModel
 
     // ------------------------------------------------------------ Advance (кадр)
 
+    /// <summary>Yaw-only вариант (без roll/pitch): up = мировой +Y. Совместимость
+    /// старых вызовов/тестов; новый код зовёт перегрузку с up корабля.</summary>
+    public void Advance(float dt, float forwardYaw) =>
+        Advance(dt, MathF.Sin(forwardYaw), 0f, MathF.Cos(forwardYaw), 0f, 1f, 0f);
+
     /// <summary>
-    /// Кадровый шаг: экстраполяцияRelPos += RelVel·Δt, поворот на курс, fade
-    /// исчезнувших, пересборка отсортированного вида. Вызывать каждый кадр.
+    /// Кадровый шаг: экстраполяцияRelPos += RelVel·Δt, поворот на полный базис
+    /// своего корабля (forward+up — с roll и pitch), fade исчезнувших,
+    /// пересборка отсортированного вида. Вызывать каждый кадр.
     /// </summary>
-    public void Advance(float dt, float forwardYaw)
+    public void Advance(float dt, float fx, float fy, float fz, float ux, float uy, float uz)
     {
-        ForwardYaw = forwardYaw;
-        float fx = MathF.Sin(forwardYaw), fz = MathF.Cos(forwardYaw);
-        // Правый вектор радара: forward × up? (для forward=(sinY,cosY) right=(cosY,-sinY))
-        float rx = fz, rz = -fx;
+        FwdX = fx; FwdY = fy; FwdZ = fz;
+        UpX = ux; UpY = uy; UpZ = uz;
+        // right = forward × up (правая рука; yaw+up=Y даёт (−cos Y, 0, sin Y),
+        // прежний исправленный вектор — зеркала «вида снизу» больше нет).
+        float rx = fy * uz - fz * uy, ry = fz * ux - fx * uz, rz = fx * uy - fy * ux;
 
         _view.Clear();
         LiveCount = 0;
@@ -148,9 +226,11 @@ public sealed class RadarModel
                 LiveCount++;
             }
 
-            b.ScreenX = b.Contact.RelPos.X * rx + b.Contact.RelPos.Z * rz;
-            b.ScreenY = b.Contact.RelPos.X * fx + b.Contact.RelPos.Z * fz;
-            b.HeightOffset = b.Contact.RelPos.Y;
+            // Локальные координаты контакта в базисе корабля (полный базис —
+            // roll/pitch центра двигают и «горизонталь», и «высоту» блипа).
+            b.ScreenX = b.Contact.RelPos.X * rx + b.Contact.RelPos.Y * ry + b.Contact.RelPos.Z * rz;
+            b.ScreenY = b.Contact.RelPos.X * fx + b.Contact.RelPos.Y * fy + b.Contact.RelPos.Z * fz;
+            b.HeightOffset = b.Contact.RelPos.X * ux + b.Contact.RelPos.Y * uy + b.Contact.RelPos.Z * uz;
             _view.Add(b);
         }
 
@@ -173,4 +253,19 @@ public sealed class RadarModel
 
     /// <summary>Блип контакта (для теста/панели), null — если контакта нет.</summary>
     public RadarBlip? FindBlip(int netId) => _blips.TryGetValue(netId, out var b) ? b : null;
+
+    /// <summary>Дистанция ближайшего контакта к своему кораблю, м;
+    /// float.MaxValue — контактов нет. Для авторежима дальности.</summary>
+    public float NearestContactDistance()
+    {
+        float best = float.MaxValue;
+        foreach (var kv in _blips)
+        {
+            var c = kv.Value.Contact;
+            float d = MathF.Sqrt(c.RelPos.X * c.RelPos.X + c.RelPos.Y * c.RelPos.Y + c.RelPos.Z * c.RelPos.Z);
+            if (d < best)
+                best = d;
+        }
+        return best;
+    }
 }

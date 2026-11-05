@@ -138,6 +138,14 @@ public partial class HudLayer : CanvasLayer
             _targetMarker.QueueRedraw();
             GetViewport().SetInputAsHandled();
         }
+        else if (@event is InputEventKey k && k.Pressed && k.Keycode == Key.R
+                 && k.ShiftPressed)
+        {
+            // Shift+R — перебор режимов дальности радара (Near→Mid→Long→Auto).
+            // Проверяем ДО hud_radar: одиночная R скрывает панель.
+            _radarView.CycleMode();
+            GetViewport().SetInputAsHandled();
+        }
         else if (@event.IsActionPressed("hud_radar"))
         {
             // R — показать/скрыть радар (radar-plan R2). Прямо всю панель
