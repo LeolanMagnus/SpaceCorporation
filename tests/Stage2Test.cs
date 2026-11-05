@@ -66,9 +66,17 @@ public partial class Stage2Test : Node3D
         // П.1 и п.3 считаются сразу, без физических кадров. П.2 требует реального
         // физического шага (живой RigidBody3D с CustomIntegrator) — он доделывается
         // в _PhysicsProcess, а итог печатается там же и только потом Finish().
+        // Пилотирование 2.0 доворачивает нос из ПОЗИЦИИ курсора: слепая зона
+        // 100px, полный радиус = ¼ ВЫСОТЫ окна. В headless окно по умолчанию
+        // 64×64 → полный радиус 16px < слепой зоны 100px, и довернуть нос было
+        // бы физически невозможно на любом пикселе. Поэтому поднимаем окно до
+        // 1280×720 (полный радиус = 180px, слепая зона в него влезает).
+        GetWindow().Size = new Vector2I(1280, 720);
+
         RunFlightModelTests();
         RunAngularSpeedLimitTests();
         RunInputFrameTests();
+        RunPilotAimTests();
         StartIntegratorProbe();
     }
 
@@ -257,6 +265,81 @@ public partial class Stage2Test : Node3D
     }
 
     // ==================================================================
+    // П.3b — PilotAim: чистая математика доворота носа на курсор
+    // ==================================================================
+
+    /// <summary>Юнит-тест статики <see cref="PilotAim"/> без дерева сцены и
+    /// без мыши: слепая зона, линейная рампа, потолок скорости и вырожденная
+    /// геометрия микроскопического окна. Это тот же код, что крутит нос в
+    /// живом пилот-режиме — крыть его отдельно значит не зависеть от физки.</summary>
+    private void RunPilotAimTests()
+    {
+        GD.Print("[Stage2Test] п.3b: PilotAim — математика доворота");
+
+        Vector2 c = new Vector2(500f, 300f);   // центр окна (нос смотрит сюда)
+        float h = 720f;                          // высота окна
+        float R = PilotAim.FullSpeedRadiusPx(h); // полный радиус = ¼·720 = 180
+        float dz = PilotAim.DeadzoneRadiusPx;    // слепая зона = 100px
+
+        Check(Mathf.Abs(R - 180f) < 1e-4f && Mathf.Abs(dz - 100f) < 1e-4f,
+            $"п.3b: радиусы — полный {R:F0}px, слепая зона {dz:F0}px");
+        Check(R > dz, "п.3b: полный радиус больше слепой зоны (рампа существует)");
+
+        // Точно в центре — направление неопределено → не крутим.
+        Check(PilotAim.TurnFactor(c, c, R) == Vector2.Zero,
+            "п.3b: курсор в центре (r=0) → ноль");
+
+        // Внутри слепой зоны — не крутим (микродрожание руки).
+        Check(PilotAim.TurnFactor(c + new Vector2(60f, 0f), c, R) == Vector2.Zero,
+            "п.3b: r=60 < слепой зоны → ноль");
+
+        // Ровно на границе слепой зоны (r = dz) — включительно → ноль.
+        Check(PilotAim.TurnFactor(c + new Vector2(dz, 0f), c, R) == Vector2.Zero,
+            "п.3b: r=dz на границе → ноль (зона включительно)");
+
+        // Ровно на окружности полной скорости → фактор = 1 по направлению.
+        Vector2 atR = PilotAim.TurnFactor(c + new Vector2(R, 0f), c, R);
+        Check(Mathf.Abs(atR.X - 1f) < 1e-4f && Mathf.Abs(atR.Y) < 1e-4f,
+            "п.3b: r=R → фактор 1 (вправо)");
+
+        // За окружностью — потолок: фактор всё ещё 1 (не растёт).
+        Vector2 beyond = PilotAim.TurnFactor(c + new Vector2(4f * R, 0f), c, R);
+        Check(Mathf.Abs(beyond.X - 1f) < 1e-4f && Mathf.Abs(beyond.Y) < 1e-4f,
+            "п.3b: r≫R → фактор ограничен 1");
+
+        // Середина рампы (r = (dz+R)/2 = 140) → фактор 0.5 ровно.
+        Vector2 mid = PilotAim.TurnFactor(c + new Vector2(140f, 0f), c, R);
+        Check(Mathf.Abs(mid.X - 0.5f) < 1e-4f && Mathf.Abs(mid.Y) < 1e-4f,
+            $"п.3b: середина рампы r=140 → фактор 0.5 (получено {mid.X:F3})");
+
+        // Вниз по экрану → фактор по +Y (экранная ось вниз = pitch+ в look-канале).
+        Vector2 down = PilotAim.TurnFactor(c + new Vector2(0f, R), c, R);
+        Check(Mathf.Abs(down.X) < 1e-4f && Mathf.Abs(down.Y - 1f) < 1e-4f,
+            "п.3b: курсор ниже центра → фактор по +Y");
+
+        // Вырожденное микроокно: полный радиус меньше слепой зоны (headless
+        // 64×64: R=16 < dz=100) — внутри зоны ноль, за ней сразу полная скорость.
+        float tinyR = PilotAim.FullSpeedRadiusPx(64f); // = 16
+        Check(PilotAim.TurnFactor(c + new Vector2(50f, 0f), c, tinyR) == Vector2.Zero,
+            "п.3b: микроокно, r=50 ≤ dz → ноль");
+        Vector2 tinyFull = PilotAim.TurnFactor(c + new Vector2(150f, 0f), c, tinyR);
+        Check(Mathf.Abs(tinyFull.X - 1f) < 1e-4f && Mathf.Abs(tinyFull.Y) < 1e-4f,
+            "п.3b: микроокно, r>dz → сразу полная скорость (рампы нет)");
+
+        // LookRadiansPerStep: на окружности полной скорости команда = потолок
+        // (MaxAngularSpeed=6 рад/с × dt=1/60 = 0.1 рад за шаг), направление вправо.
+        Vector2 step = PilotAim.LookRadiansPerStep(c + new Vector2(R, 0f), c,
+            R, 6f, 1f / 60f);
+        Check(Mathf.Abs(step.X - 0.1f) < 1e-4f && Mathf.Abs(step.Y) < 1e-4f,
+            $"п.3b: полная скорость за шаг = 0.1 рад (получено {step.X:F4})");
+
+        // Внутри слепой зоны команда — ровно ноль (не «почти»).
+        Vector2 dzStep = PilotAim.LookRadiansPerStep(c + new Vector2(50f, 0f), c,
+            R, 6f, 1f / 60f);
+        Check(dzStep == Vector2.Zero, "п.3b: внутри слепой зоны команда за шаг = 0");
+    }
+
+    // ==================================================================
     // П.2 — тандем «RigidBody3D с CustomIntegrator ↔ FlightModel»
     // ==================================================================
     // Проверяет то, чего чистая математика не проверяет: что запись состояния,
@@ -436,6 +519,9 @@ public partial class Stage2Test : Node3D
 
     private Quaternion _mRot;
     private float _mYawBefore;
+    // Пилотирование 2.0: позиции курсора-прицела (полная скорость / слепая зона).
+    private Vector2 _mAimCursor;
+    private Vector2 _mAimDz;
 
     private static InputEventKey KeyEvt(Key key, bool pressed) => new()
     {
@@ -617,75 +703,99 @@ public partial class Stage2Test : Node3D
                 Check(GetViewport()?.GetCamera3D() == _ship.GetNodeOrNull<Camera3D>("ChaseCamera"),
                     "п.6b: камера корабля стала активной в вьюпорте");
 
+                // Пилотирование 2.0 крутит нос из ПОЗИЦИИ курсора. Чтобы схема
+                // вообще могла проверить доворот, окно обязано вмещать слепую
+                // зону (100px) внутри полного радиуса (¼ высоты): иначе на любом
+                // пикселе доворот нулевой. Проверяем, что resize в _Ready сел.
+                Vector2 vs = GetViewport().GetVisibleRect().Size;
+                Check(PilotAim.FullSpeedRadiusPx(vs.Y) > PilotAim.DeadzoneRadiusPx,
+                    $"п.6b: окно {vs} вмещает схему (полный радиус " +
+                    $"{PilotAim.FullSpeedRadiusPx(vs.Y):F0}px > слепая зона " +
+                    $"{PilotAim.DeadzoneRadiusPx:F0}px)");
+
                 _mRot = _ship.GlobalTransform.Basis.GetRotationQuaternion();
                 _mYawBefore = _ship.GlobalTransform.Basis.GetEuler().Y;
-                // ДВЕ дельты в одном физкадре: мышь приходит чаще 60 Гц, и
-                // накопление обязано складывать их, а не терять одну.
-                PushLook(10f, 0f, AimCenter());
-                PushLook(20f, 0f, AimCenter());
+                // Режим 2.0: прицел — ПОЗИЦИЯ курсора. Ставим курсор ЗА окружностью
+                // полной скорости (горизонтально вправо) → команда 100% скорости.
+                _mAimCursor = AimCenter() + new Vector2(PilotAim.DeadzoneRadiusPx + 100f, 0f);
+                PushLookPos(_mAimCursor);
                 _pilotFrames = 0;
                 _pilotStep = 6;
                 return;
 
             case 6:
-                // Кадр ввода проверяем на ПЕРВОМ кадре этой фазы: `_localInput` —
-                // последний потреблённый кораблём кадр, и ровно в нём мышиная
-                // сумма ещё лежит (следующий шаг принесёт пустой кадр). Проверка
-                // доказывает, что дельты пришли из реальных событий, а не из шва
-                // TestAddLookDelta.
+            {
+                // РЕЖИМ 2.0: скорость доворота = ПОЗИЦИЯ курсора относительно
+                // центра (не дельта). Пока курсор держим за окружностью полной
+                // скорости, команда 100% скорости ЖИВЁТ В КАЖДОМ кадре ввода
+                // (PilotLookFromCursor пересчитывается каждый физшаг) — это и
+                // отличает позиционную модель от дельтовой (где дельта жила лишь
+                // в ПЕРВОМ кадре). Команда: полный радиус MaxAngularSpeed*dt.
+                float fullPerStep = _ship.MaxAngularSpeed * FlightModel.FixedDt;
                 if (_pilotFrames == 1)
-                    Check(Mathf.Abs(_ship.LocalInput.LookYaw - 30f * _ship.MouseSensitivity) < 1e-4f,
-                        $"п.6b: в кадре ввода мышиная сумма {30f * _ship.MouseSensitivity:F4} рад " +
-                        $"(факт {_ship.LocalInput.LookYaw:F4}) — обе дельты одного кадра сложились");
+                    Check(Mathf.Abs(_ship.LocalInput.LookYaw - fullPerStep) < 1e-4f &&
+                          Mathf.Abs(_ship.LocalInput.LookPitch) < 1e-6f,
+                          $"п.6b: курсор за окружностью — команда 100% скорости " +
+                          $"(ожидание {fullPerStep:F4} рад/шаг, факт {_ship.LocalInput.LookYaw:F4})");
+                if (_pilotFrames == 3)
+                    Check(Mathf.Abs(_ship.LocalInput.LookYaw - fullPerStep) < 1e-4f,
+                        $"п.6b: команда держится в кадре (позиция, не дельта): " +
+                        $"факт {_ship.LocalInput.LookYaw:F4}");
                 if (_pilotFrames < 2) return;
 
                 float yaw = _ship.GlobalTransform.Basis.GetEuler().Y;
                 float dyaw = yaw - _mYawBefore;
-                Check(Mathf.Abs(dyaw - (-30f * _ship.MouseSensitivity)) < 1e-3f,
-                    $"п.6b: мышь повернула нос на {dyaw:F4} рад (ожидание " +
-                    $"{-30f * _ship.MouseSensitivity:F4}, сумма двух дельт за кадр)");
-                Check(AngleBetween(_mRot, _ship.GlobalTransform.Basis.GetRotationQuaternion()) > 0.05f,
-                    "п.6b: ориентация корпуса реально изменилась от мыши");
+                Check(dyaw < -1e-3f,
+                    $"п.6b: курсор справа от центра довернул нос (Δyaw={dyaw:F4} рад, " +
+                    "нос уходит влево — знак как в дельтовой модели)");
+                Check(AngleBetween(_mRot, _ship.GlobalTransform.Basis.GetRotationQuaternion()) > 0.02f,
+                    "п.6b: ориентация корпуса реально изменилась от позиции курсора");
 
-                // Гейт прицела: курсор в углу экрана (луч камеры проходит далеко
-                // от корпуса) — мышь НЕ крутит корабль.
-                _mRot = _ship.GlobalTransform.Basis.GetRotationQuaternion();
+                // СЛЕПАЯ ЗОНА: ставим курсор вплотную к центру (внутри 100px) —
+                // доворот обязан пропасть, команда ввода = 0. Поворот — ПРЯМАЯ
+                // дозапись ориентации (ApplyLookRadians), угловой скорости не
+                // копится: стоит обнулить look — yaw сразу замирает. therefore
+                // снимаем отсчёт СЕЙЧАС (после доворота case6), и case7 меряет
+                // приращение уже от слепой зоны.
                 _mYawBefore = yaw;
-                PushLook(80f, 0f, AimCorner());
+                _mAimDz = AimCenter() + new Vector2(50f, 0f); // r=50 <= 100
+                PushLookPos(_mAimDz);
                 _pilotFrames = 0;
                 _pilotStep = 7;
                 return;
+            }
 
             case 7:
                 if (_pilotFrames < 2) return;
 
+                // СЛЕПАЯ ЗОНА: курсор в 50px от центра (< 100px) → команда 0,
+                // ориентация замирает (look — прямая дозапись, w не копится).
                 float yaw2 = _ship.GlobalTransform.Basis.GetEuler().Y;
                 Check(Mathf.Abs(yaw2 - _mYawBefore) < 1e-4f,
-                    $"п.6b: курсор вне прицела — мышь не крутит нос (Δ = {yaw2 - _mYawBefore:E2} рад)");
-                // Проверка самого гейта, а не совпадения: тот же самый пиксель
-                // в центре окна прицел ловит. Иначе тест прошёл бы и на сломанном
-                // гейте, который всегда возвращает false.
+                    $"п.6b: курсор в слепой зоне — нос не доворачивает (Δ = {yaw2 - _mYawBefore:E2} рад)");
+                // Команда ввода в слепой зоне тоже строго ноль (а не «мало»).
+                Check(Mathf.Abs(_ship.LocalInput.LookYaw) < 1e-6f &&
+                      Mathf.Abs(_ship.LocalInput.LookPitch) < 1e-6f,
+                      "п.6b: в слепой зоне команда ввода = 0");
+                // Aim-хелпер (направление выстрела) жив: центр ловится, угол — нет.
                 Check(_ship.TestAimOnShip(AimCenter()),
-                    "п.6b: центр экрана = прицел активен");
+                    "п.6b: центр экрана = направление выстрела активно");
                 Check(!_ship.TestAimOnShip(AimCorner()),
-                    "п.6b: угол экрана = прицел отключён");
-
-                Check(_ship.LocalInput.Mask != 0u || true, "п.6b: кадр ввода снят");
+                    "п.6b: угол экрана = направление выстрела отключено");
 
                 // --- шаг «режим пилотирования / режим взаимодействия» ---
-                // Правая кнопка мыши (действие toggle_interaction) переводит в
-                // режим взаимодействия: мышь и клавиши тангажа/рыскания перестают
-                // крутить нос. Проверяем на том же AimShip (он в режиме пилота).
+                // Правая кнопка мыши (toggle_interaction) гасит позиционный доворот:
+                // в режиме взаимодействия НИЧТО не крутит нос (ни курсор, ни Q).
                 Check(!_ship.IsInteractionMode, "п.6c: по умолчанию режим пилотирования");
                 _ship.SetInteractionMode(true);
                 Check(_ship.IsInteractionMode, "п.6c: переключение в режим взаимодействия");
 
                 _mRot = _ship.GlobalTransform.Basis.GetRotationQuaternion();
                 _mYawBefore = _ship.GlobalTransform.Basis.GetEuler().Y;
-                // Мышь в центре (гейт прицела бы пропустил) + удерживаемая клавиша
-                // рыскания — в режиме взаимодействия НИЧТО не доворачивает нос.
+                // Курсор за окружностью (в пилот-режиме дал бы 100%) + удерживаемая
+                // Q — в режиме взаимодействия гейт обязан погасить позиционный канал.
                 Input.ParseInputEvent(KeyEvt(Key.Q, true));
-                PushLook(120f, 0f, AimCenter());
+                PushLookPos(_mAimCursor);
                 _pilotFrames = 0;
                 _pilotStep = 8;
                 return;
@@ -712,16 +822,20 @@ public partial class Stage2Test : Node3D
                 // снова попадают в кадр.
                 _ship.SetInteractionMode(false);
                 Check(!_ship.IsInteractionMode, "п.6c: возврат в режим пилотирования");
-                PushLook(120f, 0f, AimCenter());
+                // Позиционный канал: ставим курсор за окружностью полной скорости —
+                // в пилот-режиме это снова команда 100% (взаимодействие сняло гейт).
+                PushLookPos(_mAimCursor);
                 _pilotFrames = 0;
                 _pilotStep = 9;
                 return;
 
             case 9:
-                // Дельта мыши живёт только в ПЕРВОМ кадре после PushLook
-                // (дальше шаг приносит пустой кадр) — как в п.6b.
+                // Позиционный доворот ЖИВЁТ В КАЖДОМ кадре (не дельта) — курсор
+                // стоит за окружностью, команда держится. Проверяем в первом кадре:
+                // сразу после снятия гейта взаимодействия нос снова слушает мышь.
                 if (_pilotFrames == 1)
-                    Check(Mathf.Abs(_ship.LocalInput.LookYaw) > 1e-6f,
+                    Check(Mathf.Abs(_ship.LocalInput.LookYaw -
+                          _ship.MaxAngularSpeed * FlightModel.FixedDt) < 1e-4f,
                         "п.6c: в режиме пилотирования мышь вернулась в кадр");
                 if (_pilotFrames < 3) return;
                 Input.ParseInputEvent(KeyEvt(Key.Q, false));
@@ -734,14 +848,16 @@ public partial class Stage2Test : Node3D
     }
 
     /// <summary>Центр окна: туда смотрит камера-догонялка корабля, корпус в
-    /// прицеле. Размер окна берём у вьюпорта, а не хардкодим: в headless окно
-    /// 64×64, и хардкод 640×360 дал бы тесту «курсор неизвестно где».</summary>
-    private static Vector2 AimCenter()
+    /// прицеле. Размер окна берём у вьюпорта, а не хардкодим: ship читает тот
+    /// же `GetViewport().GetVisibleRect().Size` в `PilotLookFromCursor`, и у
+    /// нас resize в `on-ready` поднимает окно до 1280×720. Если бы центр был
+    /// хардкодом (или env-зависимым), курсор-прицел теста и центр, от которого
+    /// отсчитывает нос корабль, разошлись бы — доворот считался бы по неверному
+    /// направлению, а луч выстрела промахивался бы по корпусу.</summary>
+    private Vector2 AimCenter()
     {
-        Vector2I s = System.Environment.GetEnvironmentVariable("SC_TEST_LARGE_WINDOW") == "1"
-            ? new Vector2I(1280, 720)
-            : new Vector2I(64, 64);
-        return new Vector2(s.X * 0.5f, s.Y * 0.5f);
+        Vector2 vs = GetViewport().GetVisibleRect().Size;
+        return new Vector2(vs.X * 0.5f, vs.Y * 0.5f);
     }
 
     /// <summary>Дальний угол окна: луч камеры проходит мимо корпуса.</summary>
@@ -757,6 +873,20 @@ public partial class Stage2Test : Node3D
         var ev = new InputEventMouseMotion
         {
             Relative = new Vector2(dx, dy),
+            GlobalPosition = screenPos,
+            Position = screenPos,
+        };
+        GetViewport().PushInput(ev, true);
+    }
+
+    /// <summary>Одна мышиная ПОЗИЦИЯ курсора-прицела (режим пилотирования 2.0):
+    /// корабль доворачивает нос к этой экрменной точке со скоростью,
+    /// пропорциональной её удалению от центра экрана. `Relative` не задаём —
+    /// новый режим читает только позицию.</summary>
+    private void PushLookPos(Vector2 screenPos)
+    {
+        var ev = new InputEventMouseMotion
+        {
             GlobalPosition = screenPos,
             Position = screenPos,
         };

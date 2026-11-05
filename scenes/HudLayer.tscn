@@ -1,7 +1,7 @@
 [gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/HudLayer.cs" id="1_hud"]
-[ext_resource type="Script" path="res://scripts/ui/Crosshair.cs" id="2_cross"]
+[ext_resource type="Script" path="res://scripts/ui/AimReticle.cs" id="2_cross"]
 [ext_resource type="Script" path="res://scripts/ui/TargetingService.cs" id="3_targeting"]
 [ext_resource type="Script" path="res://scripts/ui/TargetMarker.cs" id="4_marker"]
 [ext_resource type="Script" path="res://scripts/ui/RadarSource.cs" id="5_radar_src"]
@@ -40,18 +40,15 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-; ───────── Центр: прицельная марка (рисуется кодом, Crosshair.cs) ─────────
-[node name="Crosshair" type="Control" parent="HudRoot"]
+; ─ Центр: марка пилотирования 2.0 (AimReticle.cs): нос-точка в центре, курсор-
+; перекрестие на мыши, пунктир 2px с тремя галочками между ними. Растянут на весь
+; rect (preset 15, якоря как у HudRoot): Size = размер окна, центр = Size/2. Skin
+; не задан — рисуется примитивами; под концепт-арт вешается ReticleSkin в инспекторе.
+[node name="AimReticle" type="Control" parent="HudRoot"]
 material = null
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -30.0
-offset_top = -30.0
-offset_right = 30.0
-offset_bottom = 30.0
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2

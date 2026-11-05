@@ -517,7 +517,15 @@ public partial class NetTest : Node
         bool okLook = ship2.TestSubmitInput(senderPeer: 2, tick: 4, mask: 0u,
                                             lookYaw: 0.3f, lookPitch: 0f);
         Check(okLook, "п.7: кадр с поворотом мыши (lookYaw) от пилота принят");
-        ship2.TestStepForTest(1.0f / 60.0f);
+        // Сервер держит look-канал ПОД ПОТОЛКОМ угловой скорости за шаг
+        // (`FlightModel.ClampLookRadians`): один физшаг доворачивает нос не более
+        // чем на MaxAngularSpeed·dt, иначе рывок мыши повернул бы быстрее, чем
+        // умеет корпус (и чем воспроизведёт реплика по тем же кадрам). Кадр от
+        // пилота «залипает» (очередь пуста → `_serverInput` держится), поэтому
+        // команда 0.3 рад применяется каждый шаг и накапливается. Гоняем несколько
+        // шагов — накопленный доворот обязан превысить 0.1 рад.
+        for (int i = 0; i < 10; i++)
+            ship2.TestStepForTest(1.0f / 60.0f);
         float yawAfter = ship2.GlobalTransform.Basis.GetEuler().Y;
         Check(Mathf.Abs(yawAfter - yawBefore) > 0.1f,
               $"п.7: сервер довернул нос по lookYaw кадра: {yawBefore:F3} → {yawAfter:F3} рад");

@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeHudReticle.cs" id="1_probe"]
+
+; Живая проверка шага 8: прицел пилотирования 2.0 (AimReticle) внутри
+; настоящего Main.tscn — узел разрешён, растянут якорями, гейт ShowAim
+; горит на пилотируемом корабле, гаснет в режиме взаимодействия и возвращается.
+[node name="ProbeHudReticle" type="Node"]
+script = ExtResource("1_probe")

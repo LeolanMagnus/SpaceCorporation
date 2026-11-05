@@ -44,6 +44,11 @@ public partial class HudLayer : CanvasLayer
     private TargetingService _targeting = null!;
     private TargetMarker _targetMarker = null!;
 
+    // Марка пилотирования 2.0 (AimReticle): слой прицела (курсор-перекрестие,
+    // пунктир, галочки) горит только когда локальный пир реально ведёт корабль
+    // в режиме пилота (не в режиме взаимодействия).
+    private AimReticle _reticle = null!;
+
     // Комм-лог (H6): 6 слотов Label, кольца событий HudEventBus + возраст строк.
     private readonly Label[] _commLabels = new Label[6];
     private readonly double[] _commAge = new double[6];
@@ -69,6 +74,7 @@ public partial class HudLayer : CanvasLayer
 
         _targeting = GetNode<TargetingService>("TargetingService");
         _targetMarker = GetNode<TargetMarker>("HudRoot/TargetMarker");
+        _reticle = GetNode<AimReticle>("HudRoot/AimReticle");
 
         // Комм-лог (H6): слоты + подписка на шину событий.
         for (int i = 0; i < _commLabels.Length; i++)
@@ -172,6 +178,13 @@ public partial class HudLayer : CanvasLayer
         UpdateWorldTag();
         UpdateObjective();
         UpdateCommlink(delta);
+
+        // Марка пилотирования 2.0: слой прицела (курсор-перекрестие, пунктир,
+        // галочки) включаем только когда локальный пир реально ведёт свой корабль
+        // в режиме пилота. Вне этого — только точка-маркер направления носа.
+        var myShip = GetMyShip();
+        _reticle.ShowAim =
+            myShip != null && myShip.IsLocalPilot && !myShip.IsInteractionMode;
 
         // H3: цель могла умереть/исчезнуть — снимаем её (маркер сам пустеет).
         if (_targeting.TargetNode != null && !_targeting.ValidateTarget())
