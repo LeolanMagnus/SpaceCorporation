@@ -1,0 +1,65 @@
+# ---- Physics ----
+374-400 Physics
+1562-1602 Physics
+1607-1662 Physics
+4040-4061 Physics
+# ---- Capture ----
+553-553 Capture
+577-607 Capture
+1726-1748 Capture
+1768-1769 Capture
+1783-1902 Capture
+3963-3998 Capture
+# ---- Docking ----
+536-536 Docking
+1673-1720 Docking
+1910-1946 Docking
+1972-2074 Docking
+2482-2515 Docking
+2525-2541 Docking
+2553-2674 Docking
+4076-4125 Docking
+# ---- Combat ----
+343-349 Combat
+356-359 Combat
+361-372 Combat
+402-429 Combat
+2281-2350 Combat
+2356-2361 Combat
+2368-2374 Combat
+2380-2391 Combat
+2398-2473 Combat
+2678-2682 Combat
+2695-2912 Combat
+2087-2095 Combat
+# ---- Net (input/snapshot/reconcile/interp/assist-replica) ----
+62-137 Net
+139-150 Net
+437-458 Net
+431-435 PilotCam
+493-532 Net
+611-668 Net
+784-998 Net
+2101-2124 Net
+2960-3258 Net
+3271-3955 Sync
+4000-4008 Net
+# ---- PilotCam (chase camera, look, mouse catcher) ----
+671-680 PilotCam
+2128-2266 PilotCam
+2925-2948 PilotCam
+4141-4281 PilotCam
+4301-4355 PilotCam
+# ---- Debug/test shims ----
+684-691 Debug
+695-706 Debug
+709-731 Debug
+964-979 Debug
+1154-1168 Debug
+1309-1378 Debug
+2519-2523 Debug
+4012-4031 Debug
+4063-4069 Debug
+4402-4416 Debug
+4427-4443 Debug
+4448-4531 Debug
