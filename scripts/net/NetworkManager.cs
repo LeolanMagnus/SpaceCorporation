@@ -5,7 +5,7 @@ using Godot;
 namespace SpaceCorporation;
 
 /// <summary>
-/// Autoload-сингл (res://scripts/core/NetworkManager.cs), объявлен в project.godot
+/// Autoload-сингл (res://scripts/net/NetworkManager.cs), объявлен в project.godot
 /// ВЫШЕ DebugInfoBus — иначе DebugLayer при старте читает ещё не готовый синглтон.
 ///
 /// Единственный источник правды о режиме работы процесса (решение В1,

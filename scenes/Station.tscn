@@ -1,8 +1,8 @@
 [gd_scene format=3 uid="uid://d5btxqxgs3cx"]
 
-[ext_resource type="Script" uid="uid://c7ypl6lalbt06" path="res://scripts/core/Station.cs" id="1_station"]
-[ext_resource type="Script" uid="uid://dhexmfk5ftgnr" path="res://scripts/core/StationState.cs" id="2_stationstate"]
-[ext_resource type="Script" uid="uid://om57jk7hwrnu" path="res://scripts/core/AttachPoint.cs" id="3_attach"]
+[ext_resource type="Script" uid="uid://c7ypl6lalbt06" path="res://scripts/entities/Station.cs" id="1_station"]
+[ext_resource type="Script" uid="uid://dhexmfk5ftgnr" path="res://scripts/entities/StationState.cs" id="2_stationstate"]
+[ext_resource type="Script" uid="uid://om57jk7hwrnu" path="res://scripts/entities/AttachPoint.cs" id="3_attach"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/StationReplication.tres" id="4_replcfg"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_station"]

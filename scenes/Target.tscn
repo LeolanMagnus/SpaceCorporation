@@ -1,6 +1,6 @@
 [gd_scene load_steps=6 format=3]
 
-[ext_resource type="Script" path="res://scripts/core/TargetState.cs" id="1_targetstate"]
+[ext_resource type="Script" path="res://scripts/entities/TargetState.cs" id="1_targetstate"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/TargetReplication.tres" id="2_replcfg"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_target"]

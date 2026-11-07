@@ -4,7 +4,7 @@
 [ext_resource type="PackedScene" path="res://scenes/TestStand.tscn" id="2_stand"]
 [ext_resource type="PackedScene" path="res://scenes/DebugLayer.tscn" id="5_debug"]
 [ext_resource type="PackedScene" path="res://scenes/HudLayer.tscn" id="7_hud"]
-[ext_resource type="Script" path="res://scripts/core/WorldSpawner.cs" id="6_spawner"]
+[ext_resource type="Script" path="res://scripts/entities/WorldSpawner.cs" id="6_spawner"]
 
 ; Главная сцена (§3.6): только инстансы отдельных сцен + данные сцены.
 ;

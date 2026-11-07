@@ -1,10 +1,10 @@
 [gd_scene format=3 uid="uid://b4nhmt5oasyr1"]
 
-[ext_resource type="Script" uid="uid://c4agxptd4h3ct" path="res://scripts/core/Ship.cs" id="1_ship"]
-[ext_resource type="Script" uid="uid://om57jk7hwrnu" path="res://scripts/core/AttachPoint.cs" id="2_attach"]
-[ext_resource type="Script" uid="uid://bm332njgtxulv" path="res://scripts/core/NetState.cs" id="3_netstate"]
+[ext_resource type="Script" uid="uid://c4agxptd4h3ct" path="res://scripts/entities/Ship.cs" id="1_ship"]
+[ext_resource type="Script" uid="uid://om57jk7hwrnu" path="res://scripts/entities/AttachPoint.cs" id="2_attach"]
+[ext_resource type="Script" uid="uid://bm332njgtxulv" path="res://scripts/net/NetState.cs" id="3_netstate"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/ShipReplication.tres" id="4_replcfg"]
-[ext_resource type="Script" uid="uid://6dd4d87tobcw" path="res://scripts/core/ShipHealthState.cs" id="5_health"]
+[ext_resource type="Script" uid="uid://6dd4d87tobcw" path="res://scripts/entities/ShipHealthState.cs" id="5_health"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/ShipHealthReplication.tres" id="6_healthcfg"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hull"]

@@ -16,7 +16,7 @@ config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 
 [autoload]
 
-NetworkManager="*res://scripts/core/NetworkManager.cs"
+NetworkManager="*res://scripts/net/NetworkManager.cs"
 DebugInfoBus="*res://scripts/core/DebugInfoBus.cs"
 HudEventBus="*res://scripts/ui/HudEventBus.cs"
 
