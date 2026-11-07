@@ -1,5 +1,38 @@
 # План рефакторинга: разбиение больших файлов и группировка по папкам
 
+## ✅ Статус выполнения (2026, этапы A и B выполнены)
+
+Все инкременты закоммичены, `dotnet build` = 0 ошибок, полный набор headless-тестов
+идентичен baseline HEAD (предсуществующие фейлы Stage1/2/4/5 не изменились по именам и числу).
+
+**Инструменты (`tools/`):** `split_map.py` (инвентаризация членов класса с учётом строк/стрингов/комментариев)
+и `split_cls.py` (разрезка на partial-файлы по правилам «строка→бакет», чистый перенос строк).
+
+**Максимальный файл: 4532 → 829 строк.**
+
+Этап A (partial-декомпозиция):
+- `Ship.cs` (4532) → 9 файлов: `Ship.cs`(789 ядро) + `.Physics`(434) `.Net`(829) `.Sync`(705) `.Capture`(216) `.Docking`(420) `.Combat`(526) `.PilotCam`(364) `.Debug`(244).
+- `NetworkManager.cs` (1573) → 5: ядро(519) + `.Registries` `.Docking` `.Identity`(537) `.Stats`.
+- `Player.cs` (614) → ядро + `.Attach`; `WorldSpawner.cs` (662) → ядро + `.Spawn`.
+
+Этап B (папки): перенос через `git mv` вместе с `.cs.uid`.
+```
+scripts/core/  → чистый домен (FlightModel, CaptureRules, Docking, Faction, ModuleCatalog, PilotAim, Collision*, buses)  [9 файлов]
+scripts/net/   ← NetworkManager(+partials), NetState, NetTypes, SnapshotBroadcaster, BroadcasterCore, ShipRecordCodec, InputFrame, SpatialIndex  [12]
+scripts/entities/ ← Ship(+9 partials), Player(+Attach), Station(+State), TargetState, AttachPoint, WorldSpawner(+Spawn), ShipTypes/Health/Loadout  [20]
+scripts/ui/, scripts/debug/  без изменений
+```
+Правки путей: `[autoload]` в `project.godot`, `ext_resource path` во всех `scenes/*.tscn` и `tests/*.tscn`.
+Обязательный шаг: **регенерация `.godot/uid_cache.bin`** (`godot --headless --path . --import`) — сцены
+ссылаются на скрипты по `uid`, кэш помнил старые пути, без реимпорта autoload падал.
+Осиротевшие `.cs.uid` partial-файлов в core удалены. Namespace НЕ менялся (папки и namespace в C# расходятся намеренно).
+
+Этап C (по желанию, НЕ выполнен — это уже не pure-refactor): общий `Registry<T>`, вынос остатка правил в чистые функции.
+
+Коммиты: `2b52baa` A1 · `7776bba` A2 · `9272e8b` A3 · `78eb1ed` B · `84864fc` B-cleanup.
+
+---
+
 ## 0. Инвентаризация (что и почему болит)
 
 Строки в основных `.cs` (production-код):
