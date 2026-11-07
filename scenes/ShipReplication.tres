@@ -115,3 +115,15 @@ properties/11/replication_mode = 2
 properties/12/path = NodePath("NetState:FactionValue")
 properties/12/spawn = true
 properties/12/replication_mode = 2
+
+; frame-plan шаг 6: захват — родитель и тик его последнего перехода. Тот же
+; транспорт, что у dock-полей и PilotAssist (редкие события, дельта OnChange,
+; spawn — поздно зашедшему пиру). Родитель нужен всем наблюдателям (интерполяция
+; шага 7: поза пассажира = поза родителя из батча + смещение), тик — только
+; клиенту-пилоту (сброс предсказания при смене режима интеграции).
+properties/13/path = NodePath("NetState:CaptureParentNetId")
+properties/13/spawn = true
+properties/13/replication_mode = 2
+properties/14/path = NodePath("NetState:CaptureTick")
+properties/14/spawn = true
+properties/14/replication_mode = 2

@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/CaptureRulesTest.cs" id="1_test"]
+
+; Тест правила захвата (frame-plan.md, шаг 2). CaptureRules — чистая функция,
+; физический шаг не нужен, но корень — Node3D по той же причине, что у остальных
+; тестов: единый прогон через run-tests.sh и 3D-сцена как контекст.
+[node name="CaptureRulesTest" type="Node3D"]
+script = ExtResource("1_test")

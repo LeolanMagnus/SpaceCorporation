@@ -89,6 +89,9 @@ public partial class RadarSource : Node
                 Faction = net.FactionValue,
                 Shape = RadarShape.Ship,
                 Damaged = health != null && health.Hp < health.MaxHp,
+                // frame-plan шаг 9: фаза захвата видна и наблюдателю — поле
+                // реплицируется (шаг 6), RadarSource на клиенте читает реплику.
+                Captured = net.CaptureParentNetId != 0,
             });
         }
 

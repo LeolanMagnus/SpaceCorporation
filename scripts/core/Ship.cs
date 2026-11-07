@@ -535,6 +535,77 @@ public partial class Ship : RigidBody3D
     // предсказание сбрасывается (_hasPrediction=false) и стартует от реплики.
     private bool _clientDockPhaseActive;
 
+    // frame-plan §6.3 (шаг 7): наблюдатель захваченного корабля. Точка
+    // интерполяции смещается ВДОЛЬ v_frame на собственный адаптивный
+    // _interpDelay: снимки A приходят на delay в прошлом, а родитель B у
+    // своего пилота-клиента рисуется «живым» предсказанием — пузырь визуально
+    // отстаёт на |v_frame|·delay (при 100 м/с и 0.1 с — 10 м). Сдвиг — НЕ
+    // экстраполяция (поза по-прежнему между снимков), это сдвиг точки съёмки:
+    // уносная составляющая позы A на 100% причинно равна позе B, сдвинуть её
+    // вперёд на delay — значит поставить A туда, где его видит пилот B.
+    // ВЕЛИЧИНА нарастает/снимается ПЛАВНО ( slew-лимит: |Δсдвиг| за кадр не
+    // больше CapShiftSlewPerSec·dt), иначе вход в захват рисует скачок в 10 м —
+    // ровно то, что ловит метрика (в) MaxHullDelta (порог 0.15 м при 60 к/с).
+    // Вектор сдвига держится залатченным: при выходе из фазы он гаснет к нулю
+    // по тому же лимиту, даже когда родительская реплика уже недоступна.
+    // Реплика скоростей родителя — из NetState родителя (far-тир их не несёт и
+    // оставляет прежние; захват в far — унос не включаем, R8).
+    private Vector3 _capShiftCur;       // текущий вектор сдвига точки съёмки
+    private double _capShiftLastNow = -1; // для dt между вызовами InterpolateHull
+    private const float CapShiftSlewPerSec = 8.0f; // ≤ порога метрики (в) 0.15 м·60/с
+    private bool _lastWireFarTier;      // тир последнего wire-снимка (R8: в far нет скоростей)
+
+    // frame-plan §6.2 (шаг 6): то же решение для фазы ЗАХВАТА. Кольцо
+    // предсказания с переигровкой (ReplayInputsAfter) не знает v_frame родителя
+    // на переигрываемых тиках — полной истории родителя в предсказании нет,
+    // поэтому предсказание пилота на пузыре расходилось бы с истиной авторитета
+    // почти на 100% и давало постоянные hardRollbacks. Дешёвая проверенная
+    // схема dock-фазы: на захвате кадры ВВОДА идут как обычно (тяга работает
+    // по локальной скорости, сервер интегрирует их в своей причине), но
+    // локальное предсказание и реконсиляция ВЫКЛЮЧЕНЫ, позу ведёт авторитет,
+    // картинка — через интерполяцию батча. Выход из фазы = разрыв: одно
+    // обнуление предсказания, старт от актуальной реплики.
+    private bool _clientCapturePhaseActive;
+
+    // frame-plan, шаг 3: захват объектом превосходящей массы (0 = нет). Истину
+    // пишет только авторитет в TickCaptureRule (правило — чистая функция
+    // CaptureRules, проверка раз в CaptureTuning.CheckEveryN физшагов).
+    // Шаг 6: переход РАЗЫСЫВАЕТСЯ репликой (Net.CaptureParentNetId/CaptureTick:
+    // спавн-снимок + OnChange-дельта), но это поле — источник ИСТИНЫ авторитета;
+    // у клиентов-наблюдателей факт захвата живёт в Net, а физика/предсказание
+    // гейтуются по нему (§6.2 frame-plan).
+    private int _captureParentNetId;
+
+    /// <summary>Проба кадра родителя (v_frame), внедрённая на ПОСЛЕДНЕМ шаге
+    /// этого тела. Снимается с ПРЕДЫДУЩЕЙ пробы — перенос при разгоне/торможении
+    /// родителя (см. `AdvanceFlight`); при смене родителя обнуляется, чтобы
+    /// «переходный» кадр не дал пинка от старого родителя.</summary>
+    private Vector3 _captureFrameV;
+
+    /// <summary>NetId родителя захвата (0 = не захвачен). Публично — HUD
+    /// (шаг 8), игрок (шаг 9) и автотесты (шаг 4).</summary>
+    public int CaptureParentNetId => _captureParentNetId;
+
+    /// <summary>Локальная скорость в кадре родителя: |v − v_frame| — синяя
+    /// строка HUD (frame-plan §1). Без захвата равна обычной скорости.</summary>
+    public Vector3 LocalVelocity => LinearVelocity - CaptureFrameVelocityAt(GlobalPosition);
+
+    /// <summary>frame-plan шаг 7 (HUD, R7): v_rel из СЕТЕВЫХ реплик обоих
+    /// кораблей — одинаково на сервере и клиенте (источник фазы —
+    /// `Net.CaptureParentNetId`, шаг 6). На этой стадии `FrameRotational=false`
+    /// (R3), поэтому v_frame = скорость родителя, поза не нужна. Возвращает
+    /// null, когда захвата нет (HUD не рисует строку вовсе).</summary>
+    public float? HudLocalSpeed()
+    {
+        if (Net == null || Net.CaptureParentNetId == 0)
+            return null;
+        var nm = NetworkManager.Instance;
+        if (nm == null || !nm.Ships.TryGetValue(Net.CaptureParentNetId, out var p)
+            || p == null || !IsInstanceValid(p) || p.Net == null)
+            return null;
+        return (Net.NetLinearVelocity - p.Net.NetLinearVelocity).Length();
+    }
+
     /// <summary>Последний `SimTick` эталона, по которому уже сверялись: чтобы не
     /// реконсилироваться по одной и той же реплике многократно.</summary>
     private int _lastReconcileTick = -1;
@@ -1184,6 +1255,12 @@ public partial class Ship : RigidBody3D
                 // (mode/auth/frozen/HP) не переписаны — assert'ы 3/4 стадий целы.
                 $"dock = {((DockState)(Net?.DockStateValue ?? 0))}, " +
                 $"dockStn = {(Net != null && Net.DockStationNetId != 0 ? Net.DockStationNetId.ToString() : "—")}, " +
+                // frame-plan шаг 10: активная фаза захвата — `cap: #child→#parent
+                // v_rel=(…)` (кадр родителя и локальная скорость в нём). Без
+                // захвата ключа cap в строке нет (не зашумлять панель).
+                (Net != null && Net.CaptureParentNetId != 0
+                    ? $"cap: #{Net.ShipNetId}→#{Net.CaptureParentNetId} v_rel=({LocalVelocity.X:F1},{LocalVelocity.Y:F1},{LocalVelocity.Z:F1}) m/s, "
+                    : "") +
                 $"netid = {Net?.ShipNetId ?? 0}, " +
                 // Показатели stage2-plan §2.5: Server Tick (тикет серверной физики из
                 // реплики NetState), Prediction Error (расхождение предсказания пилота
@@ -1532,9 +1609,54 @@ public partial class Ship : RigidBody3D
         _localInput = frame;
         // Шаг 5.8: на dock-фазе тяга пилота заменена серверной пружиной —
         // оба шага (боевой и тестовый) идут через этот общий код.
-        FlightState n = Net != null && Docking.IsCapturePhase((DockState)Net.DockStateValue)
-            ? StepDockSpring(s, dt)
-            : StepPrediction(s, frame, dt);
+        FlightState n;
+        if (Net != null && Docking.IsCapturePhase((DockState)Net.DockStateValue))
+        {
+            n = StepDockSpring(s, dt);
+        }
+        else if (_captureParentNetId != 0)
+        {
+            // frame-plan шаг 3: захват — интеграция В КАДРЕ родителя (§3):
+            // тяга, инерция и лимит MaxLinearSpeed работают по локальной
+            // скорости v_rel, а перенос родителем добавляется аддитивно.
+            // КЛЮЧЕВАЯ ДЕТАЛЬ (ловушка, найтая живым тестом CaptureLiveTest):
+            // v_rel снимается НЕ с ТЕКУЩЕЙ, а с ПРЕДЫДУЩЕЙ пробы кадра
+            // (_captureFrameV — кадр, применённый на прошлом шаге этого тела),
+            // а заново внедряется ТЕКУЩЕЙ. Разница (vFrame − vFramePrev) —
+            // фиктивное ускорение переноса: разгоняясь или тормозя, родитель
+            // МЕНЯЕТ мировую скорость пассажира на Δv_frame, поэтому свободный
+            // объект без тяги едет ВМЕСТЕ с родителем и держит дистанцию (§1:
+            // «B, двигаясь, переносит A с собой»). С одинаковой пробкой туда-
+            // сюда (v_frame в обоих местах одна и та же) правило тождественно
+            // для тела без сил: пассажир отставал бы от тормозящего флагмана
+            // на Δv·t и вылетал из пузыря — «перенос» означал бы только
+            // переименование скорости.
+            // Детерминизм: пробы кадра — чистые функции состояний A и B на
+            // этом шаге; переходы захвата — только от авторитета (шаг 6).
+            // ПОЗИЦИЯ сносится ПРЕДЫДУЩЕЙ пробой, а не текущей: FlightModel
+            // шагает позицией СКОРОСТИ НАЧАЛА кадра (explicit Euler, Step:
+            // pos += v·dt до тяги), а в причинном порядке (родитель шагает
+            // раньше пассажира) vFramePrev — это ровно финал родителя с
+            // прошлого кадра = его ВХОДНАЯ скорость в этом. Значит снос
+            // vFramePrev·dt побитово равен перемещению родителя за кадр, а
+            // внедрение vFrame догоняет скорость пассажира по финалу родителя:
+            // и дистанция, и v_rel точны (живой тест: Δd=0, |v_rel|=0).
+            Vector3 vFramePrev = _captureFrameV;
+            Vector3 vFrame = CaptureFrameVelocityAt(s.Position);
+            if (vFrame == Vector3.Zero && vFramePrev != Vector3.Zero)
+                vFrame = vFramePrev; // родитель пропал из реестра: без пинка,
+                                     // правило снимет захват на ближайшей проверке
+            _captureFrameV = vFrame;
+            FlightState fin = s;
+            fin.LinearVelocity = s.LinearVelocity - vFramePrev;
+            n = StepPrediction(fin, frame, dt);
+            n.Position += vFramePrev * dt;
+            n.LinearVelocity += vFrame;
+        }
+        else
+        {
+            n = StepPrediction(s, frame, dt);
+        }
         _tick++;
         return n;
     }
@@ -1595,6 +1717,188 @@ public partial class Ship : RigidBody3D
         // --- обычный полётный шаг (инерция + интеграция позиции/ориенти),
         // пустой кадр: тяги и ручного момента пилота нет ---
         return FlightModel.Step(f, Flight, default, dt);
+    }
+
+    /// <summary>frame-plan §3: скорость кадра родителя в мировой точке pos
+    /// (0 без захвата; ω-член выключен — CaptureTuning.FrameRotational, R3).
+    /// Родитель исчез из реестра — кадр нулевой (правило снимет захват на
+    /// ближайшей проверке, до него объект летит по инерции).</summary>
+    private Vector3 CaptureFrameVelocityAt(Vector3 pos)
+    {
+        int pid = CaptureParentEffective;
+        if (pid == 0)
+            return Vector3.Zero;
+        var nm = NetworkManager.Instance;
+        if (nm == null || !nm.Ships.TryGetValue(pid, out var p) || p == null || p == this)
+            return Vector3.Zero;
+        return CaptureRules.FrameVelocity(p.GlobalPosition, p.LinearVelocity,
+                                          p.AngularVelocity, pos, CaptureTuning.FrameRotational);
+    }
+
+    /// <summary>Родитель захвата для интеграции/интерполяции с ЛЮБОЙ стороны:
+    /// у авторитета истинa — локальное поле (его пишет TickCaptureRule), у
+    /// клиента — реплика `Net.CaptureParentNetId` (её пишет только сервер через
+    /// SetCapture; клиент правило не считает — R1 frame-plan).</summary>
+    private int CaptureParentEffective =>
+        _captureParentNetId != 0 ? _captureParentNetId : (Net?.CaptureParentNetId ?? 0);
+
+    /// <summary>Радиус пузыря захвата от габарита корпуса: половина диагонали
+    /// + CaptureTuning.Margin (frame-plan §4).</summary>
+    public float CaptureRadius =>
+        _shipTypeSpec.HullSize.Length() * 0.5f + CaptureTuning.Margin;
+
+    /// <summary>Маска последнего кадра ввода, потреблённого на боевом шаге
+    /// (пишет CacheFrameMask из FrameForStep — ровно один кадр за шаг). Хранится,
+    /// чтобы правило захвата НЕ звало FrameForStep повторно (у сервера он изымает
+    /// кадр из очереди). Значение 0 (нет шага) трактуется как «не двигается» =
+    /// крейсер по предикату маски (cruise-capture-plan §2).</summary>
+    private uint _lastFrameMask;
+
+    /// <summary>Запомнить маску потреблённого шага и вернуть кадр как есть.</summary>
+    private InputFrame CacheFrameMask(InputFrame f)
+    {
+        _lastFrameMask = f.Mask;
+        return f;
+    }
+
+    /// <summary>Родитель «на маршруте» (крейсерский режим): в последнем шаге
+    /// НЕ крутился (нет торков) и НЕ форсажил (нет Boost). Линейная тяга
+    /// разрешена. Правило зовёт это у кандидата напрямую (только авторитет).
+    /// PilotAssist в предикат НЕ входит (cruise-capture-plan §2.1.3).</summary>
+    public bool IsCruisingParent() =>
+        (_lastFrameMask & (InputMask.AngularBits | InputMask.Boost)) == 0u;
+
+    /// <summary>
+    /// frame-plan шаг 3: серверная проверка правила захвата раз в
+    /// CaptureTuning.CheckEveryN физшагов (по образцу TickDockPhases — только
+    /// авторитет, ПОСЛЕ шага модели: геометрия шага финальная). Один родитель —
+    /// наибольший по массе из подходящих (при равенстве — меньший NetId, R5);
+    /// захваченный не может быть родителем (parent.Captured у уже захваченных
+    /// кандидатов); взаимоисключение с докингом (R6): у самого корабля в
+    /// dock-фазе пузырь гаснет и правило не применяется. Гистерезис — внутри
+    /// CaptureRules.Evaluate (по текущему состоянию _captureParentNetId).
+    /// На этой стадии переходы НЕ реплицируются (шаг 6), поэтому правило
+    /// работает только там, где авторитет и есть мир: offline/hot-сервер.
+    /// </summary>
+    private void TickCaptureRule()
+    {
+        if (Net == null || Net.ShipNetId == 0)
+            return;
+        // Авторитетная сторона процесса: сервер И offline (одиночная игра, как в
+        // BUG-008/009 у креплением: гейт чистым IsServer в offline молчал).
+        if (NetworkManager.Instance is not { IsAuthoritySide: true } nm)
+            return;
+        if ((uint)(_tick % (uint)CaptureTuning.CheckEveryN) != 0u)
+            return;
+        // R6: докинг стадии 5 имеет приоритет — на dock-фазе пузырь гаснет.
+        if (Docking.IsCapturePhase((DockState)Net.DockStateValue))
+        {
+            if (_captureParentNetId != 0)
+                SetCapture(0);
+            return;
+        }
+
+        var me = new CaptureBody
+        {
+            Mass = Flight.Mass,
+            Position = GlobalPosition,
+            Velocity = LinearVelocity,
+        };
+        bool wasCaptured = _captureParentNetId != 0;
+
+        CaptureBody best = default;
+        int bestId = 0;
+        CaptureReject bestReject = CaptureReject.OutsideBubble;
+        foreach (var (id, other) in nm.Ships)
+        {
+            if (other == this || other.Net == null || other.Net.ShipNetId == 0)
+                continue;
+            var cand = new CaptureBody
+            {
+                Mass = other.Flight.Mass,
+                Position = other.GlobalPosition,
+                Velocity = other.LinearVelocity,
+                Radius = other.CaptureRadius,
+            };
+            var parentState = new CaptureParentState
+            {
+                InDockPhase = Docking.IsCapturePhase((DockState)other.Net.DockStateValue),
+                // глубина 1: сам кандидат — родитель или уже захвачен — в
+                // родимые не годится (R5); второй проход (меняем местами) его
+                // отсеет, но только если он сейчас активный родитель — иначе
+                // «был когда-то» не считается.
+                Captured = other._captureParentNetId != 0,
+                // крейсерский гейт (cruise-capture-plan): маска последнего шага
+                // родителя; учитывается только при RequireCruisingParent=true.
+                Cruising = other.IsCruisingParent(),
+            };
+            var d = CaptureRules.Evaluate(me, cand, parentState,
+                                         wasCaptured && _captureParentNetId == id);
+            if (!d.Captured)
+            {
+                if (wasCaptured && _captureParentNetId == id)
+                    bestReject = d.Reason; // чтобы лог выхода был честным
+                continue;
+            }
+            // выбор наибольшего по массе, при равенстве — меньший NetId
+            if (bestId == 0 || cand.Mass > best.Mass ||
+                (Mathf.IsEqualApprox(cand.Mass, best.Mass) && id < bestId))
+            {
+                bestId = id;
+                best = cand;
+            }
+        }
+        if (bestId != _captureParentNetId)
+        {
+            if (bestId != 0)
+                DebugInfoBus.Report($"capture: ship#{Net.ShipNetId} ← #{bestId} " +
+                                    $"(|v_rel| = {(me.Velocity - best.Velocity).Length():F1} м/с)");
+            else
+                DebugInfoBus.Report($"capture: ship#{Net.ShipNetId} release " +
+                                    $"(от #{_captureParentNetId}, {bestReject})");
+            SetCapture(bestId);
+        }
+    }
+
+    /// <summary>Переход фазы захвата (только авторитет — вызывается из
+    /// TickCaptureRule). Шаг 6: поле пишется И В `NetState`
+    /// (CaptureParentNetId + CaptureTick): реплика уходит OnChange-дельтой по
+    /// образцу dock-фазы (SceneReplicationConfig properties/13-14), поздно
+    /// зашедший пир получает её спавн-снимком. Это единственный рассылочный
+    /// путь перехода — клиент правило не считает (R1). Шаг 5 (R4): исключение
+    /// коллизий пары.</summary>
+    private void SetCapture(int parentId)
+    {
+        int old = _captureParentNetId;
+        if (old == parentId)
+            return;
+        var nm = NetworkManager.Instance;
+        // шаг 5 (R4): на время захвата corps-коллижн пары отключается, иначе
+        // корпус родителя выталкивает пассажира (дрожь внутри пузыря).
+        if (nm != null)
+        {
+            if (nm.Ships.TryGetValue(old, out var oldParent) && oldParent != null && IsInstanceValid(oldParent))
+                oldParent.RemoveCollisionExceptionWith(this);
+            if (nm.Ships.TryGetValue(parentId, out var newParent) && newParent != null)
+                newParent.AddCollisionExceptionWith(this);
+        }
+        _captureParentNetId = parentId;
+        // Шаг 6: публикация перехода в NetState — OnChange-дельта уходит пирам
+        // в том же порядке канала, что смена флага ассиста и dock-фазы (надёжный
+        // канал, обязан прийти раньше ненадёжных кадров ввода). CaptureTick =
+        // физкадр авторитета на момент перехода: клиент-пилот по смене тика
+        // видит РАЗРЫВ фазы и обнуляет предсказание (снимок позиции и так
+        // придёт с ближайшей записью батча).
+        if (Net != null)
+        {
+            Net.CaptureParentNetId = parentId;
+            Net.CaptureTick = System.Math.Max(0, Net.SimTick);
+        }
+        // Живой тест CaptureLiveTest: первичная проба кадра при ВХОДЕ — ровно
+        // v_frame родителя сейчас. Без неё первый захваченный шаг снял бы
+        // vFramePrev = 0 и внедрил бы v_frame заново — пинек двойной скоростью
+        // (корпус вылетел бы из пузыря за доли секунды). При выходе — ноль.
+        _captureFrameV = parentId != 0 ? CaptureFrameVelocityAt(GlobalPosition) : Vector3.Zero;
     }
 
     /// <summary>Шаг 5.8: продвижение фаз сделки (Capturing → Latched → Docked).
@@ -2794,6 +3098,11 @@ public partial class Ship : RigidBody3D
             Net.NetLinearVelocity = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
             Net.NetAngularVelocity = new Vector3(s.AngularVelocity.X, s.AngularVelocity.Y, s.AngularVelocity.Z);
         }
+        // §6.3/R8 (шаг 7): помечаем тир последнего принятого wire-снимка —
+        // унос картинки захваченного корабля (сдвиг точки съёмки вдоль v_frame)
+        // опирается на СКОРОСТИ, а far-запись их не несёт и оставляет прежние
+        // (протухшие). В far — только поза без уноса.
+        _lastWireFarTier = s.FarTier;
         if (s.ForPilot)
         {
             // Реконсиляция пилота: эталон обязан нести тик/маску применённого
@@ -2911,10 +3220,10 @@ public partial class Ship : RigidBody3D
         // задокументированный «ввод без клавиатуры» молча подменяется реальным
         // (в headless это пустота) и тесты п.12/Stage5BlockC п.21 меряют не то.
         if (_testInput)
-            return _testFrame;
+            return CacheFrameMask(_testFrame);
         // Offline: сервер = локальный пир, ввод читается с реальных клавиш.
         if (IsLocalPilot)
-            return CollectInputFrame();
+            return CacheFrameMask(CollectInputFrame());
         // Сервер с внешним пилотом: применяем кадры пилота по одному за шаг, в
         // порядке тиков (очередь) — так серверная последовательность сдвигов
         // совпадает с предсказанием пилота при любой задержке (§2.6 фикс (а)).
@@ -2929,7 +3238,7 @@ public partial class Ship : RigidBody3D
         }
         else
             _dbgSticky++;
-        return _serverInput;
+        return CacheFrameMask(_serverInput);
     }
 
     /// <summary>Сервер: начать принимать кадры пилота с его текущего тика.
@@ -2978,6 +3287,10 @@ public partial class Ship : RigidBody3D
             // тоже только на авторитете, ПОСЛЕ шага физики (видит актуальные
             // позы, как ProcessPendingFires в шаге 3.5).
             TickDockPhases();
+            // frame-plan шаг 3: правило захвата — тем же порядком, что фазы
+            // докинга (после шага модели, на авторитете; частота — раз в
+            // CaptureTuning.CheckEveryN физшагов внутри метода).
+            TickCaptureRule();
             // Шаг 2.6, метрика (г): публикуем сетевой снимок раз в NetPublishEveryN
             // физшагов (30 Гц), а не каждый шаг (60 Гц). OnChange-репликация уходит
             // только когда свойство реально меняется, поэтому «реже пишем» = «реже
@@ -3058,6 +3371,33 @@ public partial class Ship : RigidBody3D
             if (Net != null && (DockState)Net.DockStateValue >= DockState.Capturing)
             {
                 _clientDockPhaseActive = true;
+                return;
+            }
+
+            // frame-plan §6.2 (шаг 6): фаза ЗАХВАТА — предсказание и реконсиляция
+            // ВЫКЛЮЧЕНЫ, как на dock-фазе: переигрываемые кадры кольца не знают
+            // v_frame родителя на своём тике (полной истории родителя нет), и
+            // предсказание пилота на пузыре давало бы почти 100% расхождений и
+            // постоянные hardRollbacks. Отличие от dock: кадры ВВОДА продолжают
+            // собираться и отправляться — в пузыре (в отличие от пружины с
+            // игнорируемой тягой, п.25) авторитет интегрирует тягу пилота в свою
+            // причину; не предсказывается только ПОЗА (картинка ведётся
+            // интерполяцией батча в _Process, ветка перехвата). Разрыв фазы
+            // (вход/выход) — допустимый один жёсткий снап к снимку авторитета:
+            // предсказание обнуляется и стартует от актуальной реплики.
+            if (Net != null && Net.CaptureParentNetId != 0)
+            {
+                _clientCapturePhaseActive = true;
+                InputFrame fcap = CollectInputFrame();
+                if (_assistMuteFrames > 0)
+                    _assistMuteFrames--;
+                else
+                    EnqueueInputForSend(fcap);
+                FlushSendBuffer();
+                // AdvanceFlight здесь НЕ вызывается (предсказания нет), а счётчик
+                // кадров обязан расти: сервер отсек бы повторяющиеся тики гейтом
+                // «только свежие кадры» (тот же инкремент, что делает AdvanceFlight).
+                _tick++;
                 return;
             }
 
@@ -3203,6 +3543,29 @@ public partial class Ship : RigidBody3D
                 // рестартует из актуальной реплики (проверка _hasPrediction в
                 // _PhysicsProcess), иначе пилота откатит старый _predicted.
                 _clientDockPhaseActive = false;
+                _hasPrediction = false;
+            }
+
+            // frame-plan §6.2 (шаг 6): тот же режим для фазы ЗАХВАТА: предсказание
+            // выключено (_PhysicsProcess шлёт только кадры ввода), позу ведёт
+            // авторитет, картинка — интерполяцией батча, тело едет за картинкой
+            // (чейз-камера — ребёнок тела). Смена реплики CaptureParentNetId
+            // (вход в пузырь / выход) — разрыв фазы: одно обнуление предсказания,
+            // старт от актуальной реплики. Унос картинки вдоль v_frame (§6.3) —
+            // внутри InterpolateHull, он привязан к фазе и к ramp-состоянию.
+            if (Net != null && Net.CaptureParentNetId != 0)
+            {
+                _clientCapturePhaseActive = true;
+                DrainRecvBufferForObserver(now);
+                InterpolateHull(now);
+                var hullCap = GetNodeOrNull<Node3D>("ShipHull");
+                if (hullCap != null)
+                    GlobalTransform = hullCap.GlobalTransform;
+                return;
+            }
+            if (_clientCapturePhaseActive)
+            {
+                _clientCapturePhaseActive = false;
                 _hasPrediction = false;
             }
             DrainRecvBufferForPilot();
@@ -3538,9 +3901,20 @@ public partial class Ship : RigidBody3D
         if (hull == null || _interpBuf.Count == 0)
             return;
 
+        // §6.3 (шаг 7): сдвиг точки съёмки для захваченного корабля. Поза
+        // интерполируется как обычно (между снимков, без экстраполяции), но к
+        // результату добавляется унос v_frame × _interpDelay: картинка A
+        // ставится туда, где пилот родителя B видит A сейчас (B у него идёт
+        // «живым» предсказанием, а снимки A — на delay в прошлом). Сдвиг
+        // slew-лимитирован (_capShiftCur разгоняется/гасится не быстрее
+        // CapShiftSlewPerSec), поэтому включение фазы не рисует скачок.
+        Vector3 carry = CaptureCarryShift(now);
+
         // Интерполяция выключена (кнопка `Toggle Interpolation`): картинка идёт
         // прямо в ПОСЛЕДНИЙ принятый снимок, без сдвига на InterpDelay и без
         // смешивания. Дискретно, но совпадает с сетью по времени (автотест п.13).
+        // Унос при этом НЕ применяется: у выключенной интерполяции нет и
+        // «задержки съёмки», которую он компенсирует.
         if (!_interpolationEnabled)
         {
             ApplyHull(hull, _interpBuf[^1]);
@@ -3552,7 +3926,7 @@ public partial class Ship : RigidBody3D
         // Один снимок или кадр раньше самого старого — рисуем самый старый.
         if (_interpBuf.Count == 1 || render <= _interpBuf[0].Time)
         {
-            ApplyHull(hull, _interpBuf[0]);
+            ApplyHullCarried(hull, _interpBuf[0], carry);
             return;
         }
 
@@ -3560,7 +3934,7 @@ public partial class Ship : RigidBody3D
         // сеть и дёргается при потере пакета): рисуем самый свежий.
         if (render >= _interpBuf[^1].Time)
         {
-            ApplyHull(hull, _interpBuf[^1]);
+            ApplyHullCarried(hull, _interpBuf[^1], carry);
             return;
         }
 
@@ -3574,15 +3948,63 @@ public partial class Ship : RigidBody3D
                 double alpha = span > 1e-6 ? (render - a.Time) / span : 0.0;
                 var pos = a.Position.Lerp(b.Position, (float)alpha);
                 var rot = a.Rotation.Slerp(b.Rotation, (float)alpha);
-                hull.GlobalTransform = new Transform3D(new Basis(rot), pos);
+                hull.GlobalTransform = new Transform3D(new Basis(rot), pos + carry);
                 return;
             }
         }
     }
 
+    /// <summary>§6.3 (шаг 7): вектор уноса картинки захваченного корабля —
+    /// `v_frame × _interpDelay`, slew-лимитированный. Считается по репликам
+    /// родителя (`Net.CaptureParentNetId` + NetState родителя: его позиция и
+    /// скорости — те же реплики, что рисует этот наблюдатель). Дальний тир
+    /// (R8): wire-запись far скоростей не несёт → унос не включаем (только
+    /// поза), уже начатый плавно гасится к нулю тем же slew-лимитом.</summary>
+    private Vector3 CaptureCarryShift(double now)
+    {
+        // dt между вызовами (первый вызов — без шага).
+        double dt = _capShiftLastNow < 0 ? 0 : System.Math.Max(0, now - _capShiftLastNow);
+        _capShiftLastNow = now;
+
+        Vector3 target = Vector3.Zero;
+        int pid = Net?.CaptureParentNetId ?? 0;
+        if (pid != 0 && !_lastWireFarTier)
+        {
+            var nm = NetworkManager.Instance;
+            if (nm != null && nm.Ships.TryGetValue(pid, out var p) && p != null && p != this && IsInstanceValid(p))
+            {
+                // v_frame в той же формуле, что у авторитета (CaptureRules):
+                // линейная часть (ротационная выключена, R3 — тот же флаг).
+                Vector3 vFrame = CaptureRules.FrameVelocity(
+                    p.Net.NetPosition, p.Net.NetLinearVelocity, p.Net.NetAngularVelocity,
+                    Net.NetPosition, CaptureTuning.FrameRotational);
+                target = vFrame * (float)_interpDelay;
+            }
+        }
+
+        // slew: |цель − текущий| ограничиваем скоростью CapShiftSlewPerSec.
+        // При dt==0 (первый вызов за кадр/инициализация) шаг НЕ добавляем вовсе:
+        // иначе нулевой maxStep снимает кламп и вектор прыгает в цель за один
+        // кадр — ровно тот скачок в |v_frame·delay|, который ловит метрика (в)
+        // MaxHullDelta. Разгон начинается со второго кадра.
+        float maxStep = CapShiftSlewPerSec * (float)dt;
+        if (maxStep <= 0)
+            return _capShiftCur;
+        Vector3 diff = target - _capShiftCur;
+        if (diff.LengthSquared() > maxStep * maxStep)
+            diff = diff.Normalized() * maxStep;
+        _capShiftCur += diff;
+        return _capShiftCur;
+    }
+
     private static void ApplyHull(Node3D hull, Snapshot s)
     {
         hull.GlobalTransform = new Transform3D(new Basis(s.Rotation), s.Position);
+    }
+
+    private static void ApplyHullCarried(Node3D hull, Snapshot s, Vector3 carry)
+    {
+        hull.GlobalTransform = new Transform3D(new Basis(s.Rotation), s.Position + carry);
     }
 
     /// <summary>Шов автотеста: засунуть снимок в буфер интерполяции вручную
@@ -3597,6 +4019,15 @@ public partial class Ship : RigidBody3D
     {
         var hull = GetNodeOrNull<Node3D>("ShipHull");
         return hull?.GlobalPosition ?? Vector3.Zero;
+    }
+
+    /// <summary>Шов автотеста: выставить тир последнего wire-снимка ровно так,
+    /// как это делает приёмник (строка ~3059: `_lastWireFarTier = s.FarTier`).
+    /// Нужен для far-гейта уноса (R8): в стенде оба корабля авторитетны,
+    /// настоящим `ApplyBatchRecord` тир не выставить — он отбивается гейтом.</summary>
+    public void TestSetWireTierForTest(bool farTier)
+    {
+        _lastWireFarTier = farTier;
     }
 
     // ------------------------------------------------------ силовые вызовы
@@ -4046,6 +4477,8 @@ public partial class Ship : RigidBody3D
         // Шаг 5.8: машина фаз захвата — как в бою, после шага модели
         // (`_PhysicsProcess` автора делает то же после физики).
         TickDockPhases();
+        // frame-plan шаг 3: тот же путь правила, что в бою (§3.8).
+        TickCaptureRule();
     }
 
     /// <summary>Собрать кадр ввода так, как это делает реальный шаг (клавиши или

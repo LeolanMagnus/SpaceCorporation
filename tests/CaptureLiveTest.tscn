@@ -1,0 +1,13 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://tests/CaptureLiveTest.cs" id="1_test"]
+[ext_resource type="PackedScene" path="res://scenes/Main.tscn" id="2_main"]
+
+; Живой тест frame-plan шага 4: «малый внутри большого держит дистанцию».
+; Корень — Node, Main инстансится как в Stage5Test: миру нужен реальный
+; 3D-поддерево и спавнер, шаг ведётся вручную через TestStepForTest.
+[node name="CaptureLiveTest" type="Node"]
+process_mode = 3
+script = ExtResource("1_test")
+
+[node name="Main" parent="." instance=ExtResource("2_main")]

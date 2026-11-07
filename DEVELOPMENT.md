@@ -695,6 +695,130 @@ UI отсека снаряжения (каталог и loadout — данные
 
 ---
 
+## Промежуточная стадия — Зацепление: локальные системы отсчёта объектов ✅ (зафиксирована)
+
+План: `frame-plan.md` (шаги 1–10; шаг 8 — аддитивный `v_frame` игрока — отложен
+до `eva-plan.md`: требует EVA-свободного полёта `wish`/`dash`, которого в
+`Player.cs` ещё нет). Родственные планы: `net-refactor-plan.md` (снапшоты),
+`stage5-plan.md` (стыковочная пружина), `radar-plan.md`.
+
+### Суть механики
+
+Объект A (корабль/позже игрок) **зацеплен** объектом B (большая масса/позже станция),
+пока находится «вблизи» B. Пока зацеп активен, движение A считается **в системе
+отсчёта B**: глобальная скорость `v_A = v_frame(pos_A) + v_rel`, тяга/лимит/
+сопротивление работают по локальной `v_rel`, а B переносит A с собой. Примеры:
+курьер внутри контейнеровоза; малый корабль внутри флагмана; позже — игрок на EVA
+рядом с пролетающим кораблём.
+
+### Ключевое проектное решение: кадры через ПОЛЕ СКОРОСТЕЙ, а не локальные координаты
+
+Полные «локальные координаты» (`pos_A = pos_B + basis_B·local`, снапшотить `local`)
+трогают формат пакетов, интерполяцию вращающегося родителя, радар, докинг — это
+стадия «после». Промежуточная стадия использует эквивалент для кинематики твёрдого
+тела: `v_frame(P) = v_B + ω_B × (P − pos_B)` (на этой стадии ω-член выключён
+константой `CaptureTuning.FrameRotational = false`, R3 — эффект пращи; включение
+отдельной стадией). Истина прежняя — глобальные `GlobalPosition`/`LinearVelocity`;
+снапшоты, `ShipRecordCodec`, дельта-энкодеры, Replay, радар и докинг — без изменений
+формата. `v_rel` —
+производная величина, в пакетах её нет (при рассинхроне ошибка `v_rel` = сумма
+ошибок поз/скоростей A и B; для HUD до 1 м/с, приемлемо: это отображение и
+геймплейный лимит, не сетевое состояние).
+
+### 3.0 Правило захвата — чистая функция (`scripts/core/CaptureRules.cs`)
+
+Без Godot-узлов, детерминирована (только числа), поэтому сервер считает её раз в
+`CaptureTuning.CheckEveryN = 4` физшага и рассылает переходы, а тесты гоняют её без
+мира. Пороги — в `CaptureTuning` (одна таблица, как `Docking.Tuning`): `RatioMin = 3`
+(вход: масса B ≥ 3×массы A: 1200 vs 5200 = 4.3 ✓, 5200 vs 10000 = 1.9 ✗ — баланс, не
+механика), `RatioRelease = 2` (гистерезис выхода по массе), `VAttachMax = 25` м/с
+(быстро пролетевший мимо не цепляется), `Hysteresis = 1.4` (порог выхода по
+расстоянию = вход×1.4, против мигания), `Margin = 25` м (радиус пузыря = половина
+диагонали корпуса + 25), `PlayerMass = 100`.
+
+```
+CaptureRules.Evaluate(CaptureBody a, CaptureBody b, CaptureParentState parent,
+                      bool currentlyCaptured) -> CaptureDecision{Captured, RelativeVelocity, Reason}
+```
+
+Вход (не зацеплен): `massRatio ≥ RatioMin` → `dist ≤ b.Radius` → `|v_rel| ≤ VAttachMax`.
+Выход (зацеплен): `dist > Radius×Hysteresis` (`LeftBubble`) или `massRatio <
+RatioRelease` (`ParentMassDrop`). Гасфазы родителя — в обе стороны: `InDockPhase`
+(`ParentInDockPhase`, пружина стадии 5 уже ведёт пару, R6) и `Captured`
+(`ParentCaptured`, глубина цепочки 1, R5). `CaptureReject` — перечислимая причина
+отказа/выхода для F9 и тестов. `FrameVelocity(parentPos, parentVel, parentOmega,
+pos, rotational=false)` — перенос в точке.
+
+### 3.1 Интеграция в шаг симуляции (`Ship.cs`)
+
+Единая точка `AdvanceFlight` (:1607 — общая для `_IntegrateForces`-авторитета,
+`StepPrediction`, откатов и `TestStepForTest`): если `CaptureParentNetId > 0`, тяга
+и лимиты считаются в кадре `v_in = v_A − v_frame`, `v_out = Step(v_in)`, затем
+`v_A' = v_frame + v_out`; интегрирование позиции идёт глобальной `v_A'` — перенос
+происходит «сам собой». `MaxLinearSpeed` ограничивает `v_rel`, а не `v_A` (спидометр
+внутри пузыря локальный, глобальная скорость может превышать лимит — эффект буксира).
+`TickCaptureRule` (:~1763) считает правило только на авторитете (`IsAuthoritySide`),
+раз в `CheckEveryN`, ПОСЛЕ шага модели (геометрия финальная); выбор родителя —
+наибольший по массе, при равенстве меньший NetId (R5). `SetCapture` (:~1879) —
+единственная точка перехода: пишет `_captureParentNetId` и в `NetState`
+(`CaptureParentNetId`/`CaptureTick`, OnChange-дельта по образцу dock-фазы, спавн-
+снимок для позднего пира), ставит коллизионное исключение пары (`Add/RemoveCollision
+ExceptionWith`, R4) и первичную пробу `_captureFrameV` при входе (без неё первый
+шаг внедрил бы `v_frame` заново — пинек двойной скоростью).
+
+### 3.2 Коллизии и честная находка пробы
+
+`tests/probes/ProbeCaptureFrame.cs` проверяет `AddCollisionExceptionWith` из
+`_IntegrateForces`: исключение НЕ гасит контакт текущего физкадра — broadphase
+перестраивается ~2 кадра, за которые перехлёст получает частичный импульс
+(`controlB Δ=0.390 м` против `testB Δ=0.156 м`), затем выталкивание полностью
+прекращается. Приемлемо: в ИГРЕ Ship↔Ship не сталкиваются (маска
+`CollisionLayers.Ship` = Station|Target), поэтому исключение родитель-ребёнок —
+оборонительное.
+
+### 3.3 HUD и радар
+
+`Ship.HudLocalSpeed()` (:598) — `v_rel` из СЕТЕВЫХ реплик обоих кораблей (одинаково
+на сервере и клиенте; `FrameRotational=false`, v_frame = скорость родителя), `null`
+без зацепа. HUD (`HudLayer.UpdateStatusPanel`): вторая строка `LOC 12.4 m/s` синим
+жирным + `CAPTURED BY #id` только при активной фазе (R7); сглаживание τ=0.3 с только
+для отображения. Radar: `RadarContact.Captured` (RadarTypes:42) → блип с рамкой-«⊂»
++ строка легенды; семантика радара остаётся глобальной (`RelVel` уже относительно
+наблюдателя). Дебаг F9: строка `cap: #child→#parent v_rel=(x,y,z) m/s`
+(`DebugInfoBus.RegisterInfoSource`, Ship:~1262).
+
+### Швы для тестов
+
+`CaptureRulesTest` (чистая функция, 24 проверки: входы/гистерезисы/гасфазы/
+вложенность/иерархия масс/локальный манёвр/тунинг); `CaptureLiveTest` (20: живой
+шаг «малый внутри большого» — держит дистанцию, `v_rel≈0`, выход за гистерезис,
+реплика родителя сбрасывается); `CaptureCarryTest` (18: перенос родителем);
+`ProbeCaptureFrame` (коллизионное исключение); `NetTest` (репликация перехода);
+`RadarModelTest`/`Stage6Test` (флаг `Captured`, блип ⊂).
+
+### Итоговые прогоны
+
+| Команда | проверок | провалов |
+|---|---|---|
+| `run-tests.sh res://tests/CaptureRulesTest.tscn` | 24 | 0 |
+| `run-tests.sh res://tests/CaptureLiveTest.tscn` | 20 | 0 |
+| `run-tests.sh res://tests/CaptureCarryTest.tscn` | 18 | 0 |
+| `run-tests.sh res://tests/NetTest.tscn` | 127 | 0 |
+| `dotnet run --project tools/RadarModelTest` | 37 | 0 |
+| `run-tests.sh res://tests/Stage6Test.tscn` | 63 | 0 |
+| `run-tests.sh res://tests/probes/ProbeCaptureFrame.tscn` | — | OK |
+
+### Что НЕ делается на этой стадии
+
+Аддитивный `v_frame` игрока (шаг 8 — до `eva-plan`); ротационный перенос позы
+(`FrameRotational=false`, ω-член — отдельная стадия); полная стадия локальных
+координат (снапшот `local`); захват станции как родителя (пока только Ship↔Ship);
+флаг-условие «захватывает только родитель-крейсер» — спроектирован в
+`cruise-capture-plan.md`, реализация отложена (гейт `RequireCruisingParent`
+по умолчанию `false`).
+
+---
+
 ## Как запустить и проверить
 
 ```

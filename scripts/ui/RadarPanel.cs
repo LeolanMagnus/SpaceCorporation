@@ -192,6 +192,15 @@ public partial class RadarPanel : Control
         if (model == null)
             return;
 
+        // frame-plan шаг 9: строка-подсказка у блипов в фазе захвата — рисуется
+        // только когда такие контакты есть (легенды у панели раньше не было).
+        bool anyCaptured = false;
+        foreach (var b in model.Blips)
+            if (b.Contact.Captured && !b.Stale) { anyCaptured = true; break; }
+        if (anyCaptured)
+            DrawSmallText("ships in capture are marked with \"<\" near the blip",
+                new Vector2(6f, Size.Y - 22f), new Color(0.35f, 0.7f, 1f, 0.85f));
+
         // Текущий режим — мелким в нижнем правом углу панели (right-align).
         var modeColor = new Color(border.R, border.G, border.B, 0.8f);
         DrawString(GetThemeDefaultFont(),
@@ -219,6 +228,12 @@ public partial class RadarPanel : Control
             // Подбитый контакт мигает (источник — ShipHealthState, через Damaged).
             if (b.Contact.Damaged)
                 color.A *= 0.55f + 0.45f * Mathf.Sin(Time.GetTicksMsec() * 0.012f);
+
+            // frame-plan шаг 9: корабль в фазе захвата — скобка-«⊂» рядом с
+            // блипом (тот же блип, НЕ новый тип метки).
+            if (b.Contact.Captured)
+                DrawString(GetThemeDefaultFont(), p + new Vector2(10f, 4f), "⊂",
+                    HorizontalAlignment.Left, 0, 9, new Color(0.35f, 0.7f, 1f, 0.9f));
 
             // Линия проекции на плоскость корабля (только при заметной высоте).
             if ((p - ground).LengthSquared() > 4f)

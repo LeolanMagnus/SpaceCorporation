@@ -23,7 +23,7 @@ namespace SpaceCorporation;
 public static class PilotAim
 {
     /// <summary>Радиус «слепой зоны» в пикселях: внутри нос не крутится.</summary>
-    public const float DeadzoneRadiusPx = 100f;
+    public const float DeadzoneRadiusPx = 40f;
 
     /// <summary>Радиус полной скорости как доля ВЕРТИКАЛЬНОГО размера экрана.
     /// При 0.25 курсор на дистанции ¼ высоты окна даёт 100% скорости доворота.</summary>

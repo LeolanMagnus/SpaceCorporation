@@ -40,6 +40,15 @@ public partial class HudLayer : CanvasLayer
     private Label _lblSpeed = null!;
     private Label _lblModes = null!;
 
+    // frame-plan шаг 7: локальная скорость в кадре родителя (LOC) + метка
+    // захвата. Рисуются только при активной фазе захвата.
+    private Label _lblLocSpeed = null!;
+    private Label _lblCaptured = null!;
+    private float _hudLocDt;                 // delta текущего кадра _Process
+    private const float HudLocTau = 0.3f;    // сглаживание v_rel для HUD (R7)
+    private float _hudLocSm;
+    private bool _hudLocInit;
+
     // Целеуказание (H3): сервис и маркер из сцены.
     private TargetingService _targeting = null!;
     private TargetMarker _targetMarker = null!;
@@ -71,6 +80,24 @@ public partial class HudLayer : CanvasLayer
         _lblShield = GetNode<Label>("HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/ShieldBox/LblShield");
         _lblSpeed = GetNode<Label>("HudRoot/BottomLeft/StatusPanel/StatusBox/SpeedBox/LblSpeed");
         _lblModes = GetNode<Label>("HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox/LblModes");
+
+        // frame-plan шаг 7: LOC-строка и метка захвата — создаём кодом и
+        // кладём в SpeedBox под обычную скорость; стиль — синий жирный (§8.7).
+        _lblLocSpeed = new Label { Visible = false };
+        _lblLocSpeed.AddThemeColorOverride("font_color", new Color(0.35f, 0.7f, 1f));
+        // Жирный: у FontVariation веса нет (Godot 4), вес умеет только SystemFont.
+        var bold = new SystemFont
+        {
+            FontNames = new[] { "Segoe UI", "Arial", "sans-serif" },
+            FontWeight = 700,
+        };
+        _lblLocSpeed.AddThemeFontOverride("font", bold);
+        _lblCaptured = new Label { Visible = false };
+        _lblCaptured.AddThemeColorOverride("font_color", new Color(0.35f, 0.7f, 1f));
+        _lblCaptured.AddThemeFontOverride("font", bold);
+        var speedBox = GetNode<Control>("HudRoot/BottomLeft/StatusPanel/StatusBox/SpeedBox");
+        speedBox.AddChild(_lblLocSpeed);
+        speedBox.AddChild(_lblCaptured);
 
         _targeting = GetNode<TargetingService>("TargetingService");
         _targetMarker = GetNode<TargetMarker>("HudRoot/TargetMarker");
@@ -174,6 +201,7 @@ public partial class HudLayer : CanvasLayer
         if (!HudVisible)
             return;
 
+        _hudLocDt = (float)delta;
         UpdateStatusPanel();
         UpdateWorldTag();
         UpdateObjective();
@@ -263,6 +291,9 @@ public partial class HudLayer : CanvasLayer
             _barShield.Value = 0;
             _lblSpeed.Text = "0 m/s";
             _lblModes.Text = "";
+            _hudLocInit = false;
+            _lblLocSpeed.Visible = false;
+            _lblCaptured.Visible = false;
             return;
         }
 
@@ -295,6 +326,28 @@ public partial class HudLayer : CanvasLayer
         _lblSpeed.Text = maxSpeed > 0f
             ? $"{speed:F0} m/s\nmax {maxSpeed:F0}"
             : $"{speed:F0} m/s";
+
+        // frame-plan шаг 7: вторая строка `LOC 12.4 m/s` синим жирным +
+        // `CAPTURED BY #id` — только когда фаза захвата активна (иначе строки
+        // нет вовсе, R7: сглаживание τ=0.3 с только для отображения, физику
+        // не трогаем; квант скорости 0.1 м/с не даёт мигать).
+        float? loc = ship.HudLocalSpeed();
+        if (loc != null)
+        {
+            float dt = Mathf.Min(_hudLocDt, 0.1f);
+            if (!_hudLocInit) { _hudLocSm = loc.Value; _hudLocInit = true; }
+            else _hudLocSm += (loc.Value - _hudLocSm) * (1f - Mathf.Exp(-dt / HudLocTau));
+            _lblLocSpeed.Text = $"LOC {_hudLocSm:F1} m/s";
+            _lblCaptured.Text = $"CAPTURED BY #{ship.Net?.CaptureParentNetId ?? 0}";
+            _lblLocSpeed.Visible = true;
+            _lblCaptured.Visible = true;
+        }
+        else
+        {
+            _hudLocInit = false;
+            _lblLocSpeed.Visible = false;
+            _lblCaptured.Visible = false;
+        }
 
         // Режимные иконки текстом (X4-подобные аббревиатуры): boost / assist / camera.
         // BOOST — удерживается ли клавиша сейчас (локальный ввод); ASSIST —

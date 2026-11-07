@@ -37,6 +37,9 @@ public struct RadarContact
     public bool IsTarget;
     /// <summary>Подбит (Hp &lt; MaxHp) — блип мигает (R2, источник ShipHealthState).</summary>
     public bool Damaged;
+    /// <summary>Корабль в фазе захвата (Net.CaptureParentNetId ≠ 0) — рамка-«⊂»
+    /// у блипа (frame-plan §1 шаг 9: НЕ новый тип метки, существующий блип).</summary>
+    public bool Captured;
     /// <summary>Дистанция до контакта, м (заполняет RadarModel).</summary>
     public float Distance;
 }

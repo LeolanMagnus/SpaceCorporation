@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/ProbeCaptureFrame.cs" id="1_probe"]
+
+; Проба frame-plan §1 шаг 10: действует ли AddCollisionExceptionWith, вызванный
+; из _IntegrateForces (CustomIntegrator), в этом же физическом шаге.
+[node name="ProbeCaptureFrame" type="Node3D"]
+script = ExtResource("1_probe")
