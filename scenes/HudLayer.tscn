@@ -1,11 +1,12 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/HudLayer.cs" id="1_hud"]
 [ext_resource type="Script" path="res://scripts/ui/AimReticle.cs" id="2_cross"]
 [ext_resource type="Script" path="res://scripts/ui/TargetingService.cs" id="3_targeting"]
-[ext_resource type="Script" path="res://scripts/ui/TargetMarker.cs" id="4_marker"]
+[ext_resource type="Script" path="res://scripts/ui/TargetOverlay.cs" id="4_marker"]
 [ext_resource type="Script" path="res://scripts/ui/RadarSource.cs" id="5_radar_src"]
 [ext_resource type="Script" path="res://scripts/ui/RadarPanel.cs" id="6_radar_view"]
+[ext_resource type="Resource" path="res://assets/ui/LockMarkerSkin.tres" id="7_skin"]
 
 ; HUD в стиле X4 (hud-plan.md). Слой 5 — НИЖЕ DebugLayer (слой 10): панель F3
 ; никогда не перекрывается HUD, слои не конфликтуют (§5 плана).
@@ -311,7 +312,7 @@ script = ExtResource("6_radar_view")
 [node name="RadarSource" type="Node" parent="."]
 script = ExtResource("5_radar_src")
 
-[node name="TargetMarker" type="Control" parent="HudRoot"]
+[node name="TargetOverlay" type="Control" parent="HudRoot"]
 z_index = 10
 anchors_preset = 15
 anchor_right = 1.0
@@ -320,3 +321,4 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("4_marker")
+Skin = ExtResource("7_skin")

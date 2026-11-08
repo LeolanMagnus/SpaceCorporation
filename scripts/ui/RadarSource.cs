@@ -28,6 +28,39 @@ public partial class RadarSource : Node
     /// <summary>Модель для панели/теста: блипы, радиус, затухание.</summary>
     public RadarModel Model { get; } = new();
 
+    // ── данные для экранного lock-оверлея (TargetOverlay, targeting-plan) ──
+    // Оверлею нужны «сырые» контакты (RelPos/AbsVel/SizeRadius/тип) и центр
+    // сборки: мир между сборками (0.2 с) оверлей экстраполирует сам —
+    // world = SyncCenter + RelPos + AbsVel · ContactAge (AbsVel — абсолютная
+    // мировая скорость, поэтому выделение не зависит от манёвров наблюдающего
+    // и не дёргается ни у статичных, ни у движущихся сущностей).
+
+    /// <summary>Последняя сборка контактов (копия буфера, только для чтения).</summary>
+    public IReadOnlyList<RadarContact> Contacts => _snapshot;
+
+    /// <summary>Центр последней сборки (позиция своего корабля, мир).</summary>
+    public Vector3 SyncCenter { get; private set; }
+
+    /// <summary>Возраст последней сборки, с (растёт между сборками).</summary>
+    public float ContactAge => _syncElapsed;
+
+    /// <summary>Габаритный радиус мишени (куб 4×4×4 из Target.tscn):
+    /// половина диагонали = 2·√3 ≈ 3.46 м.</summary>
+    public const float TargetSizeRadius = 3.46f;
+
+    /// <summary>Габаритный радиус станции (цилиндр r=60 h=40 из Station.tscn):
+    /// √(60² + 20²) ≈ 63.2 м.</summary>
+    public const float StationSizeRadius = 63.2f;
+
+    /// <summary>Габаритный радиус корпуса корабля данного типа, м
+    /// (половина диагонали бокса ShipTypeSpec.HullSize).</summary>
+    public static float HullRadiusOf(byte shipTypeValue)
+    {
+        var spec = ShipStatCatalog.FindByByte(shipTypeValue);
+        return spec.HullSize.Length() * 0.5f;
+    }
+
+    private readonly List<RadarContact> _snapshot = new(64);
     private float _syncElapsed = SyncPeriod; // первая сборка — сразу
     private readonly List<RadarContact> _buf = new(64);
 
@@ -40,6 +73,11 @@ public partial class RadarSource : Node
             _syncElapsed = 0f;
             CollectContacts(_buf);
             Model.Sync(_buf);
+            // Снимок для оверлея + центр сборки (тот же кадр, что и RelPos).
+            _snapshot.Clear();
+            _snapshot.AddRange(_buf);
+            var ownAtSync = OwnFrame();
+            SyncCenter = ownAtSync.Center;
         }
 
         // 2) каждый кадр — экстраполяция + поворот на полный локальный базис
@@ -86,12 +124,17 @@ public partial class RadarSource : Node
                 NetId = net.ShipNetId,
                 RelPos = ToVec3(p - center),
                 RelVel = ToVec3(v - ownVel),
+                AbsVel = ToVec3(v), // мировая скорость корабля (экстраполяция оверлея)
                 Faction = net.FactionValue,
                 Shape = RadarShape.Ship,
                 Damaged = health != null && health.Hp < health.MaxHp,
                 // frame-plan шаг 9: фаза захвата видна и наблюдателю — поле
                 // реплицируется (шаг 6), RadarSource на клиенте читает реплику.
                 Captured = net.CaptureParentNetId != 0,
+                // lock-оверлей: тип для формы метки + габаритный радиус
+                // (половина диагонали корпуса) для размера рамки-выделения.
+                ShipTypeValue = net.ShipTypeValue,
+                SizeRadius = HullRadiusOf(net.ShipTypeValue),
             });
         }
 
@@ -108,6 +151,9 @@ public partial class RadarSource : Node
                 Faction = t.FactionValue,
                 Shape = RadarShape.Target,
                 Damaged = t.Hp < t.MaxHp,
+                // lock-оверлей: корпус мишени — куб 4×4×4 (Target.tscn),
+                // габаритный радиус = половина диагонали ≈ 3.46 м.
+                SizeRadius = TargetSizeRadius,
             });
         }
 
@@ -123,6 +169,8 @@ public partial class RadarSource : Node
                 RelVel = Vec3.Zero,
                 Faction = (byte)Faction.Neutral,
                 Shape = RadarShape.Station,
+                // lock-оверлей: цилиндр r=60 h=40 (Station.tscn) → √(60²+20²).
+                SizeRadius = StationSizeRadius,
             });
         }
 
@@ -201,6 +249,8 @@ public partial class RadarSource : Node
             return s.Net?.ShipNetId ?? 0;
         if (n is TargetState t)
             return t.TargetNetId;
+        if (n is StationState st)
+            return st.StationNetId;
         if (n.GetParent() is Ship sp)
             return sp.Net?.ShipNetId ?? 0;
         return 0;

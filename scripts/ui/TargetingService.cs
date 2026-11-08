@@ -99,6 +99,14 @@ public partial class TargetingService : Node
             TargetFaction = t.FactionValue;
             return true;
         }
+        // Станции (targeting-plan): тоже цели — клик по square-метке радара/оверлея.
+        if (nm.FindStation(netId) is StationState st && GodotObject.IsInstanceValid(st))
+        {
+            TargetNode = st;
+            TargetName = $"Station #{st.StationNetId}";
+            TargetFaction = (byte)Faction.Neutral;
+            return true;
+        }
         return false;
     }
 
@@ -155,6 +163,16 @@ public partial class TargetingService : Node
             if (!WorldPosOf(t, out Vector3 tpos))
                 continue;
             list.Add(new Candidate(t, $"Target #{t.TargetNetId}", tpos, t.FactionValue));
+        }
+
+        // Станции (targeting-plan): участвуют и в Tab-цикле, и в клик-захвате.
+        foreach (var (id, st) in nm.Stations)
+        {
+            if (!GodotObject.IsInstanceValid(st))
+                continue;
+            if (!WorldPosOf(st, out Vector3 spos))
+                continue;
+            list.Add(new Candidate(st, $"Station #{st.StationNetId}", spos, (byte)Faction.Neutral));
         }
 
         list.Sort((a, b) =>

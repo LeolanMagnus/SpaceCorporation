@@ -29,6 +29,14 @@ public struct RadarContact
     public Vec3 RelPos;
     /// <summary>Относительная скорость (для векторов скорости на панели).</summary>
     public Vec3 RelVel;
+    /// <summary>Абсолютная мировая скорость контакта на момент сборки
+    /// (Vel at sync). Целевой контракт для экстраполяции оверлея:
+    /// world = SyncCenter + RelPos + AbsVel·age. Статичные сущности
+    /// (станция, мишень, астероид, контейнер в покое) → Zero; движущиеся
+    /// (курьер, обломок по инерции) → их реальная скорость. Оверлей НЕ
+    /// использует скорость своего корабля, поэтому выделение не дёргается
+    /// при манёврах наблюдающего — верно для любых будущих типов.</summary>
+    public Vec3 AbsVel;
     /// <summary>Фракция ((Faction)FactionValue): 0 Neutral / 1 Player / 2 Hostile.</summary>
     public byte Faction;
     /// <summary>Форма маркера (<see cref="RadarShape"/>).</summary>
@@ -42,4 +50,16 @@ public struct RadarContact
     public bool Captured;
     /// <summary>Дистанция до контакта, м (заполняет RadarModel).</summary>
     public float Distance;
+
+    // ── lock-оверлей (targeting-plan): метка типа и угловой размер цели ──
+    // Заполняет RadarSource; RadarModel их не трогает — это данные для
+    // экранного оверлея TargetOverlay, живущего на тех же контактах.
+
+    /// <summary>Байт типа корабля ((ShipType)значение, реплика ShipTypeValue).
+    /// У мишеней/станций не используется — форму метки задаёт <see cref="Shape"/>.</summary>
+    public byte ShipTypeValue;
+    /// <summary>Габаритный радиус объекта, м (половина диагонали корпуса; для
+    /// мишени/станции — условный «экранный» размер).TargetOverlay считает из него
+    /// полуразмер рамки-выделения: r = focal·SizeRadius/дистанция.</summary>
+    public float SizeRadius;
 }

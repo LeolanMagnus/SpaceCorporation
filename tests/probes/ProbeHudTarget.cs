@@ -26,7 +26,7 @@ public partial class ProbeHudTarget : Node
     private Node _main = null!;
     private HudLayer _hud = null!;
     private TargetingService _svc = null!;
-    private TargetMarker _marker = null!;
+    private TargetOverlay _marker = null!;
     private Label _lbl = null!;
     private WorldSpawner _spawner = null!;
 
@@ -61,7 +61,7 @@ public partial class ProbeHudTarget : Node
             case 6 when _frames == SitFrames + 14:
                 CycleUntilC(); _phase = 7; break;
             case 7 when _frames == SitFrames + 20:
-                CheckBehindClamped(); KillCurrent(_b); _phase = 8; break;
+                CheckBehindClamped(); CheckTargetPanel(); KillCurrent(_b); _phase = 8; break;
             case 8 when _frames == SitFrames + 24:
                 CheckDeadTargetCleared(); Finish(); break;
         }
@@ -71,7 +71,7 @@ public partial class ProbeHudTarget : Node
     {
         _hud = _main.GetNode<HudLayer>("HudLayer");
         _svc = _hud.GetNode<TargetingService>("TargetingService");
-        _marker = _hud.GetNode<TargetMarker>("HudRoot/TargetMarker");
+        _marker = _hud.GetNode<TargetOverlay>("HudRoot/TargetOverlay");
         _lbl = _marker.GetNode<Label>("LblTargetInfo");
         _spawner = FindNode<WorldSpawner>(_main);
 
@@ -166,6 +166,20 @@ public partial class ProbeHudTarget : Node
         for (int i = 0; i < 10 && _svc.TargetNode != _b; i++)
             Cycle();
         t.Hp = 0;
+    }
+
+    private void CheckTargetPanel()
+    {
+        var panel = _marker.GetNodeOrNull("TargetInfoPanel") as PanelContainer;
+        Check(panel != null && panel.Visible, "панель данных цели видна при локе");
+        if (panel == null) return;
+        var hp = panel.GetNodeOrNull<Label>("Box/LblTargetHp");
+        var sh = panel.GetNodeOrNull<Label>("Box/LblTargetShield");
+        var sp = panel.GetNodeOrNull<Label>("Box/LblTargetSpeed");
+        Check(hp != null && hp.Text.Contains("/") && !hp.Text.Contains("—"),
+            $"HP цели заполнен: {hp?.Text}");
+        Check(sh != null && sh.Text.Contains("SHIELD"), $"щит показан: {sh?.Text}");
+        Check(sp != null && sp.Text.Contains("SPEED"), $"скорость показана: {sp?.Text}");
     }
 
     private void CheckDeadTargetCleared()

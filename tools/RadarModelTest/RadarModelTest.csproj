@@ -15,7 +15,7 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
-    <Compile Include="..\..\scripts\core\NetTypes.cs" />
+    <Compile Include="..\..\scripts\net\NetTypes.cs" />
     <Compile Include="..\..\scripts\ui\RadarTypes.cs" />
     <Compile Include="..\..\scripts\ui\RadarModel.cs" />
   </ItemGroup>

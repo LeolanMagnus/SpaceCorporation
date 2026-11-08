@@ -51,7 +51,7 @@ public partial class HudLayer : CanvasLayer
 
     // Целеуказание (H3): сервис и маркер из сцены.
     private TargetingService _targeting = null!;
-    private TargetMarker _targetMarker = null!;
+    private TargetOverlay _targetMarker = null!;
 
     // Марка пилотирования 2.0 (AimReticle): слой прицела (курсор-перекрестие,
     // пунктир, галочки) горит только когда локальный пир реально ведёт корабль
@@ -100,7 +100,7 @@ public partial class HudLayer : CanvasLayer
         speedBox.AddChild(_lblCaptured);
 
         _targeting = GetNode<TargetingService>("TargetingService");
-        _targetMarker = GetNode<TargetMarker>("HudRoot/TargetMarker");
+        _targetMarker = GetNode<TargetOverlay>("HudRoot/TargetOverlay");
         _reticle = GetNode<AimReticle>("HudRoot/AimReticle");
 
         // Комм-лог (H6): слоты + подписка на шину событий.
