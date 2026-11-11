@@ -1,0 +1,49 @@
+Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+
+ship#1: pilot -> 0, local pilot = False, auth = 1, frozen = False
+ship#2: pilot -> 0, local pilot = False, auth = 1, frozen = False
+WorldSpawner: мир заспавнен (корабли раньше игроков, §2.4)
+[net] spawn = offline @ peer 1
+PASS  DebugLayer присутствует в Main
+PASS  global gravity == 0 (получено 0)
+PASS  слой 1 = Ship (получено Ship)
+PASS  слой 2 = Station (получено Station)
+PASS  слой 3 = Character (получено Character)
+PASS  слой 4 = Target (получено Target)
+PASS  константы CollisionLayers == степени двойки по номерам слоёв
+PASS  TestStand — StaticBody3D на слое Station
+PASS  TestStand — инстан сцены TestStand.tscn (получено res://scenes/TestStand.tscn)
+PASS  Environment — инстан сцены Environment.tscn
+PASS  DebugLayer — инстан сцены DebugLayer.tscn
+PASS  в корне Main нет самодельных узлов камеры/света — всё вынесено в сцены
+PASS  в Main есть GameRoot (спавнер объектов мира, §3.6)
+PASS  у GameRoot есть дочерний MultiplayerSpawner «Spawner»
+PASS  в корне Main нет статичных Ship/Player — их спавнит код (§4 В4=B)
+PASS  в Main есть SpawnPoints (набор стартовых точек, §3.6)
+PASS  SpawnPoints содержит >= 1 Marker3D вида Spawn<N> (получено 5)
+PASS  Player заспавнен в GameRoot
+PASS  Player — инстан сцены Player.tscn (получено res://scenes/Player.tscn)
+PASS  Player — CharacterBody3D (капсула)
+PASS  в сцене Player есть Camera3D
+PASS  камера игрока — активная (Current)
+PASS  камера — потомок капсулы игрока (привязана к игроку)
+PASS  Player: слой Character (получено 4)
+PASS  Player: маска Station|Target без Ship (получено 10)
+PASS  Ship (RigidBody3D) заспавнен в GameRoot
+PASS  Ship — инстан сцены Ship.tscn (получено res://scenes/Ship.tscn)
+PASS  Ship: gravity_scale = 0
+PASS  Ship: linear_damp = 0
+PASS  Ship: angular_damp = 1.5 (получено 1,5)
+PASS  Ship: слой Ship (получено 1)
+PASS  Ship: маска Station|Target (получено 10)
+PASS  у корабля есть нос Muzzle (пригодится на этапе 3)
+PASS  у корабля есть точка крепления ShipHull/AttachPoints/Seat
+PASS  у корабля есть узел NetState (§3.2)
+PASS  ShipNetId != 0 (получено 1)
+PASS  в offline первый корабль имеет ShipNetId = 1 (получено 1)
+PASS  в панели есть источник Ship#1 и нет просто Ship (именование по ShipNetId, §3.1 п.6)
+PASS  проба: GravityScale = 0
+PASS  autoload DebugInfoBus существует
+PASS  дебаг-режим изначально выключен (кнопка скрыта)
+PASS  панель изначально закрыта
+PASS  дерево изначально не на паузе

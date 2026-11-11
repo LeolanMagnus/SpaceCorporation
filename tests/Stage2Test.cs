@@ -279,10 +279,14 @@ public partial class Stage2Test : Node3D
         Vector2 c = new Vector2(500f, 300f);   // центр окна (нос смотрит сюда)
         float h = 720f;                          // высота окна
         float R = PilotAim.FullSpeedRadiusPx(h); // полный радиус = ¼·720 = 180
-        float dz = PilotAim.DeadzoneRadiusPx;    // слепая зона = 100px
+        float dz = PilotAim.DeadzoneRadiusPx;    // слепая зона (константа PilotAim)
 
-        Check(Mathf.Abs(R - 180f) < 1e-4f && Mathf.Abs(dz - 100f) < 1e-4f,
-            $"п.3b: радиусы — полный {R:F0}px, слепая зона {dz:F0}px");
+        // Радиусы сверяем с САМИМИ константами, а не с литералами: эталон мёртвой
+        // зоны менялся (d68d18b: 100 px → 40 px), и тест на литерале после этого
+        // краснел, не замечая, что математика рампы корректна. Формула полного
+        // радиуса (¼ высоты вьюпорта) при этом зафиксирована — её и крыем числом.
+        Check(Mathf.Abs(R - h * PilotAim.RadiusFraction) < 1e-4f && Mathf.Abs(R - 180f) < 1e-4f,
+            $"п.3b: полный радиус {R:F0}px = ¼·{h:F0}, слепая зона {dz:F0}px");
         Check(R > dz, "п.3b: полный радиус больше слепой зоны (рампа существует)");
 
         // Точно в центре — направление неопределено → не крутим.
@@ -290,8 +294,8 @@ public partial class Stage2Test : Node3D
             "п.3b: курсор в центре (r=0) → ноль");
 
         // Внутри слепой зоны — не крутим (микродрожание руки).
-        Check(PilotAim.TurnFactor(c + new Vector2(60f, 0f), c, R) == Vector2.Zero,
-            "п.3b: r=60 < слепой зоны → ноль");
+        Check(PilotAim.TurnFactor(c + new Vector2(dz * 0.5f, 0f), c, R) == Vector2.Zero,
+            $"п.3b: r={dz * 0.5f:F0} < слепой зоны {dz:F0} → ноль");
 
         // Ровно на границе слепой зоны (r = dz) — включительно → ноль.
         Check(PilotAim.TurnFactor(c + new Vector2(dz, 0f), c, R) == Vector2.Zero,
@@ -307,10 +311,11 @@ public partial class Stage2Test : Node3D
         Check(Mathf.Abs(beyond.X - 1f) < 1e-4f && Mathf.Abs(beyond.Y) < 1e-4f,
             "п.3b: r≫R → фактор ограничен 1");
 
-        // Середина рампы (r = (dz+R)/2 = 140) → фактор 0.5 ровно.
-        Vector2 mid = PilotAim.TurnFactor(c + new Vector2(140f, 0f), c, R);
+        // Середина рампы (r = (dz+R)/2) → фактор 0.5 ровно.
+        float midR = (dz + R) * 0.5f;
+        Vector2 mid = PilotAim.TurnFactor(c + new Vector2(midR, 0f), c, R);
         Check(Mathf.Abs(mid.X - 0.5f) < 1e-4f && Mathf.Abs(mid.Y) < 1e-4f,
-            $"п.3b: середина рампы r=140 → фактор 0.5 (получено {mid.X:F3})");
+            $"п.3b: середина рампы r={midR:F0} → фактор 0.5 (получено {mid.X:F3})");
 
         // Вниз по экрану → фактор по +Y (экранная ось вниз = pitch+ в look-канале).
         Vector2 down = PilotAim.TurnFactor(c + new Vector2(0f, R), c, R);
@@ -318,11 +323,12 @@ public partial class Stage2Test : Node3D
             "п.3b: курсор ниже центра → фактор по +Y");
 
         // Вырожденное микроокно: полный радиус меньше слепой зоны (headless
-        // 64×64: R=16 < dz=100) — внутри зоны ноль, за ней сразу полная скорость.
+        // 64×64: R=16 < dz) — внутри зоны ноль, за ней сразу полная скорость.
         float tinyR = PilotAim.FullSpeedRadiusPx(64f); // = 16
-        Check(PilotAim.TurnFactor(c + new Vector2(50f, 0f), c, tinyR) == Vector2.Zero,
-            "п.3b: микроокно, r=50 ≤ dz → ноль");
-        Vector2 tinyFull = PilotAim.TurnFactor(c + new Vector2(150f, 0f), c, tinyR);
+        Check(tinyR < dz, $"п.3b: микроокно: R={tinyR:F0} < слепой зоны {dz:F0} (рампы нет)");
+        Check(PilotAim.TurnFactor(c + new Vector2(dz * 0.75f, 0f), c, tinyR) == Vector2.Zero,
+            $"п.3b: микроокно, r={dz * 0.75f:F0} ≤ dz → ноль");
+        Vector2 tinyFull = PilotAim.TurnFactor(c + new Vector2(dz + 10f, 0f), c, tinyR);
         Check(Mathf.Abs(tinyFull.X - 1f) < 1e-4f && Mathf.Abs(tinyFull.Y) < 1e-4f,
             "п.3b: микроокно, r>dz → сразу полная скорость (рампы нет)");
 
@@ -334,7 +340,7 @@ public partial class Stage2Test : Node3D
             $"п.3b: полная скорость за шаг = 0.1 рад (получено {step.X:F4})");
 
         // Внутри слепой зоны команда — ровно ноль (не «почти»).
-        Vector2 dzStep = PilotAim.LookRadiansPerStep(c + new Vector2(50f, 0f), c,
+        Vector2 dzStep = PilotAim.LookRadiansPerStep(c + new Vector2(dz * 0.5f, 0f), c,
             R, 6f, 1f / 60f);
         Check(dzStep == Vector2.Zero, "п.3b: внутри слепой зоны команда за шаг = 0");
     }
@@ -717,7 +723,9 @@ public partial class Stage2Test : Node3D
                 _mYawBefore = _ship.GlobalTransform.Basis.GetEuler().Y;
                 // Режим 2.0: прицел — ПОЗИЦИЯ курсора. Ставим курсор ЗА окружностью
                 // полной скорости (горизонтально вправо) → команда 100% скорости.
-                _mAimCursor = AimCenter() + new Vector2(PilotAim.DeadzoneRadiusPx + 100f, 0f);
+                // Дистанция привязана к R = FullSpeedRadiusPx, а не к слепой зоне:
+                // «за окружностью» значит r > R (иначе попадаем в середину рампы).
+                _mAimCursor = AimCenter() + new Vector2(PilotAim.FullSpeedRadiusPx(vs.Y) + 100f, 0f);
                 PushLookPos(_mAimCursor);
                 _pilotFrames = 0;
                 _pilotStep = 6;
@@ -751,14 +759,14 @@ public partial class Stage2Test : Node3D
                 Check(AngleBetween(_mRot, _ship.GlobalTransform.Basis.GetRotationQuaternion()) > 0.02f,
                     "п.6b: ориентация корпуса реально изменилась от позиции курсора");
 
-                // СЛЕПАЯ ЗОНА: ставим курсор вплотную к центру (внутри 100px) —
+                // СЛЕПАЯ ЗОНА: ставим курсор вплотную к центру (r = dz/2) —
                 // доворот обязан пропасть, команда ввода = 0. Поворот — ПРЯМАЯ
                 // дозапись ориентации (ApplyLookRadians), угловой скорости не
                 // копится: стоит обнулить look — yaw сразу замирает. therefore
                 // снимаем отсчёт СЕЙЧАС (после доворота case6), и case7 меряет
                 // приращение уже от слепой зоны.
                 _mYawBefore = yaw;
-                _mAimDz = AimCenter() + new Vector2(50f, 0f); // r=50 <= 100
+                _mAimDz = AimCenter() + new Vector2(PilotAim.DeadzoneRadiusPx * 0.5f, 0f);
                 PushLookPos(_mAimDz);
                 _pilotFrames = 0;
                 _pilotStep = 7;
@@ -768,7 +776,7 @@ public partial class Stage2Test : Node3D
             case 7:
                 if (_pilotFrames < 2) return;
 
-                // СЛЕПАЯ ЗОНА: курсор в 50px от центра (< 100px) → команда 0,
+                // СЛЕПАЯ ЗОНА: курсор внутри неё (r = dz/2) → команда 0,
                 // ориентация замирает (look — прямая дозапись, w не копится).
                 float yaw2 = _ship.GlobalTransform.Basis.GetEuler().Y;
                 Check(Mathf.Abs(yaw2 - _mYawBefore) < 1e-4f,

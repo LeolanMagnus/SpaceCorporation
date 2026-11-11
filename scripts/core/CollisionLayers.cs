@@ -16,12 +16,24 @@ public static class CollisionLayers
     // тесты), новые слои добавляются в конец.
     public const uint Debris      = 1u << 6; // 7 — обломки (этап 3+)
     public const uint World       = 1u << 7; // 8 — статика мира (планеты, астероиды)
+    public const uint Deck        = 1u << 8; // 9 — палубы примитивов (этап 6, eva-plan Блок F)
+    public const uint ControlPanel = 1u << 9; // 10 — панели управления (eva-plan Блок E)
+
+    /// <summary>Лучевые каналы EVA (этап 6): чем интересуются лучи игрока
+    /// (выбор кресла, наведение на панель в Блоке E). По eva-plan §3 (строка 179):
+    /// панели + палубы + станция + корпуса кораблей. Слой Character не добавляем:
+    /// лучи не цепляются за других игроков. При том что маска КОЛЛИЗИЙ игрока слоя
+    /// `Ship` не содержит («летать можно сквозь корпуса, но лучи корпуса видят»,
+    /// В24 + план 6.2) — разница масок коллизий и лучей намеренная.</summary>
+    public const uint EvaRayMask = ControlPanel | Deck | Station | Ship;
+
+    /// <summary>По чему ходят магнитные ботинки (eva-plan строка 178): палубы
+    /// примитивов (в т.ч. палубы кораблей) и корпус станции. Корпус корабля сюда
+    /// НЕ входит: по нему ходят по его палубе-примитиву (Блок F), а не по обшивке.</summary>
+    public const uint BootsMask = Deck | Station;
 
     /// <summary>Случайное тело корабля: сталкивается со станцией и мишенями.</summary>
     public const uint ShipMask = Station | Target;
-
-    /// <summary>Луч магнитных ботинок (этап 6): ищет только станцию.</summary>
-    public const uint BootsMask = Station;
 
     /// <summary>Хитскан-луч (этап 3): станция + мишени, без корабля и персонажа.</summary>
     public const uint LaserMask = Station | Target;

@@ -198,6 +198,9 @@ public partial class WorldSpawner : Node3D
             {
                 Name = "ServerCamera",
                 Far = 4000.0f,
+                // FOV тот же, что у камер игрока/chase (Ship.CameraFovDeg) —
+                // единый масштаб картинки во всех вьюпортах.
+                Fov = Ship.CameraFovDeg,
                 // Не реагирует на ввод и не мешает дебаг-слою; просто даёт viewport
                 // активную камеру, чтобы мир был виден без игрока (§3.11 п.10).
                 ProcessMode = ProcessModeEnum.Always,

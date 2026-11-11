@@ -113,7 +113,7 @@ public static class ShipStatCatalog
                 // обе стороны. Демпфер остаётся на случай кораблей без τ.
                 AngularDamping = 1.5f,
                 BoostMultiplier = 2f,
-                MaxAngularSpeed = 1f,
+                MaxAngularSpeed = 6f,
                 // Юркий: практически до своего предела вращения (6 рад/с) — за
                 // полсекунды; дальше скорость держится на плато, пока зажато
                 // Q/E. Столько же (0.6 с) занимает и остановка после отпускания:
@@ -147,7 +147,7 @@ public static class ShipStatCatalog
                 LinearDamping = 0f,
                 AngularDamping = 1.0f,
                 BoostMultiplier = 1.5f,
-                MaxAngularSpeed = 0.2f,   // неповоротливый: потолок вращения ниже
+                MaxAngularSpeed = 2.2f,   // неповоротливый: потолок вращения ниже
                 MaxLinearSpeed = 1200f,
                 // Неповоротливый: практически до своего предела вращения — за
                 // секунду; заметный перенос ответа на нажатие Q/E. Остановка после
@@ -177,7 +177,7 @@ public static class ShipStatCatalog
                 LinearDamping = 0f,
                 AngularDamping = 2.2f,    // «чуть больше среднего и тоже неповоротливый»
                 BoostMultiplier = 1.5f,
-                MaxAngularSpeed = 0.1f,
+                MaxAngularSpeed = 1.2f,
                 MaxLinearSpeed = 1000f,
                 // Самая инерционная рама из трёх: раскрутка «до упора» — за две
                 // секунды, на руль отвечает отчётливым опозданием. И останавливает

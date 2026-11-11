@@ -307,7 +307,7 @@ public partial class Ship : RigidBody3D
 
     /// <summary>Добавить мышиную дельту в пикселях напрямую, не посылая события
     /// мыши (тест п.6 проверяет и транспорт, и накопление).</summary>
-    public void TestAddLookDelta(Vector2 pixels) => _lookDelta += pixels;
+    public void TestAddLookDelta(Vector2 pixels) => _pilotInput.AddLookDeltaPx(pixels);
 
     /// <summary>Состояние гейта прицела для данной экранныой точки. Шов нужен,
     /// чтобы тест мог проверить сам гейт, а не только следствие: если гейт

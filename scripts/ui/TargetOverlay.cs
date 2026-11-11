@@ -393,7 +393,7 @@ public partial class TargetOverlay : Control
             return ClampToEdge(center, dir, margin);
         }
         // видима впереди, но вне поля → направление от центра к проекции.
-        float fy = Size.Y * 0.5f / Mathf.Tan(Mathf.DegToRad(GetViewport().GetCamera3D()?.Fov ?? 75f) * 0.5f);
+        float fy = Size.Y * 0.5f / Mathf.Tan(Mathf.DegToRad(GetViewport().GetCamera3D()?.Fov ?? Ship.CameraFovDeg) * 0.5f);
         Vector2 p = center + new Vector2(d.Dot(right) * fy / z, -d.Dot(up) * fy / z);
         return ClampToEdge(center, p - center, margin);
     }

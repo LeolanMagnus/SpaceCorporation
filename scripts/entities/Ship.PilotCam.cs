@@ -9,6 +9,10 @@ public partial class Ship : RigidBody3D
     /// <summary>Дистанция камеры-преследования за кормой (шаг 2.2.3).</summary>
     [Export] public float CameraDistance = 12f;
 
+    /// <summary>Единый FOV всех камер проекта (градусы) — см. `EnsureChaseCamera`:
+    /// держим одним значением, чтобы вид «из глаз» ⇄ chase не прыгал масштабом.</summary>
+    public const float CameraFovDeg = 73f;
+
     /// <summary>Подъём камеры над кормой, чтобы корпус не перекрывал вид.</summary>
     [Export] public float CameraHeight = 3f;
 
@@ -26,30 +30,15 @@ public partial class Ship : RigidBody3D
 
     /// <summary>Собрать кадр ввода с реальных клавиш (только пилоту, см.
     /// `IsLocalPilot`). Дискретная модель: каждое действие — бит, поэтому
-    /// `Input.IsActionPressed`, а не аналоговые оси.</summary>
+    /// `Input.IsActionPressed`, а не аналоговые оси.
+    ///
+    /// Блок A (eva-plan): сбор клавиш и курсора вынесен в `PilotInput` — тот же
+    /// код кормит и корабль, и скафандр (ТЗ п.9 «управление идентично»). Здесь
+    /// остаются только решения по РОЛИ: гейты вызова (`FrameForStep`) и маска
+    /// стендового автопилота, которую вызывает сам корабль.</summary>
     private InputFrame CollectInputFrame()
     {
-        uint mask = 0;
-        if (Input.IsActionPressed("thrust_f")) mask |= InputMask.ThrustF;
-        if (Input.IsActionPressed("thrust_b")) mask |= InputMask.ThrustB;
-        if (Input.IsActionPressed("thrust_l")) mask |= InputMask.ThrustL;
-        if (Input.IsActionPressed("thrust_r")) mask |= InputMask.ThrustR;
-        if (Input.IsActionPressed("thrust_u")) mask |= InputMask.ThrustU;
-        if (Input.IsActionPressed("thrust_d")) mask |= InputMask.ThrustD;
-        // Режим взаимодействия: корабль перестаёт управляться по тангажу/рысканью/крену
-        // (и мышью — см. `HandleMouseMotion`, и клавишами Z/X/C/V/Q/E — здесь). Тяга
-        // (WASD/boost) остаётся: игрок освобождает мышь для интерфейса, а не глушит
-        // двигатели.
-        if (!IsInteractionMode)
-        {
-            if (Input.IsActionPressed("torque_pitch_up")) mask |= InputMask.TorquePitchUp;
-            if (Input.IsActionPressed("torque_pitch_down")) mask |= InputMask.TorquePitchDown;
-            if (Input.IsActionPressed("torque_yaw_left")) mask |= InputMask.TorqueYawLeft;
-            if (Input.IsActionPressed("torque_yaw_right")) mask |= InputMask.TorqueYawRight;
-            if (Input.IsActionPressed("torque_roll_left")) mask |= InputMask.TorqueRollLeft;
-            if (Input.IsActionPressed("torque_roll_right")) mask |= InputMask.TorqueRollRight;
-        }
-        if (Input.IsActionPressed("boost")) mask |= InputMask.Boost;
+        uint extraMask = 0;   // биты, которые решил сам корабль (автопилот стенда)
 
         // Автопилот headless-стенда (§2.6): в --headless никто не жмёт WASD, поэтому
         // пилот сам гонит тягу и периодически доворачивает рысканием — иначе
@@ -104,66 +93,61 @@ public partial class Ship : RigidBody3D
             const float BrakeBand = 1.6f;      // тормозим, когда скорость > цели × 1,6
             float speed = _predicted.LinearVelocity.Length();
             if (speed < TargetSpeed)
-                mask |= InputMask.ThrustF;
+                extraMask |= InputMask.ThrustF;
             else if (speed > TargetSpeed * BrakeBand)
-                mask |= InputMask.ThrustB;
+                extraMask |= InputMask.ThrustB;
             // Редкие довороты рысканием — чтобы в метриках жил и вращательный канал
             // (угловая скорость в снимке, реконсиляция ориентации). Фаза каждые 90
             // тиков, поворот только на нечётных фазах, чтобы не мешать удержанию курса.
             int phase = (int)(_tick / 90) % 4;
-            if (phase == 1) mask |= InputMask.TorqueYawRight;
-            else if (phase == 3) mask |= InputMask.TorqueYawLeft;
+            if (phase == 1) extraMask |= InputMask.TorqueYawRight;
+            else if (phase == 3) extraMask |= InputMask.TorqueYawLeft;
         }
 
-        // Оси восстанавливает FromMask: в провод уходит только tick+mask+мышь
-        // (16 байт, §1.3), а сервер, прочитав маску, обязан получить ровно тот
-        // же кадр, что интегрировал клиент, — иначе предсказание (шаг 2.4)
-        // разойдётся с серверной истиной на ровном месте.
+        // Оси восстанавливает FromMask (внутри Collect): в провод уходит только
+        // tick+mask+мышь (16 байт, §1.3), а сервер, прочитав маску, обязан
+        // получить ровно тот же кадр, что интегрировал клиент, — иначе
+        // предсказание (шаг 2.4) разойдётся с серверной истиной на ровном месте.
         //
         // Режим пилотирования 2.0: НОС доворачивает на ПОЗИЦИЮ курсора-прицела
         // (центр экрана = точка направления носа), а не на накопленную дельту
         // мыши. Скорость доворота пропорциональна удалению курсора от центра:
         // 0 внутри слепой зоны (PilotAim.DeadzoneRadiusPx), 100% на окружности
         // радиусом ¼ высоты экрана (PilotAim.RadiusFraction). Аддитивный
-        // `_lookDelta` остаётся отдельным каналом (его кормит тестовый шов
-        // TestAddLookDelta; игровая мышь его больше НЕ наполняет — см.
-        // HandleMouseMotion).
-        Vector2 lookPos = PilotLookFromCursor();
-        InputFrame f = InputFrame.FromMask(_tick, mask,
-            yaw: _lookDelta.X * MouseSensitivity + lookPos.X,
-            pitch: _lookDelta.Y * MouseSensitivity + lookPos.Y);
-        // Накопленную мышиную дельту съедаем ровно один раз: иначе следующий
-        // физкадр повторно довернул бы нос теми же пикселями (шаг 2.3: look
-        // теперь применяется из кадра, а не из `_lookDelta` напрямую).
-        _lookDelta = Vector2.Zero;
-        return f;
+        // пиксельный канал collector'а остаётся отдельным каналом (его кормит
+        // тестовый шов TestAddLookDelta; игровая мышь его больше НЕ наполняет —
+        // см. HandleMouseMotion).
+        _pilotInput.Active = IsLocalPilot;
+        _pilotInput.InteractionMode = IsInteractionMode;
+        return _pilotInput.Collect(_tick, ViewportSize, MaxAngularSpeed,
+            FlightModel.FixedDt, MouseSensitivity, extraMask,
+            lookSuppressed: NetworkManager.Autopilot);
+    }
+
+    /// <summary>Размер вьюпорта этого корабля (пиксели) — нулевой, если окна нет
+    /// (выделенный сервер). Собран в одно место, чтобы look-канал и прицел
+    /// меряли окно одинаково (п.4 eva-plan).</summary>
+    private Vector2 ViewportSize
+    {
+        get
+        {
+            Viewport? vp = GetViewport();
+            return vp == null ? Vector2.Zero : vp.GetVisibleRect().Size;
+        }
     }
 
     /// <summary>
-    /// Позиционная команда доворота носа (рад за шаг) на курсор-прицел в режиме
-    /// пилотирования 2.0. Ноль, если: мышь ещё не «видели» (headless-детерминизм
-    /// — без мыши позиция (0,0)=угол окна сама бы крутила корабль), не пилот,
-    /// режим взаимодействия (мышь кликает по UI), либо автопилот-стенд (его
-    /// поворот живёт в маске Torque*, а не в look-канале).
-    /// Центр экрана и радиус «полной скорости» берутся из актуального размера
-    /// вьюпорта, поэтому схема работает при любом разрешении окна.
+    /// Позиционная команда доворота носа (рад за шаг) на курсор-прицел — жила здесь
+    /// до блока A; теперь её считает `PilotInput.LookRadiansPerStep` (тот же код,
+    /// те же константы `PilotAim`), потому что скафандру нужен идентичный look-
+    /// канал. Здесь оставлен только вход для визуала прицела (HudLayer), который
+    /// обязан мерять окно ровно так же, как look-канал.
     /// </summary>
-    private Vector2 PilotLookFromCursor()
+    public Vector2 PilotLookFromCursor()
     {
-        if (!_hasPilotCursor || !IsLocalPilot || IsInteractionMode)
-            return Vector2.Zero;
-        if (NetworkManager.Autopilot)
-            return Vector2.Zero;
-        Vector2 view = GetViewport().GetVisibleRect().Size;
-        if (view.X <= 0f || view.Y <= 0f)
-            return Vector2.Zero;
-        // Полный радиус — по ВЫСОТЕ окна (ТЗ: ¼ вертикального размера);
-        // слепая зона 100px — константа PilotAim.
-        return PilotAim.LookRadiansPerStep(
-            _pilotCursorPx,
-            PilotAim.ScreenCenter(view),
-            PilotAim.FullSpeedRadiusPx(view.Y),
-            MaxAngularSpeed,
+        _pilotInput.Active = IsLocalPilot;
+        _pilotInput.InteractionMode = IsInteractionMode;
+        return _pilotInput.LookRadiansPerStep(ViewportSize, MaxAngularSpeed,
             FlightModel.FixedDt);
     }
 
@@ -240,6 +224,12 @@ public partial class Ship : RigidBody3D
                 // Дальность видимости: без неё корабль улетает за far plane и
                 // «исчезает» — выглядит как падение физики.
                 Far = 4000f,
+                // Угол поля зрения (2026-08): дефолтные 75° Godot дают сильное
+                // ректомое искажение — объект у края радиально крупнее в
+                // 1/cos²θ раз (на вертикальной границе кадра ×1.59), и мозг
+                // читает это как «ближе». Единое значение на всех камерах —
+                // иначе вид «из глаз» ⇄ chase прыгает масштабом по V.
+                Fov = CameraFovDeg,
             };
             AddChild(_chaseCam);
         }
@@ -332,16 +322,15 @@ public partial class Ship : RigidBody3D
     /// актуальный), чтобы доворот стартовал «на нуле» и без рывка.</summary>
     private void WarpPilotCursorToCenter()
     {
-        Vector2 view = GetViewport().GetVisibleRect().Size;
+        // Тот же гейт, что раньше (окно обязано быть невнятным по размеру), —
+        // иначе в headless при нулевом вьюпорте стартовая точка прицела вышла бы
+        // (0,0) и нос смотрел бы «в угол окна».
+        Vector2 view = ViewportSize;
         if (view.X <= 0f || view.Y <= 0f)
             return;
-        _pilotCursorPx = view * 0.5f;
-        _hasPilotCursor = true;
-        // Warp безвреден и в headless (просто сдвиг ОS-курсора в центр); в
-        // безголовом режиме он ничего не делает, но `_pilotCursorPx` выше уже
-        // задаёт корректную стартовую точку прицела. `Input.WarpMouse` — рабочий
-        // биндинг Godot 4.7 (у Window метода WarpMousePosition нет).
-        Input.WarpMouse(view * 0.5f);
+        // Внутри: CursorPx = центр, HasCursor = true, Input.WarpMouse — ровно как
+        // до выноса (инвариант блока A).
+        _pilotInput.WarpCursorToCenter(view);
     }
 
     /// <summary>Отпустить ввод пилота: корабль перестал пилотироваться локально
@@ -354,10 +343,10 @@ public partial class Ship : RigidBody3D
             _capturedInput = false;
             Input.MouseMode = _prevMouseMode;
         }
-        _lookDelta = Vector2.Zero;
-        // Прицел-курсор больше не актуален: без пилота позиция курсора не должна
-        // никуда доворачивать (и не «зависает» с прошлой сессии пилотирования).
-        _hasPilotCursor = false;
+        // Collector больше не активен: сброс накоплений (аддитивный канал +
+        // флаг «курсор есть»), чтобы у следующего режима (или следующего
+        // пирата) не осталось хвоста прицела.
+        _pilotInput.Release();
     }
 
 
@@ -394,7 +383,7 @@ public partial class Ship : RigidBody3D
         if (_mouseCatcher != null && GodotObject.IsInstanceValid(_mouseCatcher))
             _mouseCatcher.QueueFree();
         _mouseCatcher = null;
-        _lookDelta = Vector2.Zero;
+        _pilotInput.ClearLookDelta();
     }
 
     /// <summary>

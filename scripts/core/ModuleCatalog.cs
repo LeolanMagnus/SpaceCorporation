@@ -120,3 +120,113 @@ public static class ModuleCatalog
         _ => "",
     };
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// EVA: категория модулей скафандра (eva-plan, Б3 — ЗАДЕЛ, без крафта и цен)
+// ══════════════════════════════════════════════════════════════════════════
+
+/// <summary>
+/// Вид модуля скафандра (eva-plan Б3). Отдельный от <see cref="ModuleKind"/>
+/// enum: слоты корабля и слоты скафандра — разные комплекты, их нельзя
+/// перепутать одним словарём. Порядок чисел фиксирован: он попадает в битовую
+/// маску <see cref="SuitState.ActiveSuitModules"/>, которую возит сеть (Блок D).
+/// </summary>
+public enum SuitModuleKind { Heat = 0, Light = 1, Jetpack = 2, Boots = 3 }
+
+/// <summary>Бит маски <see cref="SuitState.ActiveSuitModules"/> для вида модуля.</summary>
+public static class SuitModules
+{
+    public static uint BitOf(SuitModuleKind kind) => 1u << (int)kind;
+    public static bool Has(uint mask, SuitModuleKind kind) => (mask & BitOf(kind)) != 0u;
+    public const int Count = 4;
+
+    /// <summary>Сколько слотов занято в маске (для HUD «4/4 модуля»).</summary>
+    public static int CountActive(uint mask)
+    {
+        int n = 0;
+        for (int i = 0; i < Count; i++)
+            if ((mask & (1u << i)) != 0u) n++;
+        return n;
+    }
+}
+
+/// <summary>
+/// Спецификация модуля скафандра (чистые данные, как <see cref="ModuleSpec"/>).
+/// Единицы — проценты расходников скафандра:
+///  • DrawPerMin     — Δ расхода батареи, %/мин ОТНОСИТЕЛЬНО базового комплекта
+///                     (0 у базовых обогрева/фонаря: их постоянный расход уже
+///                     задают константы <see cref="SuitModel.HeatDrawPerMin"/> и
+///                     <see cref="SuitModel.LightDrawPerMin"/>, поэтому
+///                     двойного счёта нет; отрицательное = экономия);
+///  • MassTotal      — реактивная масса, которую даёт этот джетпак, %
+///                     (0 = модуль массы не даёт; потолок бака — сумма по слотам);
+///  • RechargePerMin — 0 = «нет мнения», действует базовое
+///                     <see cref="SuitModel.RechargePerMin"/>.
+/// Значения ниже — заглушки-задел: реальные апгрейды (крафт, цены, деревья) на
+/// этой стадии сознательно НЕ делаются (eva-plan §6).
+/// </summary>
+public readonly struct SuitModuleSpec
+{
+    public readonly string Id;
+    public readonly string Name;
+    public readonly SuitModuleKind Kind;
+    public readonly int Tier;
+    public readonly float DrawPerMin;
+    public readonly float MassTotal;
+    public readonly float RechargePerMin;
+
+    public SuitModuleSpec(string id, string name, SuitModuleKind kind, int tier,
+                          float drawPerMin = 0f, float massTotal = 0f, float rechargePerMin = 0f)
+    {
+        Id = id; Name = name; Kind = kind; Tier = tier;
+        DrawPerMin = drawPerMin; MassTotal = massTotal; RechargePerMin = rechargePerMin;
+    }
+}
+
+/// <summary>
+/// Каталог модулей скафандра: базовый комплект (=Mk I, ровно сегодняшние
+/// константы `SuitModel`) + по одному условному уровню выше, чтобы структура
+/// была обкатана до появления апгрейдов. Никаких цен и деревьев.
+/// </summary>
+public static class SuitModuleCatalog
+{
+    private static readonly System.Collections.Generic.Dictionary<string, SuitModuleSpec> Specs = new()
+    {
+        // Базовый жизнеобеспечивающий контур: его расход = константы SuitModel.
+        ["heat_standard"] = new("heat_standard", "Life Support Standard", SuitModuleKind.Heat, 1),
+        ["heat_insulated_mk2"] = new("heat_insulated_mk2", "Life Support Insulated Mk II",
+            SuitModuleKind.Heat, 2, drawPerMin: -1f), // 4 → 3 %/мин
+
+        // Фонарь: базовый = SuitModel.LightDrawPerMin; Mk II — мощнее и дороже.
+        ["light_standard"] = new("light_standard", "Helmet Lamp Standard", SuitModuleKind.Light, 1),
+        ["light_flood_mk2"] = new("light_flood_mk2", "Helmet Lamp Flood Mk II",
+            SuitModuleKind.Light, 2, drawPerMin: 4f), // 12 → 16 %/мин
+
+        // Джетпак: единственный источник реактивной массы (ТЗ: 100 % = полный бак).
+        ["jetpack_mk1"] = new("jetpack_mk1", "Jetpack Mk I", SuitModuleKind.Jetpack, 1,
+            massTotal: 100f),
+
+        // Ботинки: пассивный модуль (расхода нет — сцепление магнитное).
+        ["boots_mk1"] = new("boots_mk1", "Mag Boots Mk I", SuitModuleKind.Boots, 1),
+    };
+
+    public static bool TryFind(string? id, out SuitModuleSpec spec) =>
+        Specs.TryGetValue(id ?? "", out spec);
+
+    public static SuitModuleSpec Find(string id)
+    {
+        if (TryFind(id, out SuitModuleSpec spec)) return spec;
+        GD.PrintErr($"SuitModuleCatalog: неизвестный модуль скафандра '{id}'");
+        return default;
+    }
+
+    /// <summary>Базовая комплектация = сегодняшние числа SuitModel (ТЗ-режим).</summary>
+    public static string DefaultFor(SuitModuleKind kind) => kind switch
+    {
+        SuitModuleKind.Heat => "heat_standard",
+        SuitModuleKind.Light => "light_standard",
+        SuitModuleKind.Jetpack => "jetpack_mk1",
+        SuitModuleKind.Boots => "boots_mk1",
+        _ => "",
+    };
+}

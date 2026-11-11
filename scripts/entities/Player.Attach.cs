@@ -74,6 +74,13 @@ public partial class Player : CharacterBody3D
 
         Velocity = Vector3.Zero;
         ResetPhysicsInterpolation();
+
+        // EVA (С3): любое крепление = режим кресла — и дебаг-кнопка, и F, и
+        // автостыковка на спавне, и ApplyAttach-реплика. Вызов ПОСЛЕ Reparent и
+        // присваивания `AttachedTo`: хук читает владельца точки (корабль/станция,
+        // Б2 заправка) и мировую позу. Для чужого пира хук почти ничего не делает
+        // (все ветки guarded `if (!_isLocal) return`).
+        OnAttachedEvaMode();
     }
 
     /// <summary>
@@ -89,6 +96,12 @@ public partial class Player : CharacterBody3D
         Reparent(_worldRoot, keepGlobalTransform: true);
         Velocity = Vector3.Zero;
         ResetPhysicsInterpolation();
+
+        // EVA: выход из крепления = свободный режим (джетпак), сборщик мыши
+        // обратно, позиция тела в модель инерции. Порядок важен: AttachTo зовёт
+        // Detach() перед новым креплением, и завершающий OnAttachedEvaMode()
+        // перекроет режим — залипнуть в джетпаке, сидя в кресле, нельзя.
+        OnDetachedEvaMode();
     }
 
     /// <summary>
@@ -198,6 +211,30 @@ public partial class Player : CharacterBody3D
         {
             GD.PrintErr($"Player: точка крепления ({ownerNetId}, {pointNetId}) " +
                         "не найдена в реестре — отказ в запросе");
+            return;
+        }
+        // Блок D (Д3, BUG-009): кресло занято — нельзя «увести» пилота у чужого
+        // корабля, запрыгнув в его кабину из EVA. Без гейта вход в кабину =
+        // nm.SetPilot(pilotPeer) перезаписывал бы PilotPeerId чужого корабля, и
+        // два игрока гоняли бы один корпус (счётчик «PilotPeerId == pilot» ломается,
+        // ввод пилота-владельца теряется). Гейт стоит ДО AttachTo: отказ не должен
+        // менять ни дерево, ни назначение пилота.
+        //   • Точка не кресло (пол/шлюз станции) — свободна, пропускаем.
+        //   • Пилот == FreeShipPilotId (сеть: автопилот 1; offline: «никто» 0) —
+        //     кабина не занята реальным игроком, вход легален (спавн-кресло,
+        //     AutoAttachToFreeSeat, пересадка с другого корабля).
+        //   • Пилот == этот игрок — легальная пересадка в «своё» кресло / возврат
+        //     после реконнекта (PilotPeerId ещё держит его peerId).
+        // Отказ = PrintErr attach-denied и ранний return без AttachTo/SetPilot/Rpc.
+        if (point.Kind == AttachPoint.KindOf.Seat &&
+            NetworkManager.Instance is { IsAuthoritySide: true } nmGate &&
+            nmGate.FindShip(ownerNetId) is { } targetShip &&
+            targetShip.PilotPeerId != nmGate.FreeShipPilotId &&
+            targetShip.PilotPeerId != GetMultiplayerAuthority())
+        {
+            GD.PrintErr($"Player: attach-denied — кабина корабля {ownerNetId} " +
+                        $"занята пилотом {targetShip.PilotPeerId}, игрок " +
+                        $"{GetMultiplayerAuthority()} не может занять чужое кресло");
             return;
         }
         // §3.9 п.17: переход «корабль A → корабль B» — один вызов, но авторитет

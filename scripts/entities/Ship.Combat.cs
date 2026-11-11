@@ -88,28 +88,23 @@ public partial class Ship : RigidBody3D
     /// </summary>
     internal void HandleMouseMotion(InputEventMouseMotion m)
     {
-        // Шаг 3.3: запоминаем экранный курсор ДО гейтов — выстрел (RequestFire)
-        // восстанавливает луч по последней позиции курсора, даже если в момент
-        // клика мышь не двигалась.
-        _lastMousePos = m.Position;
-
-        // Режим пилотирования 2.0: помечаем позицию курсора-ПРИЦЕЛА и снимаем
-        // гейт «дельта мыши» — доворот считается из ПОЗИЦИИ (центр экрана =
-        // точка носа), а не из накопленного перемещения. Курсор свободен
-        // (Visible), поэтому `Relative` больше не наполняет `_lookDelta`.
-        // `_hasPilotCursor` ставим сразу: позиция реальна, как только мышь
-        // задвигалась, даже в режиме взаимодействия (для прицела-визуала её
-        // всё равно показывает HudLayer, а поворот гаснет гейтом в look-канале).
-        _pilotCursorPx = m.Position;
-        _hasPilotCursor = true;
-
-        if (!IsLocalPilot)
-            return;
-        // Режим взаимодействия: мышь свободна и кликает по интерфейсу — нос не
-        // доворачиваем (гейт и в PilotLookFromCursor, и здесь — для ясности).
-        if (IsInteractionMode)
-            return;
+        // Блок A (eva-plan): накопление курсора живёт в `PilotInput` — там же,
+        // где его читает look-канал и (п.6) прицел-визуал/скафандр. Флаг
+        // `Active` collector'а = `IsLocalPilot` (п.16: позиция курсора и бит
+        // «курсор есть» пишутся под ОДНИМ гейтом), поэтому чужой пир не копит
+        // прицел к чужому кораблю. `LastMousePx` пишется всегда: выстрел
+        // (RequestFire) восстанавливает луч по последней позиции, даже если в
+        // момент клика мышь не двигалась.
+        _pilotInput.Active = IsLocalPilot;
+        _pilotInput.InteractionMode = IsInteractionMode;
+        _pilotInput.HandleMouse(m, ViewportSize);
     }
+
+    /// <summary>Экранный курсор пилота (пиксели) — точка, из которой восстанавливают
+    /// луч прицела (п.6 eva-plan: пиксель-пер-клик скафандра берёт ЛУЧ ИЗ ЭТОЙ ЖЕ
+    /// камеры и тех же координат, второй copies быть не должно). Пусто/ноль, если
+    /// мышь ни разу не приходила.</summary>
+    public Vector2 AimCursorPx => _pilotInput.LastMousePx;
 
     /// <summary>Смотрит ли курсор на корабль: расстояние от центра корпуса до
     /// луча камеры, восстановленного из экранных координат курсора (метры).
@@ -152,7 +147,7 @@ public partial class Ship : RigidBody3D
     {
         if (!FireGatesNonAim())
             return;
-        if (!AimOnShip(_lastMousePos))
+        if (!AimOnShip(_pilotInput.LastMousePx))
             return;
         ShowAimingBeam();
     }
@@ -458,8 +453,8 @@ public partial class Ship : RigidBody3D
         Camera3D? cam = GetViewport()?.GetCamera3D();
         if (cam != null)
         {
-            Vector3 o = cam.ProjectRayOrigin(_lastMousePos);
-            Vector3 d = cam.ProjectRayNormal(_lastMousePos);
+            Vector3 o = cam.ProjectRayOrigin(_pilotInput.LastMousePx);
+            Vector3 d = cam.ProjectRayNormal(_pilotInput.LastMousePx);
             end = o + d * AimingBeamLength;
         }
         else

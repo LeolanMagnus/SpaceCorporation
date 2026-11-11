@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/SuitModelTest.cs" id="1_test"]
+
+; Тест Блока B (eva-plan Б1-Б3): чистые модели скафандра без узлов и без сцены.
+[node name="SuitModelTest" type="Node"]
+script = ExtResource("1_test")

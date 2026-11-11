@@ -1,3 +1,4 @@
+using System;
 using Godot;
 
 namespace SpaceCorporation;
@@ -115,21 +116,72 @@ public partial class Player : CharacterBody3D
             // игрока уберёт именно его кнопки, а не кнопки нового (§3.11 п.9).
             _debugDetachButton = DebugInfoBus.RegisterDebugButton("Detach Player", OnButtonDetach);
             _debugAttachButton = DebugInfoBus.RegisterDebugButton("Attach Player to Seat", OnButtonAttach);
+            // Космическая пыль: тоже только локальному игроку — тот же гейт, что
+            // у кнопок и камеры (§3.5 п.2). Детальный комментарий — в Player.Dust.cs.
+            BuildDustField();
         }
 
 
-        DebugInfoBus.RegisterInfoSource("Player", () =>
+        DebugInfoBus.RegisterInfoSource("Player",
+            _playerInfoSource ??= () =>
+            {
+                // Защита от гонки удаления: если этот узел уже освобождён, а источник
+                // ещё висит в шине (QueueFree откладывает _ExitTree до конца кадра),
+                // GetParent() бросил бы ObjectDisposedException (§3.11 п.9).
+                if (!GodotObject.IsInstanceValid(this))
+                    return string.Empty;
+                return
+                    $"player: parent = {GetParent()?.GetName()}, " +
+                    $"attached = {AttachedTo?.Name ?? "-"}, " +
+                    $"pos = {Fmt(GlobalPosition)}";
+            });
+
+        // eva-plan Блок E (Е3) / п.11: HUD-источник скафандра «Suit» — топливо/
+        // батарея/режим/фонарь/предупреждения. Источник ОДИН на ВСЮ шину и
+        // читается HUD как статус ТЕКУЩЕГО наблюдаемого игрока — поэтому он
+        // принадлежит ТОЛЬКО локальному игроку (тот же гейт, что у кнопок, камеры
+        // и пыли, §3.5 п.2/п.3): иначе удалённый пир перезаписал бы чужой «Suit»
+        // своими цифрами. Текст строит SuitState-реплика (Д2), а не локальные
+        // поля — в сети цифры обязан показывать корректно каждый пир за СВОЁГО
+        // игрока.
+        if (_isLocal)
+            DebugInfoBus.RegisterInfoSource(SuitInfoSourceKey,
+                _suitInfoSource ??= () => SuitInfoTextSafe());
+    }
+
+    /// <summary>Лямбда-источник «Suit» в шине: держим ссылку, чтобы снять её в
+    /// `_ExitTree` по владельцу (та же лямбда) и не стереть свежий источник нового
+    /// игрока при перестройке мира. Текст читает скафандр только живого узла.</summary>
+    private Func<string>? _suitInfoSource;
+    private Func<string>? _playerInfoSource;
+
+    private string SuitInfoTextSafe() =>
+        GodotObject.IsInstanceValid(this) ? SuitInfoText() : string.Empty;
+
+    /// <summary>Ключ источника скафандра в DebugInfoBus (eva-plan: источник «Suit»).</summary>
+    public const string SuitInfoSourceKey = "Suit";
+
+    /// <summary>Строка HUD-источника «Suit»: режим (SEAT/EVA/BOOTS), проценты
+    /// топлива/батареи, фонарь (L), активные предупреждения (<10% с гистерезисом
+    /// из SuitState.LowFuelWarn/LowBatteryWarn). Формат стабильный: тест п.11
+    /// сверяет подстроки `fuel=`/`batt=`/`mode=`.</summary>
+    public string SuitInfoText()
+    {
+        SuitState s = Suit;
+        string mode = Mode switch
         {
-            // Защита от гонки удаления: если этот узел уже освобождён, а источник
-            // ещё висит в шине (QueueFree откладывает _ExitTree до конца кадра),
-            // GetParent() бросил бы ObjectDisposedException (§3.11 п.9).
-            if (!GodotObject.IsInstanceValid(this))
-                return string.Empty;
-            return
-                $"player: parent = {GetParent()?.GetName()}, " +
-                $"attached = {AttachedTo?.Name ?? "-"}, " +
-                $"pos = {Fmt(GlobalPosition)}";
-        });
+            EvaMode.Seat => "SEAT",
+            EvaMode.Boots => "BOOTS",
+            _ => "EVA",
+        };
+        string warns = "";
+        if (s.LowFuelWarn)
+            warns += " LOW_FUEL";
+        if (s.LowBatteryWarn)
+            warns += " LOW_BATT";
+        return $"suit: mode={mode}, fuel={Mathf.RoundToInt(s.Fuel)}%, " +
+               $"batt={Mathf.RoundToInt(s.Battery)}%, light={(s.LightOn ? "on" : "off")}" +
+               $"{warns}";
     }
 
     public override void _ExitTree()
@@ -148,7 +200,12 @@ public partial class Player : CharacterBody3D
         if (!IsQueuedForDeletion())
             return;
 
-        DebugInfoBus.RemoveInfoSource("Player");
+        DebugInfoBus.RemoveInfoSource("Player", _playerInfoSource);
+        // п.32/Блок E: источник «Suit» снимается по владельцу (та же лямбда):
+        // при RebuildWorld старый игрок (QueueFree) снимает СВОЮ лямбду в
+        // отложенном _ExitTree, уже после того как новый игрок перерегистрировался
+        // под тем же ключом — слепое Remove стёрло бы свежий источник нового.
+        DebugInfoBus.RemoveInfoSource(SuitInfoSourceKey, _suitInfoSource);
         if (_isLocal)
         {
             // Снимаем СВОИ кнопки по ручкам: при Offline→Host старый игрок удаляется
@@ -178,6 +235,52 @@ public partial class Player : CharacterBody3D
 
     public override void _PhysicsProcess(double delta)
     {
+        // Космическая пыль — локальный визуал, обновляем КАЖДЫЙ физический шаг и
+        // ДО раннего return ниже (иначе в покое/на клиенте UpdateDust не дошёл бы
+        // и поле застыло). Детали жизненного цикла частиц — в Player.Dust.cs.
+        if (_isLocal)
+            UpdateDust((float)delta);
+
+        // ── EVA поза-реплика (Блок D, Д1): публикация СВОЕЙ позы идёт ДО EVA-
+        // ветки и её ранних return'ов ниже — иначе в покое (StepEva рано выходит)
+        // и в кресле (Seat return) поза не слалась бы вовсе. Внутри метода свои
+        // гейты: не-владелец, offline/без peer и EvaMode.Seat выходят сразу,
+        // поэтому офлайн-прогон и кресло не генерируют ни одного пакета.
+        PublishEvaPoseFrame();
+
+        // ── EVA (Блок C, С4): клавиши читаются в физическом процессе ДО раннего
+        // return ниже — иначе G/L/T не работают в покое (тот же грабль, что
+        // «UpdateDust до return» выше). StepEva возвращает true, когда режим EVA
+        // сам ведёт тело: тогда и автокрепление, и любая обычная ходьба ниже
+        // обязаны пропустить шаг, иначе `Velocity = wish * speed` из
+        // MoveInAttachedPlane перетёр бы инерцию скафандра (шаг 6 плана).
+        // В EvaMode.Seat StepEva сам возвращает false — автокрепление на спавне
+        // (AutoAttachOnSpawn) не задевает. НО: пока игрок ждёт дефолтную точку
+        // крепления, его режим — Jetpack (дефолт свободного тела) и StepEva вернул
+        // бы true, отрезав автопристёгивание насовсем (регресс Stage1Test: «F:
+        // игрок вернулся в мировой корень», поза NaN). Поэтому EVA-шаг включается
+        // только когда ожидания дефолтной точки уже нет.
+        if (_isLocal && !(AutoAttachOnSpawn && _awaitingDefaultPoint))
+        {
+            HandleEvaKeys();
+            if (StepEva(FlightModel.FixedDt))
+                return;
+        }
+
+        // ── Скафандр в кресле (Блок B2): батарея заряжается/обогрев ест энергию и
+        // в кресле — игрок не должен «замораживать» расходники, сидя в пилоте.
+        // Идёт ДО раннего return ниже (ветка автопристёжки) и только на
+        // авторитетной стороне: по плану расход считает сервер, клиент рисует
+        // реплику (риск 4 eva-plan — иначе «заправка при ложном пристёгивании»
+        // становится чит-дырой). Локальному игроку вне кресла шаг делает StepEva.
+        if (IsAttached)
+        {
+            var nmAttach = NetworkManager.Instance;
+            bool authorityAttach = nmAttach == null || !nmAttach.HasRealPeer || nmAttach.IsServer;
+            if (authorityAttach)
+                StepSuitInSeat(FlightModel.FixedDt);
+        }
+
         // §3.5 п.4: автопристёгивание — только серверу и offline. На клиенте
         // крепление приходит репликой ApplyAttach, и _awaitingDefaultPoint не должен
         // заставлять клиента крепиться самому (иначе Reparent разойдётся с сервером).
@@ -244,8 +347,15 @@ public partial class Player : CharacterBody3D
 
         if (@event.IsActionPressed("detach"))
         {
+            // F = «кресло» по плану (В21: одна клавиша на два действия):
+            // пристёгнут ⇒ отстегнуться, свободен ⇒ занять штурвал/кресло под
+            // курсором (EVA-луч). Развилка здесь, а не внутри EVA-обработчика:
+            // путь отстёжки (RPC клиенту / серверная сердцевина хосту) живёт в
+            // OnButtonDetach, и дублировать его в EVA-файле нельзя (§3.5 п.3).
             if (IsAttached)
                 OnButtonDetach();
+            else
+                OnDetachOrSeatPressed();
             GetViewport().SetInputAsHandled();
         }
     }

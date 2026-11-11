@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/PilotInputShimTest.cs" id="1_test"]
+
+; Тест шва блока A (eva-plan А2): Ship и скафандр собирают идентичный InputFrame
+; из одинаковых клавиш и курсора. Корень — Node3D (как у остальных тестов).
+[node name="PilotInputShimTest" type="Node3D"]
+script = ExtResource("1_test")

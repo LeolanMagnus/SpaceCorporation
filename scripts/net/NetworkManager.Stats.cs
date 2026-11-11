@@ -34,6 +34,12 @@ public partial class NetworkManager : Node
     // все корабли (N × 30/с), но бюджет меряется на одного игрока = 30/с.
     private readonly System.Collections.Generic.HashSet<int> _replShipsThisSec = new();
 
+    // Трафик EVA-позы (Д1 eva-plan): байты поза-пакетов, снятые за последнюю
+    // секунду. Кумулятив ведёт Player.Eva.Net.cs; снимается вместе с ENet-
+    // счётчиками (UpdateTrafficStats, раз в секунду), поэтому в GetNetInfoLine
+    // (её зовёт и HUD чаще раза в секунду) значение стабильно, а не рвётся.
+    private long _evaNetBytesLast, _evaNetBytesPerSec;
+
     /// <summary>Пилот отправил кадр ввода — учесть в бюджете ввода (не репликации).</summary>
     public void CountInputSent() => _inputPktsSent++;
 
@@ -76,6 +82,13 @@ public partial class NetworkManager : Node
         _pktsRecv = (long)host.PopStatistic(ENetConnection.HostStatistic.ReceivedPackets);
         _bytesSent = (long)host.PopStatistic(ENetConnection.HostStatistic.SentData);
         _bytesRecv = (long)host.PopStatistic(ENetConnection.HostStatistic.ReceivedData);
+
+        // Д1 eva-plan: поза-пакеты скафандра идут отдельным логическим счётом
+        // (не ENet-статистикой — те смешаны со всем трафиком), поэтому снимаем
+        // кумулятив Player.Eva.Net.cs в тот же секундный такт.
+        long evaNow = Player.EvaNetBytesTotal();
+        _evaNetBytesPerSec = evaNow - _evaNetBytesLast;
+        _evaNetBytesLast = evaNow;
     }
 
     /// <summary>Снимок логических счётчиков за секунду: их печатает GetNetInfoLine,
@@ -105,6 +118,10 @@ public partial class NetworkManager : Node
         _replShipsThisSec.Clear();
         _batchPktsSent = _batchPktsRecv = 0;
         _batchRecsSent = _batchRecsRecv = 0;
+        // EVA-поза: baseline = текущий кумулятив, чтобы первый снимок после
+        // реконнекта не показал накопленное до соединения (как ENet-счётчики выше).
+        _evaNetBytesLast = Player.EvaNetBytesTotal();
+        _evaNetBytesPerSec = 0;
     }
 
     /// <summary>RTT по каждому пиру, мс (ENetPacketPeer.GetStatistic, §2.7).
@@ -193,7 +210,8 @@ public partial class NetworkManager : Node
                $"batch/s = {batchPkts}, rec/s = {batchRecs}, " +
                $"input/s = {inputSent}/{inputRecv}, " +
                $"wire pkts/s = {packets} (tx {_pktsSent}/rx {_pktsRecv}), " +
-               $"KB/s = {bytes / 1024f:F1}, {BuildRttString()}, err = {LastError}";
+               $"KB/s = {bytes / 1024f:F1}, " +
+               $"eva/s = {_evaNetBytesPerSec / 1024f:F2} KB, {BuildRttString()}, err = {LastError}";
     }
 
 }

@@ -1,39 +1,22 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene format=3 uid="uid://ch8c2cmj7qucc"]
 
-[ext_resource type="Script" path="res://scripts/ui/HudLayer.cs" id="1_hud"]
-[ext_resource type="Script" path="res://scripts/ui/AimReticle.cs" id="2_cross"]
-[ext_resource type="Script" path="res://scripts/ui/TargetingService.cs" id="3_targeting"]
-[ext_resource type="Script" path="res://scripts/ui/TargetOverlay.cs" id="4_marker"]
-[ext_resource type="Script" path="res://scripts/ui/RadarSource.cs" id="5_radar_src"]
-[ext_resource type="Script" path="res://scripts/ui/RadarPanel.cs" id="6_radar_view"]
+[ext_resource type="Script" uid="uid://cxptkmfesqi1w" path="res://scripts/ui/HudLayer.cs" id="1_hud"]
+[ext_resource type="Script" uid="uid://dypt23c4skxbt" path="res://scripts/ui/AimReticle.cs" id="2_cross"]
+[ext_resource type="Script" uid="uid://br8wiwrndyg6d" path="res://scripts/ui/TargetingService.cs" id="3_targeting"]
+[ext_resource type="Script" uid="uid://xth33p074qr4" path="res://scripts/ui/TargetOverlay.cs" id="4_marker"]
+[ext_resource type="Script" uid="uid://6bedomdan8pg" path="res://scripts/ui/RadarSource.cs" id="5_radar_src"]
+[ext_resource type="Script" uid="uid://c15lmma6p31rn" path="res://scripts/ui/RadarPanel.cs" id="6_radar_view"]
 [ext_resource type="Resource" path="res://assets/ui/LockMarkerSkin.tres" id="7_skin"]
 
-; HUD в стиле X4 (hud-plan.md). Слой 5 — НИЖЕ DebugLayer (слой 10): панель F3
-; никогда не перекрывается HUD, слои не конфликтуют (§5 плана).
-;
-; Правило размещения (требование: всё влезает в экран, текст переносится):
-;  • каждая панель прижата к своему углу якорями (anchor_*), offset задан
-;    ОТ угла — при любом размере окна панели остаются в углах;
-;  • у каждой панели фиксированная ширина (custom_minimum_size + кламп по
-;    offset), у Label стоит autowrap_mode = 3 (word) — длинный текст
-;    переносится, а не распирает панель;
-;  • статус-бар снизу не растягивается шире своего содержимого
-;    (grow_horizontal = 0/1 от нужного края).
-;
-; HudRoot — Control на весь экран с mouse_filter = 2 (Ignore): HUD не eat-click
-; мышью, прицеливание и стыковка работают сквозь него. Сами панели — PanelContainer
-; (по умолчанию mouse_filter у PanelContainer = Stop) — но они в углах и на пути
-; курсора не стоят; при сомнениях — Ignore на конкретной панели.
-[node name="HudLayer" type="CanvasLayer"]
+[node name="HudLayer" type="CanvasLayer" unique_id=1695803689]
 layer = 5
 script = ExtResource("1_hud")
 
-; ─── Выбор цели (H3): сервис — узел-логика (не Control), маркер — Control
-; во весь экран поверх всего HUD, рисуется кодом (TargetMarker.cs).
-[node name="TargetingService" type="Node" parent="."]
+[node name="TargetingService" type="Node" parent="." unique_id=2131003260]
 script = ExtResource("3_targeting")
 
-[node name="HudRoot" type="Control" parent="."]
+[node name="HudRoot" type="Control" parent="." unique_id=1465730277]
+layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -41,13 +24,8 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-; ─ Центр: марка пилотирования 2.0 (AimReticle.cs): нос-точка в центре, курсор-
-; перекрестие на мыши, пунктир 2px с тремя галочками между ними. Растянут на весь
-; rect (preset 15, якоря как у HudRoot): Size = размер окна, центр = Size/2. Skin
-; не задан — рисуется примитивами; под концепт-арт вешается ReticleSkin в инспекторе.
-[node name="AimReticle" type="Control" parent="HudRoot"]
-material = null
-anchors_preset = 15
+[node name="AimReticle" type="Control" parent="HudRoot" unique_id=740939912]
+anchors_preset = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
@@ -55,33 +33,27 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("2_cross")
 
-; ───────── Левый верх: тег режима мира (2 компактные строки, H6) ─────────
-[node name="TopLeft" type="VBoxContainer" parent="HudRoot"]
-visible = true
-anchors_preset = 0
-anchor_right = 0.0
-anchor_bottom = 0.0
+[node name="TopLeft" type="VBoxContainer" parent="HudRoot" unique_id=107716001]
+layout_mode = 0
 offset_left = 8.0
 offset_top = 8.0
 offset_right = 208.0
 offset_bottom = 48.0
 grow_horizontal = 0
-grow_vertical = 1
 mouse_filter = 2
 
-[node name="WorldTag" type="PanelContainer" parent="HudRoot/TopLeft"]
-layout_mode = 2
-mouse_filter = 2
+[node name="WorldTag" type="PanelContainer" parent="HudRoot/TopLeft" unique_id=1326930579]
 custom_minimum_size = Vector2(120, 0)
-
-[node name="LblWorldTag" type="Label" parent="HudRoot/TopLeft/WorldTag"]
 layout_mode = 2
-autowrap_mode = 3
-text = "OFFLINE"
+mouse_filter = 2
 
-; ───────── Правый верх: цель / задача (H6 заполнит) ─────────
-[node name="TopRight" type="VBoxContainer" parent="HudRoot"]
-anchors_preset = 1
+[node name="LblWorldTag" type="Label" parent="HudRoot/TopLeft/WorldTag" unique_id=1836320671]
+layout_mode = 2
+text = "OFFLINE"
+autowrap_mode = 3
+
+[node name="TopRight" type="VBoxContainer" parent="HudRoot" unique_id=254598047]
+layout_mode = 0
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -268.0
@@ -89,71 +61,65 @@ offset_top = 8.0
 offset_right = -8.0
 offset_bottom = 68.0
 grow_horizontal = 0
-grow_vertical = 1
 mouse_filter = 2
-separation = 6
 
-[node name="ObjectivePanel" type="PanelContainer" parent="HudRoot/TopRight"]
-layout_mode = 2
-mouse_filter = 2
+[node name="ObjectivePanel" type="PanelContainer" parent="HudRoot/TopRight" unique_id=730432137]
 custom_minimum_size = Vector2(160, 0)
-
-[node name="LblObjective" type="Label" parent="HudRoot/TopRight/ObjectivePanel"]
 layout_mode = 2
-autowrap_mode = 3
-horizontal_alignment = 2
+mouse_filter = 2
+
+[node name="LblObjective" type="Label" parent="HudRoot/TopRight/ObjectivePanel" unique_id=684930778]
+layout_mode = 2
 text = "No target"
+horizontal_alignment = 2
+autowrap_mode = 3
 
-; ── Commlink-лог (H6): 6 строк, fade-out — видимость и Modulate правит код ──
-[node name="CommlinkPanel" type="PanelContainer" parent="HudRoot/TopRight"]
+[node name="CommlinkPanel" type="PanelContainer" parent="HudRoot/TopRight" unique_id=1630089044]
+custom_minimum_size = Vector2(160, 0)
 layout_mode = 2
 mouse_filter = 2
-custom_minimum_size = Vector2(160, 0)
 
-[node name="CommlinkBox" type="VBoxContainer" parent="HudRoot/TopRight/CommlinkPanel"]
+[node name="CommlinkBox" type="VBoxContainer" parent="HudRoot/TopRight/CommlinkPanel" unique_id=1997988372]
 layout_mode = 2
-separation = 2
 
-[node name="LblComm0" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox"]
-layout_mode = 2
-autowrap_mode = 3
+[node name="LblComm0" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox" unique_id=207437365]
 visible = false
+layout_mode = 2
 text = "slot 0"
-
-[node name="LblComm1" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox"]
-layout_mode = 2
 autowrap_mode = 3
+
+[node name="LblComm1" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox" unique_id=1503686369]
 visible = false
+layout_mode = 2
 text = "slot 1"
-
-[node name="LblComm2" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox"]
-layout_mode = 2
 autowrap_mode = 3
+
+[node name="LblComm2" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox" unique_id=1666065188]
 visible = false
+layout_mode = 2
 text = "slot 2"
-
-[node name="LblComm3" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox"]
-layout_mode = 2
 autowrap_mode = 3
+
+[node name="LblComm3" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox" unique_id=1651435787]
 visible = false
+layout_mode = 2
 text = "slot 3"
-
-[node name="LblComm4" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox"]
-layout_mode = 2
 autowrap_mode = 3
+
+[node name="LblComm4" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox" unique_id=1407046834]
 visible = false
+layout_mode = 2
 text = "slot 4"
-
-[node name="LblComm5" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox"]
-layout_mode = 2
 autowrap_mode = 3
-visible = false
-text = "slot 5"
 
-; ───────── Левый низ: статус-бар своего корабля (H2) ─────────
-; Широкий плоский «бублик» X4: класс | полосы HP/щит | скорость | режимы.
-[node name="BottomLeft" type="Control" parent="HudRoot"]
-anchors_preset = 2
+[node name="LblComm5" type="Label" parent="HudRoot/TopRight/CommlinkPanel/CommlinkBox" unique_id=1954227283]
+visible = false
+layout_mode = 2
+text = "slot 5"
+autowrap_mode = 3
+
+[node name="BottomLeft" type="Control" parent="HudRoot" unique_id=636686939]
+anchors_preset = 0
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
@@ -164,110 +130,106 @@ grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 2
 
-[node name="StatusPanel" type="PanelContainer" parent="HudRoot/BottomLeft"]
+[node name="StatusPanel" type="PanelContainer" parent="HudRoot/BottomLeft" unique_id=1962884592]
+custom_minimum_size = Vector2(360, 0)
 layout_mode = 0
-anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_top = -90.0
-offset_bottom = 0.0
 offset_right = 520.0
 grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 2
-custom_minimum_size = Vector2(360, 0)
 
-[node name="StatusBox" type="HBoxContainer" parent="HudRoot/BottomLeft/StatusPanel"]
+[node name="StatusBox" type="HBoxContainer" parent="HudRoot/BottomLeft/StatusPanel" unique_id=1204789410]
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="ShipClass" type="VBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox"]
+[node name="ShipClass" type="VBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox" unique_id=977383702]
 custom_minimum_size = Vector2(96, 0)
 layout_mode = 2
 
-[node name="LblClassCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/ShipClass"]
+[node name="LblClassCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/ShipClass" unique_id=2054177465]
 layout_mode = 2
 text = "SHIP"
 
-[node name="LblShipClass" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/ShipClass"]
+[node name="LblShipClass" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/ShipClass" unique_id=2042928011]
 layout_mode = 2
-autowrap_mode = 3
 text = "—"
+autowrap_mode = 3
 
-[node name="Bars" type="VBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox"]
+[node name="Bars" type="VBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox" unique_id=1614200420]
 custom_minimum_size = Vector2(180, 0)
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="HpBox" type="HBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars"]
+[node name="HpBox" type="HBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars" unique_id=1972257668]
 layout_mode = 2
 
-[node name="LblHpCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/HpBox"]
+[node name="LblHpCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/HpBox" unique_id=788588069]
 custom_minimum_size = Vector2(44, 0)
 layout_mode = 2
 text = "HULL"
 
-[node name="HpBar" type="ProgressBar" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/HpBox"]
+[node name="HpBar" type="ProgressBar" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/HpBox" unique_id=1118060212]
 custom_minimum_size = Vector2(90, 12)
 layout_mode = 2
 size_flags_vertical = 4
 max_value = 1.0
 
-[node name="LblHp" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/HpBox"]
+[node name="LblHp" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/HpBox" unique_id=1322843271]
 custom_minimum_size = Vector2(72, 0)
 layout_mode = 2
-autowrap_mode = 3
 text = "-- / --"
+autowrap_mode = 3
 
-[node name="ShieldBox" type="HBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars"]
+[node name="ShieldBox" type="HBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars" unique_id=1365435285]
 layout_mode = 2
 
-[node name="LblShieldCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/ShieldBox"]
+[node name="LblShieldCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/ShieldBox" unique_id=126800933]
 custom_minimum_size = Vector2(44, 0)
 layout_mode = 2
 text = "SHLD"
 
-[node name="ShieldBar" type="ProgressBar" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/ShieldBox"]
+[node name="ShieldBar" type="ProgressBar" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/ShieldBox" unique_id=1088503517]
 custom_minimum_size = Vector2(90, 12)
 layout_mode = 2
 size_flags_vertical = 4
 max_value = 1.0
 
-[node name="LblShield" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/ShieldBox"]
+[node name="LblShield" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/ShieldBox" unique_id=1886205964]
 custom_minimum_size = Vector2(72, 0)
 layout_mode = 2
-autowrap_mode = 3
 text = "0 / 0"
+autowrap_mode = 3
 
-[node name="SpeedBox" type="VBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox"]
+[node name="SpeedBox" type="VBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox" unique_id=563887803]
 custom_minimum_size = Vector2(84, 0)
 layout_mode = 2
 
-[node name="LblSpeedCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/SpeedBox"]
+[node name="LblSpeedCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/SpeedBox" unique_id=667442156]
 layout_mode = 2
 text = "SPEED"
 
-[node name="LblSpeed" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/SpeedBox"]
+[node name="LblSpeed" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/SpeedBox" unique_id=665546088]
 layout_mode = 2
-autowrap_mode = 3
 text = "0 m/s"
+autowrap_mode = 3
 
-[node name="ModeBox" type="VBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox"]
+[node name="ModeBox" type="VBoxContainer" parent="HudRoot/BottomLeft/StatusPanel/StatusBox" unique_id=520813131]
 custom_minimum_size = Vector2(72, 0)
 layout_mode = 2
 
-[node name="LblModeCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox"]
+[node name="LblModeCap" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox" unique_id=497263255]
 layout_mode = 2
 text = "MODE"
 
-[node name="LblModes" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox"]
+[node name="LblModes" type="Label" parent="HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox" unique_id=1407519314]
 layout_mode = 2
 autowrap_mode = 3
-text = ""
 
-; ───────── Правый низ: мини-карта (ЗАГЛУШКА, радар — по radar-plan) ─────────
-[node name="BottomRight" type="Control" parent="HudRoot"]
-anchors_preset = 3
+[node name="BottomRight" type="Control" parent="HudRoot" unique_id=701438499]
+anchors_preset = 0
 anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
@@ -280,41 +242,35 @@ grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 2
 
-[node name="RadarPanel" type="PanelContainer" parent="HudRoot/BottomRight"]
+[node name="RadarPanel" type="PanelContainer" parent="HudRoot/BottomRight" unique_id=761819514]
+custom_minimum_size = Vector2(160, 160)
 layout_mode = 0
-anchors_preset = 3
 anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = -210.0
 offset_top = -210.0
-offset_right = 0.0
-offset_bottom = 0.0
 grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 2
-custom_minimum_size = Vector2(160, 160)
 
-[node name="RadarBox" type="VBoxContainer" parent="HudRoot/BottomRight/RadarPanel"]
+[node name="RadarBox" type="VBoxContainer" parent="HudRoot/BottomRight/RadarPanel" unique_id=865670784]
 layout_mode = 2
 
-[node name="LblRadarCap" type="Label" parent="HudRoot/BottomRight/RadarPanel/RadarBox"]
+[node name="LblRadarCap" type="Label" parent="HudRoot/BottomRight/RadarPanel/RadarBox" unique_id=2056814924]
 layout_mode = 2
 text = "RADAR"
 
-[node name="RadarView" type="Control" parent="HudRoot/BottomRight/RadarPanel/RadarBox"]
+[node name="RadarView" type="Control" parent="HudRoot/BottomRight/RadarPanel/RadarBox" unique_id=1231090885]
 custom_minimum_size = Vector2(160, 160)
 layout_mode = 2
 size_flags_vertical = 3
 script = ExtResource("6_radar_view")
 
-[node name="RadarSource" type="Node" parent="."]
-script = ExtResource("5_radar_src")
-
-[node name="TargetOverlay" type="Control" parent="HudRoot"]
+[node name="TargetOverlay" type="Control" parent="HudRoot" unique_id=1832693456]
 z_index = 10
-anchors_preset = 15
+anchors_preset = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
@@ -322,3 +278,6 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("4_marker")
 Skin = ExtResource("7_skin")
+
+[node name="RadarSource" type="Node" parent="." unique_id=573472663]
+script = ExtResource("5_radar_src")

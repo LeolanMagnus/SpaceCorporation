@@ -176,8 +176,17 @@ public partial class Stage5Test
         _shipA.Freeze = false; // замок снят AbortDock'ом через ApplyAuthority? проверяем ниже
         _shipA.TestSetInputForTest(new InputFrame { Tick = 1 });
 
+        // Ставим корабль ВНУТРЬ ТЕЛА станции (цилиндр r=60, h=40 от центра
+        // станции), а не на высоте точки дока: точка дока приподнята над крышей
+        // (1dd24b7 «жидкий космос»: y=26.55 при полувысоте 20), и на её высоте
+        // корпус ни с чем не пересекается — IntersectShape даёт ноль, урона нет.
+        // Горизонтали 50 м достаточно: и корпус в цилиндре, и зона дока (r=90 от
+        // точки) покрыта, т.е. таран происходит ровно там, где мог бы быть док.
         Vector3 dp = _station!.DockPointGlobal;
-        _shipA.GlobalPosition = dp + new Vector3(50, 0, 0); // в цилиндре, зоны достаточно
+        Vector3 st = _station.GlobalPosition;
+        _shipA.GlobalPosition = st + new Vector3(50, 0, 0);
+        Check(_shipA.GlobalPosition.DistanceTo(dp) <= Docking.DockRange,
+              $"п.28: таран в пределах док-зоны: {dp.DistanceTo(_shipA.GlobalPosition):F1} м <= {Docking.DockRange}");
         _shipA.TestSetVelocity(new Vector3(-20, 0, 0));
 
         int dmgBefore = _shipA.Health!.DamageTakenCount;

@@ -1,52 +1,40 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene format=3 uid="uid://cpw2eknfj2b7h"]
 
 [ext_resource type="PackedScene" path="res://scenes/Environment.tscn" id="1_env"]
 [ext_resource type="PackedScene" path="res://scenes/TestStand.tscn" id="2_stand"]
 [ext_resource type="PackedScene" path="res://scenes/DebugLayer.tscn" id="5_debug"]
-[ext_resource type="PackedScene" path="res://scenes/HudLayer.tscn" id="7_hud"]
-[ext_resource type="Script" path="res://scripts/entities/WorldSpawner.cs" id="6_spawner"]
+[ext_resource type="Script" uid="uid://ch3j8w2twlh5l" path="res://scripts/entities/WorldSpawner.cs" id="6_spawner"]
+[ext_resource type="PackedScene" uid="uid://ch8c2cmj7qucc" path="res://scenes/HudLayer.tscn" id="7_hud"]
 
-; Главная сцена (§3.6): только инстансы отдельных сцен + данные сцены.
-;
-; Player и Ship из сцены УБРАНЫ: их создаёт сервер (корабли — при старте мира,
-; игрока — по RequestSpawn) и повторяет MultiplayerSpawner через
-; AddSpawnableScene("res://scenes/Ship.tscn") / AddSpawnableScene("res://scenes/Player.tscn").
-; Иначе у каждого процесса свой корабль со своим InstanceId, и Synchronizer не
-; знает, куда класть реплику. В offline (тесты стадии 1) те же узлы создаются тем
-; же путём — через WorldSpawner, а не лежат в сцене (§1.8).
-;
-; SpawnPoints — данные сцены, репликации нет: позиции точек одинаковы во всех
-; процессах, серверу достаточно знать их порядок. Обход — по имени (Spawn0,
-; Spawn1, …), чтобы он не зависел от порядка обхода дерева (§3.6).
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node3D" unique_id=362033273]
 
-[node name="Environment" parent="." instance=ExtResource("1_env")]
+[node name="Environment" parent="." unique_id=1402582144 instance=ExtResource("1_env")]
 
-[node name="TestStand" parent="." instance=ExtResource("2_stand")]
+[node name="TestStand" parent="." unique_id=467549616 instance=ExtResource("2_stand")]
 
-[node name="SpawnPoints" type="Node3D" parent="."]
+[node name="SpawnPoints" type="Node3D" parent="." unique_id=1118208466]
 
-[node name="Spawn0" type="Marker3D" parent="SpawnPoints"]
+[node name="Spawn0" type="Marker3D" parent="SpawnPoints" unique_id=39457306]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.9, 0)
 
-[node name="Spawn1" type="Marker3D" parent="SpawnPoints"]
+[node name="Spawn1" type="Marker3D" parent="SpawnPoints" unique_id=890823100]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0.9, 0)
 
-[node name="Spawn2" type="Marker3D" parent="SpawnPoints"]
+[node name="Spawn2" type="Marker3D" parent="SpawnPoints" unique_id=484071685]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 10)
 
-[node name="Spawn3" type="Marker3D" parent="SpawnPoints"]
+[node name="Spawn3" type="Marker3D" parent="SpawnPoints" unique_id=1742162543]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, -10)
 
-[node name="Spawn4" type="Marker3D" parent="SpawnPoints"]
+[node name="Spawn4" type="Marker3D" parent="SpawnPoints" unique_id=474052999]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16, 0.9, 10)
 
-[node name="GameRoot" type="Node3D" parent="."]
+[node name="GameRoot" type="Node3D" parent="." unique_id=1242639619]
 script = ExtResource("6_spawner")
 
-[node name="Spawner" type="MultiplayerSpawner" parent="GameRoot"]
+[node name="Spawner" type="MultiplayerSpawner" parent="GameRoot" unique_id=77928968]
 spawn_path = NodePath("..")
 
-[node name="DebugLayer" parent="." instance=ExtResource("5_debug")]
+[node name="DebugLayer" parent="." unique_id=590183024 instance=ExtResource("5_debug")]
 
-[node name="HudLayer" parent="." instance=ExtResource("7_hud")]
+[node name="HudLayer" parent="." unique_id=1267962876 instance=ExtResource("7_hud")]

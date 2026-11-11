@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/probes/probe_dust_api.gd" id="1"]
+
+[node name="ProbeDustApi" type="Node"]
+script = ExtResource("1")

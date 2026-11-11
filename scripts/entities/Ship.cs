@@ -770,7 +770,8 @@ public partial class Ship : RigidBody3D
         // Накопленную мышь выбрасываем в обе стороны: в Interaction она не
         // нужна, а при возврате в Pilot старые пиксели (протасканные курсором
         // по UI) довернули бы нос в момент переключения.
-        _lookDelta = Vector2.Zero;
+        _pilotInput.InteractionMode = on;
+        _pilotInput.ClearLookDelta();
 
         // Курсор в пилотировании 2.0 всегда свободен и виден (он и есть прицел),
         // поэтому переключать MouseMode между Visible/Captured не нужно. При

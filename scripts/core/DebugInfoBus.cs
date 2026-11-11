@@ -172,6 +172,21 @@ public partial class DebugInfoBus : Node
             Instance._infoSources.Remove(key);
     }
 
+    /// <summary>Снять источник по ключу, только если под ним висит ровно эта же
+    /// лямбда (`owner`). Владелец убирает СВОЙ источник, не задев чужой с тем же
+    /// ключом: надёжно при перестройке мира (`RebuildWorld`), когда старый игрок,
+    /// помеченный QueueFree, снимает свою лямбду в отложенном `_ExitTree` уже ПОСЛЕ
+    /// того, как новый игрок успел зарегистрироваться под тем же ключом — слепое
+    /// `Remove(key)` стёрло бы свежий источник нового игрока (гонка двух игроков).</summary>
+    public static void RemoveInfoSource(string key, Func<string> owner)
+    {
+        if (Instance == null || owner == null)
+            return;
+        if (Instance._infoSources.TryGetValue(key, out var current)
+            && ReferenceEquals(current, owner))
+            Instance._infoSources.Remove(key);
+    }
+
     /// <summary>Есть ли источник с таким ключом (для assert'ов и отладки: ключ —
     /// часть контракта, например «Ship#&lt;ShipNetId&gt;», §3.1 п.6).</summary>
     public static bool HasInfoSource(string key) =>
