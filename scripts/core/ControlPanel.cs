@@ -64,5 +64,45 @@ public partial class ControlPanel : Area3D
         _seat = GetNodeOrNull<AttachPoint>(SeatPath);
         if (_seat == null)
             GD.PrintErr($"ControlPanel: кресло по пути «{SeatPath}» не найдено");
+
+        BuildVisual();
+    }
+
+    /// <summary>
+    /// Правка 7-й части: панель была физически присутствующей, но абсолютно
+    /// невидимой (узла-меша не заводили) — игрок не видел, куда наводить луч,
+    /// чтобы сесть за штурвал. Добавляем видимый красный куб по габариту
+    /// коллизии (`PanelSizeM` = 0.45) с лёгким свечением (emission), чтобы
+    /// панель читалась на тёмном фоне космоса. Строим кодом в `_Ready` — у
+    /// панели нет сценного меша, и такой подход не трогает .tscn (меньше мест,
+    /// где визуал можно рассинхронить с коллизией).
+    /// </summary>
+    private void BuildVisual()
+    {
+        if (GetNodeOrNull<MeshInstance3D>("Visual") != null)
+            return; // идемпотентно: повторный _Ready не плодит второй меш
+
+        var box = new BoxMesh { Size = new Vector3(PanelSizeM, PanelSizeM, PanelSizeM) };
+
+        var mat = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.85f, 0.12f, 0.12f), // красный
+            // Немного самоподсветки: панель должна быть заметна и в тени корабля.
+            EmissionEnabled = true,
+            Emission = new Color(0.7f, 0.06f, 0.06f),
+            EmissionEnergyMultiplier = 1.0f,
+            VertexColorUseAsAlbedo = false,
+        };
+
+        var mesh = new MeshInstance3D
+        {
+            Name = "Visual",
+            Mesh = box,
+            MaterialOverride = mat,
+            // Меш чисто визуальный: не участвует в физике (у Area3D mask=0,
+            // MeshInstance3D и так не является телом).
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+        AddChild(mesh);
     }
 }

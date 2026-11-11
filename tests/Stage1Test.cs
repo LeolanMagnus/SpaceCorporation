@@ -525,7 +525,7 @@ public partial class Stage1Test : Node
                     // трогают: угловое демпфирование каталога (1,0).
                     Check(Mathf.IsEqualApprox(s31.Flight.LinearThrust, 150000f) &&
                           Mathf.IsEqualApprox(s31.Flight.AngularThrust, 75000f) &&
-                          Mathf.IsEqualApprox(s31.Flight.MaxAngularSpeed, 2.2f) &&
+                          Mathf.IsEqualApprox(s31.Flight.MaxAngularSpeed, 1.6f) &&
                           Mathf.IsEqualApprox(s31.Flight.AngularDamping, 1.0f),
                           $"грузовик: Flight из каталога (thrust = " +
                           $"{s31.Flight.LinearThrust:F0}, ωmax = {s31.Flight.MaxAngularSpeed:F1}, " +
@@ -567,7 +567,7 @@ public partial class Stage1Test : Node
                     Check(Mathf.IsEqualApprox(s32.Flight.LinearThrust, 160000f) &&
                           Mathf.IsEqualApprox(s32.Flight.AngularThrust, 110000f) &&
                           Mathf.IsEqualApprox(s32.Flight.AngularDamping, 2.2f) &&
-                          Mathf.IsEqualApprox(s32.Flight.MaxAngularSpeed, 1.2f),
+                          Mathf.IsEqualApprox(s32.Flight.MaxAngularSpeed, 0.9f),
                           $"контейнеровоз: Flight из каталога (thrust = " +
                           $"{s32.Flight.LinearThrust:F0}, ωmax = {s32.Flight.MaxAngularSpeed:F1})");
                     Check(_ship.GetNode<CollisionShape3D>("CollisionShape3D").Shape
@@ -588,7 +588,7 @@ public partial class Stage1Test : Node
                 {
                     Check(Mathf.IsEqualApprox(_ship.Mass, 1200f) &&
                           Mathf.IsEqualApprox(s33.Flight.LinearThrust, 90000f) &&
-                          Mathf.IsEqualApprox(s33.Flight.MaxAngularSpeed, 6f),
+                          Mathf.IsEqualApprox(s33.Flight.MaxAngularSpeed, 4.5f),
                           $"обратная смена вернула курьера: mass = {_ship.Mass:F0}, " +
                           $"thrust = {s33.Flight.LinearThrust:F0}");
                     Check(_ship.GetNode<CollisionShape3D>("CollisionShape3D").Shape

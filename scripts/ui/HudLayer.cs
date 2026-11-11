@@ -40,6 +40,11 @@ public partial class HudLayer : CanvasLayer
     private Label _lblSpeed = null!;
     private Label _lblModes = null!;
 
+    // Правка 7-й части: индикатор режима магнитных ботинок — яркая строка под
+    // режимными аббревиатурами, горит только пока локальный игрок в `Boots`
+    // (в скафандровом джетпаке и кресле её нет).
+    private Label _lblBootsInd = null!;
+
     // frame-plan шаг 7: локальная скорость в кадре родителя (LOC) + метка
     // захвата. Рисуются только при активной фазе захвата.
     private Label _lblLocSpeed = null!;
@@ -80,6 +85,23 @@ public partial class HudLayer : CanvasLayer
         _lblShield = GetNode<Label>("HudRoot/BottomLeft/StatusPanel/StatusBox/Bars/ShieldBox/LblShield");
         _lblSpeed = GetNode<Label>("HudRoot/BottomLeft/StatusPanel/StatusBox/SpeedBox/LblSpeed");
         _lblModes = GetNode<Label>("HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox/LblModes");
+
+        // Индикатор магнитных ботинок (правка 7-й части): строка в ModeBox под
+        // аббревиатурами режимов. Янтарно-жёлтый + жирный — «присоска к палубе»
+        // должна считаться мгновенно, т.к. от неё зависит поведение мыши/прыжка.
+        _lblBootsInd = new Label
+        {
+            Visible = false,
+            Text = "⚓ МАГНИТНЫЕ БОТИНКИ",
+        };
+        _lblBootsInd.AddThemeColorOverride("font_color", new Color(1f, 0.75f, 0.15f));
+        var bootsBold = new SystemFont
+        {
+            FontNames = new[] { "Segoe UI", "Arial", "sans-serif" },
+            FontWeight = 700,
+        };
+        _lblBootsInd.AddThemeFontOverride("font", bootsBold);
+        GetNode<Control>("HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox").AddChild(_lblBootsInd);
 
         // frame-plan шаг 7: LOC-строка и метка захвата — создаём кодом и
         // кладём в SpeedBox под обычную скорость; стиль — синий жирный (§8.7).
@@ -281,6 +303,11 @@ public partial class HudLayer : CanvasLayer
 
     private void UpdateStatusPanel()
     {
+        // Индикатор ботинок (правка 7-й части) — до проверки корабля: в EVA
+        // локальный игрок не пристёгнут к креслу, `GetMyShip()` вернёт null и
+        // статус-панель уйдёт в ранний выход, а индикатор гореть обязан.
+        UpdateBootsIndicator();
+
         var ship = GetMyShip();
         if (ship == null)
         {
@@ -356,6 +383,16 @@ public partial class HudLayer : CanvasLayer
         string assist = (net?.PilotAssist ?? 1) == 1 ? "ASSIST" : "assist-off";
         string camera = ship.PilotChaseView ? "CHASE" : "COCKPIT";
         _lblModes.Text = $"{boost}\n{assist}\n{camera}";
+    }
+
+    /// <summary>Индикатор «МАГНИТНЫЕ БОТИНКИ» (правка 7-й части): горит, пока
+    /// локальный игрок в режиме EVA-ботинок (`EvaMode.Boots`). Вне ботинок
+    /// (кресло/джетпак/внутри корабля) — скрыт.</summary>
+    private void UpdateBootsIndicator()
+    {
+        var p = FindLocalPlayer();
+        bool boots = p != null && p.Mode == EvaMode.Boots;
+        _lblBootsInd.Visible = boots;
     }
 
     // ─────────────── Этап H6: тег мира (левый верх) ───────────────

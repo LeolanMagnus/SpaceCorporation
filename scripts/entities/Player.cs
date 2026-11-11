@@ -365,6 +365,11 @@ public partial class Player : CharacterBody3D
     /// нечего — игрок не в кресле пилота.</summary>
     public bool TogglePilotCameraView()
     {
+        // Правка: V работает и вне кресла — в EVA (джетпак/ботинки) она
+        // переключает камеру от первого лица ⇄ внешнюю (капсула видна). Только
+        // если мы НЕ в кресле; в кресле — обычная пилотская chase-камера.
+        if (_mode != EvaMode.Seat && ToggleEvaCameraView())
+            return true;
         Ship? ship = PilotedShip();
         if (ship == null)
         {

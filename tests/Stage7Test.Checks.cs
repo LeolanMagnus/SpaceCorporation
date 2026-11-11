@@ -1278,4 +1278,323 @@ public partial class Stage7Test : Node
 
         replica.QueueFree();
     }
+
+
+    // ═════════════ Правки 7-й части: плавный поворот ботинок, FPS-камера,
+    // прыжок Space, крепление к палубе (край) ═════════════
+
+    /// <summary>Шаг EVA с кадром заданной маски. `hold`=true — маска держится
+    /// все кадры цикла (удержание клавиши); false — только первый кадр
+    /// (just-pressed: на следующих шагах бит отсутствует ⇒ «только что нажали»).</summary>
+    protected void StepsMask(uint mask, int frames, bool hold = true)
+    {
+        for (int i = 0; i < frames; i++)
+        {
+            if (hold || i == 0)
+                _player.EvaTestSetInput(InputFrame.FromMask(0, mask));
+            _player.EvaTestStep(FlightModel.FixedDt);
+        }
+        Sync();
+    }
+
+    /// <summary>Маленькая палуба для тестов края: плита 2.5×2.5×0.4, ВЕРХ на
+    /// высоте `topY`. Строго StaticBody3D (луч `IntersectRay` видит только
+    /// коллайдеры физических тел), слой Deck, маска 0.</summary>
+    protected StaticBody3D MakeSmallDeck(float centerX, float topY, float centerZ)
+    {
+        var slab = new StaticBody3D
+        {
+            Name = "EdgeDeck",
+            CollisionLayer = CollisionLayers.Deck,
+            CollisionMask = 0u,
+            Transform = new Transform3D(Basis.Identity,
+                new Vector3(centerX, topY - 0.25f, centerZ)),
+        };
+        slab.AddChild(new CollisionShape3D
+        {
+            Shape = new BoxShape3D { Size = new Vector3(2.5f, 0.5f, 2.5f) },
+        });
+        _world.AddChild(slab);
+        return slab;
+    }
+
+    /// <summary>Тест «поворот НЕ мгновенный» (правка 7-й части): игрок в
+    /// джетпаке наклонён на 60°, стоит над палубой, жмёт реальную G. Ботинки
+    /// включаются, но доворот тела к нормали — НЕ снапом, а slerp за
+    /// `BootsTurnTime` = 0.3 с (18 кадров по 1/60).</summary>
+    protected void Turn0_ActivateAnimated()
+    {
+        RebuildWorld();
+        // Замороженный донор-корабль перехватывает лучи ботинок СВОИМ DeckHull
+        // (слой Station ∈ BootsMask): у Frozen RigidBody3D физическое тело
+        // живёт своей позой в физсервере (перенос ноды его не двигает, а
+        // QueueFree в стенде не исполняется — ForceSyncFrame пуст). Гасим
+        // коллайдеры донора: формы выпадают из PhysicsDirectSpaceState.
+        DisableShipColliders(_ship);
+        // Домашняя палуба (верх y=-0.55). Игрок в 0.25 м над верхом: луч
+        // ActivateBoots достает до опоры (BootsMaxStickDist+0.1=1.1).
+        // Наклон 60° вокруг X — голова завалена вперёд.
+        var p = new Vector3(0f, -0.3f, 0f);
+        _player.EvaTestSetMode(EvaMode.Jetpack);
+        _player.GlobalPosition = p;
+        _player.Velocity = Vector3.Zero;
+        _player.GlobalTransform = new Transform3D(
+            Basis.FromEuler(new Vector3(Mathf.DegToRad(60f), 0f, 0f)), p);
+        _player.EvaTestSyncFlightFromBody();
+        ForceSyncFrame();
+        float upBefore = _player.GlobalTransform.Basis.Y.Dot(Vector3.Up); // ≈0.50
+        Check("правка7: наклон до G ≈60° (up·Y≈0.5)", upBefore > 0.45f && upBefore < 0.55f);
+
+        _player.EvaTestKeyPress("toggle_boots");   // реальная клавиша G (без снап-шва)
+        Sync();
+
+        Check("правка7: G включила ботинки над палубой",
+              Mode == EvaMode.Boots && BootsOn && _player.EvaTestBootsBody() != null);
+        Check("правка7: после G запущен плавный доворот (не снап)",
+              _player.EvaTestBootsTurning());
+        float up0 = BodyUp.Dot(Vector3.Up);
+        Check("правка7: сразу после G поза НЕ выровнена (нет мгновенного снапа)",
+              up0 < 0.9f && Mathf.Abs(up0 - upBefore) < 0.15f);
+
+        // Первый же кадр доворота НЕ обязан быть равновесным — серво ещё
+        // подтягивает игрока к держимому зазору; привязку к палубе ловим
+        // после остановки (проверка «не уехал» — от финальной точки стойки).
+        _player.EvaTestStep(FlightModel.FixedDt);   // 1-й кадр анимации
+        float up1 = _player.GlobalTransform.Basis.Y.Dot(Vector3.Up);
+        Check("правка7: 1-й кадр — доворот пошёл (up·Y растёт) и НЕ завершён",
+              _player.EvaTestBootsTurning() && up1 > up0 + 0.002f && up1 < 0.9f);
+
+        Vector3 standAfterTurn = Vector3.Zero;
+        for (int i = 0; i < 20; i++)                // ещё 20 кадров: всего ≈0.35 с
+        {
+            _player.EvaTestStep(FlightModel.FixedDt);
+            if (!_player.EvaTestBootsTurning() && standAfterTurn == Vector3.Zero)
+                standAfterTurn = _player.GlobalPosition;   // финальный кадр доворота
+        }
+        Sync();
+        Check("правка7: за ~0.3+с доворот завершён (таймер погас)",
+              !_player.EvaTestBootsTurning());
+        Check("правка7: тело довернуто точно к нормали палубы (up·Y>0.999)",
+              BodyUp.Dot(Vector3.Up) > 0.999f);
+        // Серво липкости дотягивает зазор до держимого (BootsStickOffset=0.05)
+        // с малой скоростью (~0.5 м/с) — ждём остановки: равновесие над палубой
+        // (верх y=-0.55 ⇒ центр y≈0.4), по горизонтали игрок не уполз.
+        for (int i = 0; i < 90; i++)
+            _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("правка7: за время доворота не отцепился",
+              _player.EvaTestBootsBody() != null && Mode == EvaMode.Boots);
+        Check("правка7: остановился в равновесии над палубой, по горизонтали на месте",
+              standAfterTurn != Vector3.Zero
+              && Mathf.Abs(_player.GlobalPosition.X) < 0.1f
+              && Mathf.Abs(_player.GlobalPosition.Z) < 0.1f
+              && _player.GlobalPosition.Y > 0.25f
+              && _player.GlobalPosition.Y < 0.55f);
+    }
+
+    /// <summary>Тест FPS-камеры ботинок (правка 7-й части): straight-дельта
+    /// мыши (пиксели, вброс без курсора) крутит ТЕЛО вокруг нормали (yaw) и
+    /// наклоняет ТОЛЬКО камеру (pitch); позиционный suit-канал (0.1 рад/с)
+    /// в этом режиме заглушён — 400 px = 1.0 рад за один кадр.</summary>
+    protected void Cam0_FpsLook()
+    {
+        RebuildWorld();
+        // Замороженный донор-корабль перехватывает лучи ботинок СВОИМ DeckHull
+        // (слой Station ∈ BootsMask): у Frozen RigidBody3D физическое тело
+        // живёт своей позой в физсервере (перенос ноды его не двигает, а
+        // QueueFree в стенде не исполняется — ForceSyncFrame пуст). Гасим
+        // коллайдеры донора: формы выпадают из PhysicsDirectSpaceState.
+        DisableShipColliders(_ship);
+        _player.EvaTestStickTo(_deck, new Vector3(0f, -0.55f, 0f), Vector3.Up);
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("правка7: камера-тест стартует прилипшим в ботинках",
+              Mode == EvaMode.Boots && _player.EvaTestBootsBody() != null);
+
+        // 400 px × 0.0025 рад/px = 1.0 рад yaw — заметно БОЛЬШЕ suit-лимита
+        // 0.1 рад/с (за кадр дал бы 0.0017 рад): FPS-канал обязан съесть весь вброс.
+        _player.EvaTestFeedBootsLook(new Vector2(400f, 0f));
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        // Старт Cam0 — Basis=Identity (лицом к +Z), поэтому эталон yaw —
+        // стартовый Z, а не Forward; знак: положительный твист вокруг Up
+        // вращает Z к +X.
+        Vector3 bz = _player.GlobalTransform.Basis.Z;
+        float yawRad = Mathf.Atan2(bz.X, bz.Z);
+        Check("правка7: дельта мыши X повернула тело ≈1 рад вокруг нормали (FPS)",
+              yawRad > 0.95f && yawRad < 1.05f);
+        Check("правка7: после FPS-yaw тело перпендикулярно палубе (up·Y>0.999)",
+              BodyUp.Dot(Vector3.Up) > 0.999f);
+        Vector3 stand = new Vector3(0f, -0.55f + Player.CapsuleHeight * 0.5f
+            + SuitModel.BootsStickOffset, 0f);
+        Check("правка7: FPS-доворот не сдвинул игрока с места",
+              BodyPos.DistanceTo(stand) < 0.05f);
+
+        // Pitch (вброс по Y) уходит на CameraRig, НЕ наклоняет тело.
+        _player.EvaTestFeedBootsLook(new Vector2(0f, 200f));   // 0.5 рад
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("правка7: дельта мыши Y дала тангаж камеры ≈0.5 рад",
+              Mathf.Abs(_player.EvaTestBootsCamPitch() - 0.5f) < 0.05f);
+        Check("правка7: тангаж камеры НЕ наклонил тело (up всё ещё нормаль)",
+              BodyUp.Dot(Vector3.Up) > 0.999f);
+
+        // Обрезка потолком 70°.
+        _player.EvaTestFeedBootsLook(new Vector2(0f, 100000f));
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Check("правка7: тангаж обрезан потолком 70°",
+              Mathf.Abs(_player.EvaTestBootsCamPitch() - Mathf.DegToRad(70f)) < 1e-3f);
+
+        // Straight-модель: без нового вброса дельта нулевая (нет автоповтора
+        // курсора, в отличие от позиционного канала джетпака).
+        float pitchHeld = _player.EvaTestBootsCamPitch();
+        _player.EvaTestStep(FlightModel.FixedDt);
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Check("правка7: без движения мыши взгляд стоит (инерции курсора нет)",
+              Mathf.Abs(_player.EvaTestBootsCamPitch() - pitchHeld) < 1e-6f);
+
+        // Выход из ботинок снимает FPS-тангаж с камеры (в джетпаке — нейтраль).
+        _player.EvaTestSetMode(EvaMode.Jetpack);
+        Check("правка7: выход из ботинок обнулил FPS-тангаж",
+              Mathf.Abs(_player.EvaTestBootsCamPitch()) < 1e-6f);
+    }
+
+    /// <summary>Тест прыжка Space из ботинок (правка 7-й части): just-pressed
+    /// ThrustU ⇒ импульс вдоль нормали (3.5 м/с), в полёте притяжение назад
+    /// (g=14 ⇒ вершина ≈0.44 м, полёт ≈0.5 с), приземление ⇒ стойка, ботинки
+    /// НЕ гаснут; в полёту wish-тяги нет (приземляемся в точку старта).</summary>
+    protected void Jump0_LeapAndLand()
+    {
+        RebuildWorld();
+        // Замороженный донор-корабль перехватывает лучи ботинок СВОИМ DeckHull
+        // (слой Station ∈ BootsMask): у Frozen RigidBody3D физическое тело
+        // живёт своей позой в физсервере (перенос ноды его не двигает, а
+        // QueueFree в стенде не исполняется — ForceSyncFrame пуст). Гасим
+        // коллайдеры донора: формы выпадают из PhysicsDirectSpaceState.
+        DisableShipColliders(_ship);
+        _player.EvaTestStickTo(_deck, new Vector3(0f, -0.55f, 0f), Vector3.Up);
+        for (int i = 0; i < 5; i++)
+            _player.EvaTestStep(FlightModel.FixedDt);   // серво устаканило зазор
+        Sync();
+        Vector3 standPos = BodyPos;
+        float yStand = BodyPos.Y;
+        Check("правка7: прыжок-тест: старт стоя, фаза прыжка выключена",
+              Mode == EvaMode.Boots && !_player.EvaTestBootsJumping());
+
+        StepsMask(InputMask.ThrustU, 1, hold: false);   // just-pressed Space
+        Check("правка7: Space запустил фазу прыжка", _player.EvaTestBootsJumping());
+        Check("правка7: 1-й кадр прыжка — игрок уже вырос над палубой",
+              BodyPos.Y > yStand + 0.01f);
+
+        float peakY = BodyPos.Y;
+        bool airborneLater = false;
+        for (int i = 0; i < 25; i++)
+        {
+            _player.EvaTestStep(FlightModel.FixedDt);   // чистый полёт (ввод не держим)
+            peakY = Mathf.Max(peakY, _player.GlobalPosition.Y);
+            if (i < 15 && _player.EvaTestBootsJumping()) airborneLater = true;
+        }
+        Check("правка7: на 15-м кадре полёта фаза ещё активна (не щелчок туда-сюда)",
+              airborneLater);
+        Check("правка7: вершина прыжка в разумных пределах (0.2…0.75 м над стойкой)",
+              peakY > yStand + 0.2f && peakY < yStand + 0.75f);
+
+        bool landed = false;
+        for (int i = 0; i < 40; i++)
+        {
+            _player.EvaTestStep(FlightModel.FixedDt);
+            if (!_player.EvaTestBootsJumping()) { landed = true; break; }
+        }
+        Sync();
+        Check("правка7: приземлился — фаза прыжка завершилась", landed);
+        Check("правка7: приземление НЕ погасило ботинки",
+              Mode == EvaMode.Boots && _player.EvaTestBootsBody() != null);
+        Check("правка7: вернулся на держимый уровень (|Δy| < 0.1)",
+              Mathf.Abs(BodyPos.Y - yStand) < 0.1f);
+        Check("правка7: приземлился возле точки старта (wish-тяга в полёте мертва)",
+              BodyPos.DistanceTo(standPos) < 0.3f);
+    }
+
+    /// <summary>Тест «вылетел за край в прыжке ⇒ ботинки гаснут, джетпак»
+    /// (правка 7-й части): игрок прыгает С РАЗГОНОМ по плите; касательная
+    /// скорость замораживается (3 м/с) и в полёту несёт его за край — магнитный
+    /// луч опоры под центром капсулы гаснет ⇒ ботинкиoff + EvaMode.Jetpack.</summary>
+    protected void Edge0_JumpOffExtinguishes()
+    {
+        RebuildWorld();
+        // Замороженный донор-корабль перехватывает лучи ботинок СВОИМ DeckHull
+        // (слой Station ∈ BootsMask): у Frozen RigidBody3D физическое тело
+        // живёт своей позой в физсервере (перенос ноды его не двигает, а
+        // QueueFree в стенде не исполняется — ForceSyncFrame пуст). Гасим
+        // коллайдеры донора: формы выпадают из PhysicsDirectSpaceState.
+        DisableShipColliders(_ship);
+        // Большую домашнюю палубу УБИРАЕМ из физпространства гашением форм
+        // (QueueFree отложен, а EvaTestStep не докручивает реальные кадры —
+        // её free-space бокс весь сценарий попадался бы пробам у края).
+        DisableShipColliders(_deck);
+        // Плита 2.5×2.5: верх y=-0.55, центр (0,-0.75,0); нос тела по -Z ⇒
+        // right = fwd×normal = +X, т.е. ThrustR гонит вдоль +X к краю x=+1.25.
+        var slab = MakeSmallDeck(0f, -0.55f, 0f);
+        _player.EvaTestStickTo(slab, new Vector3(0f, -0.55f, 0f), Vector3.Up);
+        for (int i = 0; i < 3; i++)
+            _player.EvaTestStep(FlightModel.FixedDt);
+
+        // Ровно 10 кадров разгона (x≈0.5; проба о краю впереди ещё молчит) —
+        // и на следующем кадре just-pressed Space.
+        StepsMask(InputMask.ThrustR, 10);
+        float xAtJump = _player.GlobalPosition.X;
+        StepsMask(InputMask.ThrustR | InputMask.ThrustU, 1, hold: false);
+        Check("правка7: прыжок с разгона к краю стартовал (фаза активна)",
+              _player.EvaTestBootsBody() != null && _player.EvaTestBootsJumping());
+
+        bool burnedOut = false;
+        for (int i = 0; i < 45; i++)
+        {
+            _player.EvaTestStep(FlightModel.FixedDt);
+            if (_player.Mode == EvaMode.Jetpack && _player.EvaTestBootsBody() == null)
+            { burnedOut = true; break; }
+        }
+        Sync();
+        Check("правка7: в полёту занесло за точку прыжка на 0.3+ м (carry tanVel)",
+              _player.GlobalPosition.X > xAtJump + 0.3f || burnedOut);
+        Check("правка7: вылетел за край в прыжке ⇒ ботинкипогасли, джетпак",
+              burnedOut && Mode == EvaMode.Jetpack && !_player.EvaTestBootsJumping());
+    }
+
+    /// <summary>Тест крепления к краю (правка 7-й части): ходьба к краю гасится
+    /// пробой-лучом — игрок упирается в край, НЕ выходит за него и не сваливается.</summary>
+    protected void Edge1_WalkStopsAtEdge()
+    {
+        RebuildWorld();
+        // Замороженный донор-корабль перехватывает лучи ботинок СВОИМ DeckHull
+        // (слой Station ∈ BootsMask): у Frozen RigidBody3D физическое тело
+        // живёт своей позой в физсервере (перенос ноды его не двигает, а
+        // QueueFree в стенде не исполняется — ForceSyncFrame пуст). Гасим
+        // коллайдеры донора: формы выпадают из PhysicsDirectSpaceState.
+        DisableShipColliders(_ship);
+        // Большую домашнюю палубу УБИРАЕМ из физпространства гашением форм
+        // (QueueFree отложен, а EvaTestStep не докручивает реальные кадры —
+        // её free-space бокс весь сценарий попадался бы пробам у края).
+        DisableShipColliders(_deck);
+        var slab = MakeSmallDeck(0f, -0.55f, 0f);   // нос по -Z, right=+X ⇒ край x=+1.25
+        _player.EvaTestStickTo(slab, new Vector3(0f, -0.55f, 0f), Vector3.Up);
+        for (int i = 0; i < 3; i++)
+            _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("правка7: край-тест: игрок в центре плиты",
+              Mode == EvaMode.Boots && Mathf.Abs(BodyPos.X) < 0.2f);
+
+        StepsMask(InputMask.ThrustR, 60);   // 1 с по +X: без пробы ушёл бы на 3 м
+        Check("правка7: к краю дошёл (0.5 м из центра и больше)", BodyPos.X > 0.5f);
+        // Проба смотрит на 0.4 м вперёд ⇒ центр останавливается, не доходя края.
+        Check("правка7: за край НЕ вышел (центр x < 1.2)", BodyPos.X < 1.2f);
+        Check("правка7: у края прилип сохранён (ботинки горят, не свалился)",
+              _player.EvaTestBootsBody() != null && Mode == EvaMode.Boots
+              && BodyPos.Y > -0.5f);
+
+        StepsMask(InputMask.ThrustR, 60);   // ещё 1 с упора в край
+        Check("правка7: у края стоит на месте (не соскальзывает за край)",
+              BodyPos.X < 1.2f && _player.EvaTestBootsBody() != null
+              && Mode == EvaMode.Boots && BodyPos.Y > -0.5f);
+    }
 }

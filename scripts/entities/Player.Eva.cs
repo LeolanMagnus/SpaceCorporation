@@ -114,6 +114,49 @@ public partial class Player
     private Transform3D _bootsBodyLastXform = Transform3D.Identity;
     private float _lastBootsTurnRad;
 
+    // ─── доворот тела к опоре при ВКЛЮЧЕНИИ ботинок (правка 7-й части) ──────
+    // Мгновенная ориентация при активации («телепорт позой») заменён плавным
+    // сферическим доворотом за BootsTurnTime. Таймер: −1 = анимации нет;
+    // 0…BootsTurnTime = идущий доворот (from → to, slerp по t).
+    private const float BootsTurnTime = 0.3f;
+    private float _bootsTurnAnim = -1f;
+    private Quaternion _bootsTurnFrom = Quaternion.Identity;
+    private Quaternion _bootsTurnTo = Quaternion.Identity;
+
+    // ─── прыжок из ботинок (Space) ───────────────────────────────────────────
+    /// <summary>Скорость прыжка вдоль нормали опоры (м/с) и «магнитное»
+    /// притяжение назад к плоскости (м/с²): сильнее земного — ботинки тянут.</summary>
+    private const float BootsJumpSpeed = 3.5f;
+    private const float BootsJumpGravity = 14f;
+    /// <summary>Длина пробного луча «есть ли опора подо мной» в прыжке:
+    /// потолок прыжка (v²/2g ≈ 0.5 м) с запасом.</summary>
+    private const float BootsJumpProbeDepth = 2.5f;
+    private bool _bootsJumping;
+    private float _bootsNormalVel;          // компонента Velocity вдоль нормали в прыжке
+    private Vector3 _bootsJumpTanVel;       // замершая касательная скорость на время прыжка
+    private uint _bootsPrevMask;            // маска прошлого шага (just-pressed Space)
+
+    // ─── FPS-камера ботинок: тангаж взгляда на CameraRig (рад) ───────────────
+    private float _bootsCamPitch;
+
+    // ─── EVA-камера: от первого лица (по умолчанию) ⇄ внешняя (V) ────────────
+    // Правка: в EVA (джетпак/ботинки) игрок видит мир ИЗ ГЛАЗ — капсула скрыта,
+    // `CameraRig` на уровне глаз. V (`toggle_pilot_camera`) переключает на
+    // внешнюю (chase) камеру, где капсула видна. Позы rig — локальныеoffset'ы
+    // `CameraRig` относительно центра капсулы (центр в origin, ноги на −0.9).
+    private static readonly Vector3 EvaFirstPersonRigPos = new Vector3(0f, 0.35f, 0f);
+    private static readonly Vector3 EvaThirdPersonRigPos = new Vector3(0f, 1.1f, 2.2f);
+    /// <summary>false ⇒ от первого лица (капсула скрыта), true ⇒ внешняя
+    /// (капсула видна). Только для локального игрока: чужая капсула видна всегда.</summary>
+    private bool _evaThirdPerson;
+    /// <summary>Предел подъёма/опускания взгляда (°) — как в шутере: вниз в
+    /// палубу и вверх за зенит смотреть нельзя.</summary>
+    private const float BootsCamPitchLimitDeg = 70f;
+    /// <summary>Накопленная Дельта мыши (пиксели) за ботинки: FPS-взгляд «от
+    /// мыши», а не «на позицию курсора» (правка 7-й части). Пишет
+    /// `EvaMouseCatcher` только в режиме Boots; съедается в `StepBoots`.</summary>
+    private Vector2 _bootsLookAccumPx;
+
     /// <summary>Канал поиска опоры под ноги (форма-запрос вокруг капсулы + луч
     /// зазора). По eva-plan строка 178: `BootsMask` = палубы примитивов + корпус
     /// станции; обшивка корабля (1) — не опора, у корабля своя палуба (Блок F),
@@ -174,6 +217,15 @@ public partial class Player
             return;
         ReleaseEvaInput();
         DeactivateBoots(keepPosition: true);
+        // Выход в кресло: EVA больше не рисует свою камеру (её ведёт `Ship` в
+        // пилотском коде), поэтому мышь отпускаем (пилот выставит свой режим) и
+        // возвращаем видимость капсулы. Риг не трогаем — `Ship.PilotCam` сам
+        // перенастроит `CameraRig` под кресло; трогать его отсюда = конфликт.
+        _evaThirdPerson = false;
+        _bootsCamPitch = 0f;
+        SetBodyVisible(true);
+        if (Input.MouseMode == Input.MouseModeEnum.Captured)
+            Input.MouseMode = Input.MouseModeEnum.Visible;
         // Б2: мгновенная заправка реактивной массы при креплении к КОРАБЛЮ
         // (станция не заправляет — ФЛАГ В25), дальше батарею заряжает
         // `SuitModel.StepRecharge` (её зовёт ветка сидения в _PhysicsProcess).
@@ -196,6 +248,11 @@ public partial class Player
         _mode = EvaMode.Jetpack;
         DeactivateBoots(keepPosition: true);
         EnsureEvaInput();
+        // EVA по умолчанию — камера от первого лица: риг на глазах, капсула
+        // скрыта.
+        _evaThirdPerson = false;
+        _bootsCamPitch = 0f;
+        ApplyBootsCameraTransform();
         SyncFlightFromBody();
         // Курсор-прицел в центр окна: доворот стартует «на нуле», без рывка
         // (тот же приём, что посадка в кресло у корабля).
@@ -219,8 +276,11 @@ public partial class Player
         // случае: залипших бит быть не должно, а при UI-фокусе кадр пустой —
         // пилот-ассист просто гасит инерцию (та же «жидкость», что у корабля).
         _evaInput.Active = !ui && _evaCatcher != null;
+        // Правка 7-й части: в ботинках look — «от мыши» (FPS), позиционный
+        // доворот на позицию курсора глушим (его ведёт `StepBoots` по дельте).
         InputFrame f = _testInput ?? _evaInput.Collect(++_evaTick, vp,
-            SuitModel.SuitMaxAngularSpeed, dt, EvaMouseSensitivity);
+            SuitModel.SuitMaxAngularSpeed, dt, EvaMouseSensitivity,
+            lookSuppressed: _mode == EvaMode.Boots);
         _testInput = null;
         _lastFrame = f;
 
@@ -354,6 +414,10 @@ public partial class Player
             return false;
         _mode = EvaMode.Boots;
         _suit.BootsOn = true;
+        // Правка 7-й части: в ботинках взгляд «как в шутере» — забираем мышь
+        // (Captured) и держим EVA-камеру от первого лица (капсула вне кадра).
+        ApplyBootsMouseCapture();
+        ApplyBootsCameraTransform();
         return true;
     }
 
@@ -448,8 +512,8 @@ public partial class Player
         MaxLinearSpeed = SuitModel.SuitMaxLinearSpeed,
         MaxAngularSpeed = SuitModel.SuitMaxAngularSpeed,
         // Следящий режим по времени установки (те же 0.4 с до 95 %, что у
-        // кораблей Этапа 6): при look-канале 0.1 рад/с и доводке «нос к
-        // курсору» ключевой тест С1 («довёл до центра = расход 0») обязан
+        // кораблей Этапа 6): при look-канале (SuitMaxAngularSpeed) и доводке
+        // «нос к курсору» ключевой тест С1 («довёл до центра = расход 0») обязан
         // гасить вращение ДОСРОЧНО — при τ-режиме демпфер в это время не
         // участвует, а при импульсном (AngularRiseTime = 0) момент и
         // демпфер дают перелёт, и расход перестаёт быть нулевым.
@@ -491,7 +555,10 @@ public partial class Player
     /// «Носиться вместе с палубой» даёт шаг `StepBoots`: контакт хранится в осях
     /// прилипшего тела, и каждый шаг мировая позиция контакта пересчитывается из
     /// его текущей трансформации — куда уехала палуба, туда же приехал игрок.</summary>
-    private bool ActivateBoots()
+    /// <param name="instantAlign">Тестовый шов: мгновенный снап позой вместо
+    /// плавного доворота за `BootsTurnTime` (стенды завязаны на ориентацию
+    /// сразу после шва). Реальная клавиша G идёт с анимацией (false).</param>
+    private bool ActivateBoots(bool instantAlign = false)
     {
         var space = GetWorld3D()?.DirectSpaceState;
         if (space == null)
@@ -562,15 +629,131 @@ public partial class Player
         _bootsContactWorldLast = hitPos;
         _bootsBodyLastXform = hitBody.GlobalTransform;
         _lastBootsTurnRad = 0f;
+        _bootsJumping = false;
+        _bootsNormalVel = 0f;
+        _bootsPrevMask = 0u;
+        _bootsCamPitch = 0f;
+        SetBootsCamPitch(0f);
 
         // Ориентация: −Y тела вдоль нормали контакта, нос — к ближайшему
         // «горизонтальному» направлению моего прежнего взгляда (игрок не должен
-        // внезапно развернуться на 180°).
-        AlignBodyToFloor();
+        // внезапно развернуться на 180°). Правка 7-й части: доворот — НЕ
+        // мгновенный, а плавный за BootsTurnTime (0.3 с): «телепорт позой»
+        // выглядел как щелчок. Кинематический сферический доворот from→to
+        // ведёт StepBoots; `instantAlign` (тестовые швы) сохраняет прежний
+        // мгновенный снап — стенды завязаны на ориентацию сразу после шва.
+        if (instantAlign)
+            AlignBodyToFloor();
+        else
+            StartBootsTurnAnim();
         SyncFlightFromBody();
         Velocity = Vector3.Zero;
+        // FPS-курсор: в ботинках взгляд — мышью ОТ ЦЕНТРА (как в шутере), поэтому
+        // при активации варпнем курсор в центр вьюпорта (дальше — только дельты).
+        Input.WarpMouse(GetViewport().GetVisibleRect().Size * 0.5f);
         DebugInfoBus.Report($"EVA: ботинки включены (наклон " +
             $"{Mathf.RadToDeg(Vector3.Up.AngleTo(hitNormal)):F0}°)");
+        return true;
+    }
+
+    /// <summary>Запустить плавный доворот тела к опоре при активации ботинок
+    /// (правка 7-й части): цель — та же поза, что даёт `AlignBasisToFloor`
+    /// (−Y вдоль нормали, нос — к прежнему «вперёд»), но вместо мгновенной
+    /// подмены базиса ведём сферическую интерполяцию from→to за
+    /// `BootsTurnTime`. Кадровый цикл — в `StepBoots`. Если текущая ориентация
+    /// и так близка к цели, анимацию не заводим (нет «дёрганья на ровном»).</summary>
+    private void StartBootsTurnAnim()
+    {
+        Basis from = GlobalTransform.Basis;
+        Basis to = AlignBasisToFloor(from);
+        Quaternion qFrom = from.GetRotationQuaternion();
+        Quaternion qTo = to.GetRotationQuaternion();
+        // Угловое расстояние между ориентациями: почти ноль ⇒ доворота нет.
+        if (qFrom.AngleTo(qTo) < 1e-3f)
+        {
+            _bootsTurnAnim = -1f;
+            return;
+        }
+        _bootsTurnFrom = qFrom;
+        _bootsTurnTo = qTo;
+        _bootsTurnAnim = 0f;
+    }
+
+    /// <summary>Поставить тангаж FPS-взгляда ботинок на `CameraRig` (рад),
+    /// с обрезкой по `BootsCamPitchLimitDeg`. Тело при этом не наклоняется —
+    /// ноги остаются прижатыми к палубе, наклоняется только камера.</summary>
+    private void SetBootsCamPitch(float pitchRad)
+    {
+        float limit = Mathf.DegToRad(BootsCamPitchLimitDeg);
+        _bootsCamPitch = Mathf.Clamp(pitchRad, -limit, limit);
+        ApplyBootsCameraTransform();
+    }
+
+    /// <summary>Мышь ботинок: в режиме «пилотирования» (ботинки включены,
+    /// взаимодействие выключено) забираем курсор (`Captured`) — FPS-взгляд по
+    /// сырым дельтам; в остальном отпускаем (`Visible`). Метод идемпотентен и
+    /// зовётся при входе/выходе из ботинок, переключении RMB и посадке в кресло.
+    /// В headless-тестах смена `MouseMode` безвредна (реального курсора нет).</summary>
+    internal void ApplyBootsMouseCapture()
+    {
+        if (!_isLocal)
+            return;
+        bool capture = _mode == EvaMode.Boots && !_evaInput.InteractionMode;
+        // Меняем только если режим мыши действительно отличается — иначе
+        // перетираем режим, выставленный кораблём/креслом (у пилота он свой).
+        var want = capture ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
+        // В headless (`DisplayServer.GetWindow() == null`) реального курсора нет,
+        // а смена глобального `Input.MouseMode` могла бы задеть параллельные
+        // тесты, проверяющие курсорные сцены, — поэтому там не трогаем; сам
+        // look-канал ботинок идёт через `_bootsLookAccumPx` (тестовый шов),
+        // независимо от режима мыши.
+        if (NetworkManager.IsHeadlessCli())
+            return;
+        if (Input.MouseMode != want)
+            Input.MouseMode = want;
+    }
+
+    /// <summary>Поза/поворот EVA-рига: first-person (глаза, капсула вне кадра)
+    /// с наложенным тангажем взгляда, либо внешняя (V) — отъезд назад-вверх.
+    /// Сбрасывается при входе в EVA и переключении V.</summary>
+    private void ApplyBootsCameraTransform()
+    {
+        if (_cameraRig == null)
+            return;
+        // Первая позиция — на глазах (rig над центром капсулы), внешняя —
+        // назад-вверх (капсула в кадре). Поворот — тангаж взгляда в обеих.
+        _cameraRig.Position = _evaThirdPerson
+            ? EvaThirdPersonRigPos : EvaFirstPersonRigPos;
+        _cameraRig.RotationDegrees = new Vector3(Mathf.RadToDeg(_bootsCamPitch), 0f, 0f);
+        SetBodyVisible(_evaThirdPerson);
+    }
+
+    /// <summary>Скрыть/показать капсулу игрока (MeshInstance3D "Body"). В
+    /// first-person она вне кадра глаз — иначе камера внутри головы рисует
+    /// внутреннюю стенку капсулы. Чужой игрок (не локальный) капсулу не трогает:
+    /// видимость меняет только локальная камера, этот метод зовётся лишь из
+    /// локальных веток. Меш ищется лениво (он sibling `CameraRig` в tscn).</summary>
+    private MeshInstance3D? _bodyMesh;
+    private void SetBodyVisible(bool visible)
+    {
+        if (_bodyMesh == null || !GodotObject.IsInstanceValid(_bodyMesh))
+            _bodyMesh = GetNodeOrNull<MeshInstance3D>("Body");
+        if (_bodyMesh != null)
+            _bodyMesh.Visible = visible;
+    }
+
+    /// <summary>V в EVA (джетпак/ботинки, не кресло): переключить камеру
+    /// first-person ⇄ внешняя. Возвращает false, если переключать нечего (игрок
+    /// не в EVA-режиме) — тогда вызывающий отдаёт V пилотской камере кресла.</summary>
+    public bool ToggleEvaCameraView()
+    {
+        if (!_isLocal || _mode == EvaMode.Seat)
+            return false;
+        _evaThirdPerson = !_evaThirdPerson;
+        ApplyBootsCameraTransform();
+        DebugInfoBus.Report(_evaThirdPerson
+            ? "EVA: внешняя камера (капсула видна)"
+            : "EVA: камера от первого лица");
         return true;
     }
 
@@ -584,6 +767,16 @@ public partial class Player
         _bootsBody = null;
         _floorNormal = Vector3.Up;
         _suit.BootsOn = false;
+        _bootsJumping = false;
+        _bootsNormalVel = 0f;
+        // Прерванный (недовершённый) доворот и FPS-тангаж не должны пережить
+        // выход из ботинок: в джетпаке ориентация — свободная, тангаж на риге
+        // возвращаем в нейтраль.
+        _bootsTurnAnim = -1f;
+        _bootsLookAccumPx = Vector2.Zero;
+        SetBootsCamPitch(0f);
+        // Мышь отпускаем: в джетпаке взгляд — позиционный (курсор-прицел виден).
+        ApplyBootsMouseCapture();
         if (!keepPosition)
             return;
         SyncFlightFromBody();
@@ -633,16 +826,51 @@ public partial class Player
         // опоре — «up» тела = нормаль палубы. При крене/движении носителя игрок
         // обязан довернуться вслед за опорой, иначе «прямо стоит над покатавшейся
         // стеной» (Boot6). Держим горизонтальную составляющую прежнего носа.
-        if (GlobalTransform.Basis.Y.Dot(_floorNormal) < 0.999f)
+        //
+        // Правка 7-й части: если только что включили ботинки и идёт плавный
+        // доворот за `BootsTurnTime`, НЕ делаем мгновенный снап — иначе он
+        // щёлкнет позу на первом же шаге и анимация теряет смысл. Пока таймер
+        // активен, ориентацию ведёт сферическая интерполяция from→to; по её
+        // завершении (`t>=1`) липкость-снап возвращается в обычный режим.
+        bool turnActive = _bootsTurnAnim >= 0f;
+        if (turnActive)
+        {
+            _bootsTurnAnim += dt;
+            float t = Mathf.Clamp(_bootsTurnAnim / BootsTurnTime, 0f, 1f);
+            // Плавный сплайн (ease-in-out), чтобы не было рывка на старте.
+            float eased = t * t * (3f - 2f * t);
+            Quaternion q = _bootsTurnFrom.Slerp(_bootsTurnTo, eased);
+            GlobalTransform = new Transform3D(new Basis(q), GlobalPosition);
+            ResetPhysicsInterpolation();
+            if (t >= 1f)
+                _bootsTurnAnim = -1f;
+        }
+        else if (GlobalTransform.Basis.Y.Dot(_floorNormal) < 0.999f)
         {
             GlobalTransform = new Transform3D(
                 AlignBasisToFloor(GlobalTransform.Basis), GlobalPosition);
             ResetPhysicsInterpolation();
         }
 
+        // ── 1б. прыжок (Space, правка 7-й части) ─────────────────────────────
+        // just-pressed Space = держат ThrustU и в ПРОШЛОМ шаге не держали.
+        // Старт возможен только стоя (не в воздухе и не во время доворота).
+        bool spaceJustPressed = (f.Mask & InputMask.ThrustU) != 0u
+                                && (_bootsPrevMask & InputMask.ThrustU) == 0u;
+        _bootsPrevMask = f.Mask;
+        if (!_bootsJumping && !turnActive && !ui && spaceJustPressed)
+        {
+            _bootsJumping = true;
+            _bootsNormalVel = BootsJumpSpeed;
+            // Касательная (по палубе) скорость на время прыжка ЗАМИРАЕТ:
+            // в воздухе ногами не рулим — баллистика вдоль нормали + инерция.
+            _bootsJumpTanVel = Velocity - _floorNormal * Velocity.Dot(_floorNormal);
+            MissThrottled("Ботинки: прыжок");
+        }
+
         // ── 2. ходьба в плоскости нормали ────────────────────────────────────
         Vector3 wish = Vector3.Zero;
-        if (!ui)
+        if (!ui && !_bootsJumping)
         {
             // Базис «палубы»: нормаль = вертикаль, нос тела = «вперёд».
             Vector3 fwd = -GlobalTransform.Basis.Z;
@@ -665,20 +893,40 @@ public partial class Player
         if (wish.LengthSquared() > 1e-6f)
             wish = wish.Normalized() * SuitModel.BootsWalkSpeed;
 
-        // look-доворот: в ботинках нос поворачиваем вокруг нормали палубы —
-        // «оглядеться стоя». Расход при этом не считаем: скафандр в ботинках
-        // реактивным не является (В13=B), ориентация — кинематика, как у кресла.
-        Vector2 look = FlightModel.ClampLookRadians(
+        // FPS-взгляд в ботинках (правка 7-й части): камера следует за МЫШЬЮ,
+        // как в шутере от первого лица, а не «доворачивается на позицию
+        // курсора» (позывной режим скафандра/корабля). Поэтому позиционный
+        // look-канал в `StepEva` для ботинок заглушён (`lookSuppressed`), а
+        // сюда приходит только дельта мыши `_bootsLookAccumPx` + аддитивный
+        // тестовый канал `f.LookYaw/LookPitch` (швы стендов).
+        //   • горизонталь (yaw) ⇒ поворот ТЕЛА вокруг нормали палубы («оглядеться
+        //     стоя ногами на палубе»);
+        //   • вертикаль (pitch) ⇒ тангаж на `CameraRig` (тело не наклоняется —
+        //     ноги остаются прижаты к палубе, наклоняется только взгляд).
+        float yawRad = 0f, pitchRad = 0f;
+        // Дельта мыши → радианы (та же чувствительность, что у скафандра).
+        Vector2 mouseRad = _bootsLookAccumPx * EvaMouseSensitivity;
+        _bootsLookAccumPx = Vector2.Zero;
+        yawRad += mouseRad.X;
+        pitchRad += mouseRad.Y;
+        // Тестовый шов (InputFrame.Look*): стенды гоняют поворот без мыши.
+        Vector2 lookTest = FlightModel.ClampLookRadians(
             new Vector2(f.LookYaw, f.LookPitch), SuitModel.SuitMaxAngularSpeed, dt);
-        _lastBootsTurnRad = Mathf.Abs(look.X) + Mathf.Abs(look.Y);
-        if (_lastBootsTurnRad > 0f)
+        yawRad += lookTest.X;
+        pitchRad += lookTest.Y;
+
+        _lastBootsTurnRad = Mathf.Abs(yawRad);
+        if (Mathf.Abs(yawRad) > 1e-6f && !turnActive)
         {
-            Quaternion twist = new Quaternion(_floorNormal, look.X + look.Y);
+            Quaternion twist = new Quaternion(_floorNormal, yawRad);
             Basis b = new Basis(twist) * GlobalTransform.Basis;
             b = AlignBasisToFloor(b);
             GlobalTransform = new Transform3D(b, GlobalPosition);
             ResetPhysicsInterpolation();
         }
+        if (Mathf.Abs(pitchRad) > 1e-6f)
+            SetBootsCamPitch(_bootsCamPitch + pitchRad);
+
 
         // ── 3. липкость: держим зазор + едем по палубе ───────────────────
         // Нормальная компонента — серво к зазору `BootsStickOffset`: раньше
@@ -688,8 +936,43 @@ public partial class Player
         // игрок слетал). Теперь нормалью управляет только серво (пропорция от
         // ошибки зазора), а касательной — ходьба + перенос носителя.
         Vector3 carryTan = carry - _floorNormal * carry.Dot(_floorNormal);
-        Vector3 tangent = wish + carryTan / Mathf.Max(dt, 1e-5f);
         float gap = SurfaceGap();
+        if (_bootsJumping)
+        {
+            // ── фаза прыжка: баллистика вдоль нормали опоры ────────────────
+            // Магнитные ботинки «тянут» назад к палубе: постоянное
+            // притяжение −n (сильнее земного) возвращает игрока. wish-тяги
+            // в воздухе нет (см. §2), перенос носителя (carry) — есть.
+            _bootsNormalVel -= BootsJumpGravity * dt;
+            Velocity = _bootsJumpTanVel + carryTan / Mathf.Max(dt, 1e-5f)
+                       + _floorNormal * _bootsNormalVel;
+            MoveAndSlide();
+
+            // Приземление: магнит поймал палубу (зазор вернулся к держимому)
+            // ⇒ фаза прыжка кончается, игрок снова «стоит» (обычная липкость).
+            if (_bootsNormalVel <= 0f && float.IsFinite(gap)
+                && gap <= SuitModel.BootsStickOffset + 0.02f)
+            {
+                _bootsJumping = false;
+                _bootsNormalVel = 0f;
+            }
+
+            // Земля кончилась: в прыжке магнитный луч вниз под собой не нашёл
+            // опору ⇒ ботинки гаснут, игрок уходит в джетпак (правка 7-й
+            // части — «вылетел за край палубы в прыжке»).
+            if (!BootsSupportBelow(BootsJumpProbeDepth))
+            {
+                DeactivateBoots(keepPosition: true);
+                _mode = EvaMode.Jetpack;
+                SyncFlightFromBody();
+                MissThrottled("Ботинки: вылетел за край палубы — джетпак");
+                return;
+            }
+
+            SyncFlightFromBody();
+            SuitModel.StepDrain(ref _suit, 0f, 0f, SuitModel.SuitMaxAngularSpeed, dt);
+            return;
+        }
         float normalCmd = 0f;
         if (float.IsFinite(gap))
         {
@@ -697,8 +980,26 @@ public partial class Player
             normalCmd = Mathf.Clamp(-err * 10f,
                 -SuitModel.BootsMaxStickDist, SuitModel.BootsMaxStickDist);
         }
-        Velocity = tangent + _floorNormal * normalCmd;
+
+        // Правка 7-й части: игрок ПРИКРЕПЛЁН к палубе и не должен сходить за её
+        // край. Перед шагом проверяем магнитным лучом «будет ли опора под
+        // следующей позицией по касательной». Нет опоры (за краем) ⇒ гасим
+        // касательную wish-тягу: игрок упирается в край, но остаётся висеть на
+        // магните (перенос carry по движущейся палубе при этом сохраняется).
+        Vector3 wishTan = wish - _floorNormal * wish.Dot(_floorNormal);
+        if (wishTan.LengthSquared() > 1e-6f)
+        {
+            // Проба на половину шага вперёд (радиус капсулы 0.3 ⇒ берём ~0.4 м):
+            // если там уже нет опоры, тягу гасим заранее, чтобы центр капсулы
+            // не уехал над пустотой.
+            Vector3 probe = GlobalPosition + wishTan.Normalized() * 0.4f;
+            if (!BootsSupportBelowAt(probe, SuitModel.BootsMaxStickDist + 0.3f))
+                wish = Vector3.Zero;
+        }
+
+        Velocity = carryTan / Mathf.Max(dt, 1e-5f) + wish + _floorNormal * normalCmd;
         MoveAndSlide();
+
         SyncFlightFromBody();
 
         // Расходники в ботинках тоже точатся: обогрев/фонарь — энергопотребители
@@ -729,6 +1030,29 @@ public partial class Player
         // BootsStickOffset (равновесие = капсула в 5 см над палубой) иначе
         // всегда завышено на половину высоты и липкость не держит.
         return from.DistanceTo(p) - 0.2f - CapsuleHeight * 0.5f;
+    }
+
+    /// <summary>Есть ли под игроком опора слоя `SuitBootsMask` в пределах
+    /// `depth` вдоль нормали (луч сверху вниз от капсулы). true — палуба
+    /// подо мной есть; false — я над пустотой (вылетел за край).</summary>
+    private bool BootsSupportBelow(float depth)
+    {
+        return BootsSupportBelowAt(GlobalPosition, depth);
+    }
+
+    /// <summary>Опора под произвольной точкой `pos` в пределах `depth` вдоль
+    /// нормали. Тот же луч, что и `BootsSupportBelow`, но старт от `pos` —
+    /// чтобы предсказать «будет ли земля под следующим шагом по палубе».</summary>
+    private bool BootsSupportBelowAt(Vector3 pos, float depth)
+    {
+        var space = GetWorld3D()?.DirectSpaceState;
+        if (space == null)
+            return false;
+        Vector3 from = pos + _floorNormal * (CapsuleHeight * 0.5f + 0.2f);
+        Vector3 to = pos - _floorNormal * (CapsuleHeight * 0.5f + depth);
+        var q = PhysicsRayQueryParameters3D.Create(from, to, SuitBootsMask,
+            new Godot.Collections.Array<Rid> { GetRid() });
+        return space.IntersectRay(q).Count > 0;
     }
 
     /// <summary>Поставить тело так, чтобы его −Y совпал с нормалью палубы,
@@ -866,7 +1190,7 @@ public partial class Player
         if (mode == EvaMode.Seat || !_isLocal)
             return false;
         if (mode == EvaMode.Boots)
-            ActivateBoots();
+            ActivateBoots(instantAlign: true);
         else
         {
             DeactivateBoots(keepPosition: true);
@@ -901,7 +1225,7 @@ public partial class Player
     public void EvaTestSetBoots(bool on)
     {
         if (on)
-            ActivateBoots();
+            ActivateBoots(instantAlign: true);
         else
             DeactivateBoots(keepPosition: true);
     }
@@ -916,6 +1240,15 @@ public partial class Player
         _bootsContactPoint = body.ToLocal(worldPoint);
         _bootsContactNormalLocal = body.GlobalTransform.AffineInverse().Basis * worldNormal;
         _hasBootsContact = true;
+        // Шов — чистый вход в контакт: прыжок/поворот/камеру обнуляем, как при
+        // реальном ActivateBoots (иначе прыжок с прошлого теста «протекает»).
+        _bootsJumping = false;
+        _bootsNormalVel = 0f;
+        _bootsJumpTanVel = Vector3.Zero;
+        _bootsPrevMask = 0u;
+        _bootsTurnAnim = -1f;
+        _bootsLookAccumPx = Vector2.Zero;
+        SetBootsCamPitch(0f);
         // Шов обязан поступать как реальный `ActivateBoots`: луч к ПОВЕРХНОСТИ
         // тела. Точка теста может быть внутри корпуса (грубый стендовый «прямоугольник»
         // под игроком) — ищем честную точку попадания луча сверху вниз и ставим
@@ -956,6 +1289,21 @@ public partial class Player
 
     /// <summary>Тело, к которому прилип (null = контакта нет) — тест п.12/п.14.</summary>
     public Node3D? EvaTestBootsBody() => _bootsBody;
+
+    /// <summary>Идёт ли сейчас плавный доворот тела к опоре (правка 7-й части,
+    /// тест «поворот НЕ мгновенный»): true, пока таймер активен (0…BootsTurnTime).</summary>
+    public bool EvaTestBootsTurning() => _bootsTurnAnim >= 0f;
+
+    /// <summary>Активен ли прыжок из ботинок (фаза полёта вдоль нормали).</summary>
+    public bool EvaTestBootsJumping() => _bootsJumping;
+
+    /// <summary>Тангаж FPS-камеры ботинок (рад) — тест камеры/мышь.</summary>
+    public float EvaTestBootsCamPitch() => _bootsCamPitch;
+
+    /// <summary>Вбросить FPS-дельту мыши (пиксели) для ботинок — тест
+    /// «камера следует за мышью» без реальной мыши в headless.</summary>
+    public void EvaTestFeedBootsLook(Vector2 px) => _bootsLookAccumPx += px;
+
 
     /// <summary>Посадка в КОНКРЕТНУЮ точку (п.12/п.14: нужен тестовый стул,
     /// а не кресло корабля). Возвращает тот же код отказа, что и F-клавиша.</summary>
@@ -1339,6 +1687,20 @@ public partial class Player
             if (@event is InputEventMouseMotion m)
             {
                 _player._evaInput.HandleMouse(m, _player.EvaViewportSize);
+                // Правка 7-й части (переделка): взгляд в ботинках — «как в
+                // шутере от первого лица», мышь ЗАХВАЧЕНА (`Input.MouseMode =
+                // Captured`, ставится при входе в ботинки): OS-курсор скрыт и
+                // зафиксирован, а Godot шлёт сырые `Relative`-дельты без
+                // ограничения краем окна. Прежняя схема «видимый курсор +
+                // WarpMouse в центр каждый кадр» в windowed-режиме не работала:
+                // курсор упирался в край, дельта обрывалась, а варп и давал
+                // «прыжок в центр» без поворота. Поэтому здесь больше НЕТ
+                // WarpMouse — копим только дельту. Позиционный look в этом
+                // режиме глушён (`StepEva`, `lookSuppressed`).
+                if (_player._mode == EvaMode.Boots && !_player._evaInput.InteractionMode)
+                {
+                    _player._bootsLookAccumPx += m.Relative;
+                }
                 return;
             }
             // RMB в EVA = режим взаимодействия (освободить мышь под UI) — та же
@@ -1347,6 +1709,9 @@ public partial class Player
             if (@event.IsActionPressed("toggle_interaction"))
             {
                 _player._evaInput.InteractionMode = !_player._evaInput.InteractionMode;
+                // В ботинках режим взаимодействия отпускает мышь (курсор виден
+                // под UI), обратное переключение — снова забирает (Captured).
+                _player.ApplyBootsMouseCapture();
                 DebugInfoBus.Report($"EVA: режим {(_player._evaInput.InteractionMode
                     ? "взаимодействие (мышь свободна)" : "пилотирование")}");
             }

@@ -60,7 +60,9 @@ public static class SuitModel
     // ── Скафандр: движение (eva-plan §2; числа для Блока C живут здесь) ──────
     public const float SuitMaxLinearSpeed = 10f;   // м/с   (ТЗ)
     public const float SuitAccel = 8f;             // м/с²  (подбор: 1.25 с до потолка)
-    public const float SuitMaxAngularSpeed = 0.1f; // рад/с (ТЗ) — slew-rate look-канала
+    public const float SuitMaxAngularSpeed = 0.5f; // рад/с — slew-rate look-канала
+    // (поднято с 0.1 по запросу: скафандр вращается заметно шустрее; пределы
+    // вращения кораблей одновременно понижены — SuitModel ↔ ShipTypes.cs)
     public const float SuitTurnWarnDeg = 60f;      // ° — гейт ботинок (ТЗ, тот же угол, что у пола)
 
     // ── Скафандр: расходники (ТЗ + подбор, ФЛАГИ В25) ────────────────────────

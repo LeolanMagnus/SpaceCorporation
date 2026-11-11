@@ -18,7 +18,7 @@ namespace SpaceCorporation.Tests;
 public partial class Stage7Test : Node
 {
     protected Node _world = null!;
-    protected Node3D _deck = null!;     // палуба-примитив (Блок F1: layer Deck, mask 0)
+    protected StaticBody3D _deck = null!; // палуба-примитив (Блок F1: layer Deck, mask 0)
     protected Node _ship = null!;       // живая сцена Ship.tscn (даёт кресло Seat)
     protected Player _player = null!;   // испытуемый
 
@@ -100,10 +100,31 @@ public partial class Stage7Test : Node
     /// <summary>Очистить мир стенда (перед следующим сценарием) и собрать заново.
     /// Нужно, потому что один и тот же игрок не может быть «и в кресле, и в
     /// джетпаке» одновременно — каждый сценарий начинается с чистого тела.</summary>
+    /// <summary>Выключить все коллайдеры под деревом (донор-корабль в
+    /// стендовых тестах ботинок: Frozen RigidBody3D держит свою позу тела в
+    /// физсервере, перенос ноды не меняет позу форм, а QueueFree в стенде
+    /// не исполняется). CollisionShape3D.Disabled=true — форма вне лучей.</summary>
+    protected static void DisableShipColliders(Node root)
+    {
+        if (root is CollisionShape3D cs)
+            cs.Disabled = true;
+        else if (root is CollisionShape2D)
+            ((CollisionShape2D)root).Disabled = true;
+        foreach (Node ch in root.GetChildren())
+            DisableShipColliders(ch);
+    }
+
     protected void RebuildWorld()
     {
         if (_world != null && IsInstanceValid(_world))
+        {
+            // Коллайдеры уходящего мира гасим ДО QueueFree: удаление отложено
+            // до конца кадра, а их свободные боксы весь следующий сценарий
+            // попапались бы магнитным лучам ботинок (фантомный DeckHull «держал»
+            // игрока вместо свежей палубы).
+            DisableShipColliders(_world);
             _world.QueueFree();
+        }
         // QueueFree отложен, а free-space-боксы удалённых тел ещё могут попадаться
         // лучам, поэтому ждём реального удаления в физическом шаге.
         for (int i = 0; i < 3; i++)

@@ -241,7 +241,7 @@ public partial class Ship : RigidBody3D
     /// 0 или меньше = без ограничения (так стоят все прогоны, где `Flight`
     /// собирается вручную: структурный ноль не меняет их числа).
     /// </summary>
-    [Export] public float MaxAngularSpeed = 6f;
+    [Export] public float MaxAngularSpeed = 4.5f;
 
     /// <summary>Плечо мыши: радианы поворота носа на 1 пиксель движения мыши.</summary>
     [Export] public float MouseSensitivity = 0.0025f;

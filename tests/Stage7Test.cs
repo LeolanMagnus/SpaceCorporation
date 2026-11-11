@@ -46,6 +46,7 @@ public partial class Stage7Test : Node
         Hover0, Hover1, Hover2, Hover3, SuitHud0,
             NetSeat0, NetSeat1, NetSeat2,
             EvaNet0,
+            Turn0, Cam0, Jump0, Edge0, Edge1,
             Done
     }
     private Phase _phase = Phase.Build;
@@ -300,6 +301,28 @@ public partial class Stage7Test : Node
                 break;
             case Phase.EvaNet0:
                 EvaNet0_PoseReplica();        // Д1: поза-реплика apply на не-владельце
+                Next(Phase.Turn0);
+                break;
+
+            // ── правки 7-й части: плавный доворот, FPS-камера, прыжок, край ─
+            case Phase.Turn0:
+                Turn0_ActivateAnimated();     // G: доворот к нормали за 0.3 с (slerp)
+                Next(Phase.Cam0);
+                break;
+            case Phase.Cam0:
+                Cam0_FpsLook();               // ботинки: straight-дельта мыши (yaw/pitch)
+                Next(Phase.Jump0);
+                break;
+            case Phase.Jump0:
+                Jump0_LeapAndLand();          // Space: прыжок вдоль нормали и назад
+                Next(Phase.Edge0);
+                break;
+            case Phase.Edge0:
+                Edge0_JumpOffExtinguishes();  // вылетел за край в прыжке ⇒ джетпак
+                Next(Phase.Edge1);
+                break;
+            case Phase.Edge1:
+                Edge1_WalkStopsAtEdge();      // проба-луч гасит тягу у края
                 Next(Phase.Done);
                 break;
 
