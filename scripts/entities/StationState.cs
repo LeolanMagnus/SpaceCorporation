@@ -36,6 +36,45 @@ public partial class StationState : Node
     [Export] public Vector3 NetPosition { get; set; }
     [Export] public Quaternion NetRotation { get; set; } = Quaternion.Identity;
 
+    // ─────────── Фикс урона по станции (выстрелы по станции) ───────────
+    // Станция теперь цель хитскана: Hp/щит пишет ТОЛЬКО авторитет (сервер/offline)
+    // из ProcessPendingFires — как у ShipHealthState; пиры получают значения
+    // репликой OnChange (StationReplication.tres).
+
+    private int _hp = 5000;
+    /// <summary>Текущее здоровье станции. Пишет только авторитет (серверный
+    /// хитскан); пиры получают репликой.</summary>
+    [Export] public int Hp
+    {
+        get => _hp;
+        set
+        {
+            var nm = NetworkManager.Instance;
+            if (nm != null && !nm.IsAuthoritySide)
+                GD.PrintErr($"StationState#{StationNetId}: запись Hp = {value} на " +
+                            "клиенте — урон станции считает только сервер.");
+            _hp = value;
+        }
+    }
+
+    private int _shield = 1500;
+    /// <summary>Щит станции: сначала гасит урон, потом очередь на Hp.</summary>
+    [Export] public int Shield
+    {
+        get => _shield;
+        set
+        {
+            var nm = NetworkManager.Instance;
+            if (nm != null && !nm.IsAuthoritySide)
+                GD.PrintErr($"StationState#{StationNetId}: запись Shield = {value} на " +
+                            "клиенте — щит станции считает только сервер.");
+            _shield = value;
+        }
+    }
+
+    /// <summary>Максимум щита станции (репликуется спавн-снимком).</summary>
+    [Export] public int MaxShield { get; set; } = 1500;
+
     // ─────────────────── Этап 5 (шаг 5.2): стыковка ───────────────────
     // Единый писатель этих трёх полей — СЕРВЕР-авторитет (он же писатель полей
     // Hp у корабля, Этап 4 шаг 4.5): станция — приёмник. Типизированный доступ

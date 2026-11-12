@@ -84,6 +84,28 @@ public partial class ShipHealthState : Node
         }
     }
 
+    private int _shield = 100;
+    /// <summary>Щит корабля: поглощает урон перед Hp (фикс «у корабля нет щита»).
+    /// Пишет только авторитет — по тем же правилам, что `Hp`. Восстановление щита
+    /// — отдельная задача (геймплей-баланс), здесь щит расходуемый.</summary>
+    [Export] public int Shield
+    {
+        get => _shield;
+        set
+        {
+            GuardWrite(nameof(Shield), value.ToString());
+            _shield = value;
+        }
+    }
+
+    /// <summary>Максимум щита (0 — щита нет).</summary>
+    [Export] public int MaxShield { get; set; } = 100;
+
+    private double _lastDamageTimeSec;
+    /// <summary>Время последнего урона (сек, `Time.GetTicksMsec()/1000`) — для
+    /// паузы перед восстановлением щита. Серверное поле.</summary>
+    [Export] public double LastDamageTimeSec { get; set; }
+
     private Ship? _owner;
 
     /// <summary>Корабль-владелец (ближайший предок). У Health нет своего адреса —

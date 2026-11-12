@@ -263,6 +263,13 @@ public partial class Player : CharacterBody3D
         if (_isLocal && !(AutoAttachOnSpawn && _awaitingDefaultPoint))
         {
             HandleEvaKeys();
+            // Hover-панель под прицелом (гейт «сесть только через панель» +
+            // HUD-подсказка): обновляем КАЖДЫЙ физический шаг локального
+            // свободного EVA-игрока — и ДО раннего return StepEva, иначе в
+            // движении hover устаревал бы. В тестовых стендах физика игрока
+            // глушится (`EvaTestSetPhysicsPaused`), а hover задаётся швами
+            // `EvaTestHoverAt` — этот шаг их не перетирает.
+            UpdatePanelHover();
             if (StepEva(FlightModel.FixedDt))
                 return;
         }

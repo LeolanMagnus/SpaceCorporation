@@ -63,6 +63,14 @@ public partial class HudLayer : CanvasLayer
     // в режиме пилота (не в режиме взаимодействия).
     private AimReticle _reticle = null!;
 
+    // UX-правка (гейт посадки): подсказка над перекрестием EVA-игрока —
+    // «F сесть за штурвал», когда луч прицела смотрит на панель управления, и
+    // «F отстегнуться», когда игрок сидит в кресле, занятом через панель.
+    // Текст строится из hover-хита игрока (тот же хит, что читает F: «что
+    // подсказано — то и действует»), позиция — точка прицела (курсор/центр).
+    private Label _lblSeatHint = null!;
+    private string _seatHintText = "";
+
     // Комм-лог (H6): 6 слотов Label, кольца событий HudEventBus + возраст строк.
     private readonly Label[] _commLabels = new Label[6];
     private readonly double[] _commAge = new double[6];
@@ -124,6 +132,23 @@ public partial class HudLayer : CanvasLayer
         _targeting = GetNode<TargetingService>("TargetingService");
         _targetMarker = GetNode<TargetOverlay>("HudRoot/TargetOverlay");
         _reticle = GetNode<AimReticle>("HudRoot/AimReticle");
+
+        // Подсказка посадки над перекрестием (создаётся кодом — она не несут
+        // ни текстуру, ни макет, только текст у прицела): не перехватывает мышь,
+        // рисуется поверх всех панелей (добавлена последней в HudRoot).
+        _lblSeatHint = new Label
+        {
+            Name = "SeatHintLabel",
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            GrowHorizontal = Control.GrowDirection.Both,
+            GrowVertical = Control.GrowDirection.Both,
+            Visible = false,
+        };
+        _lblSeatHint.AddThemeColorOverride("font_color", HudTheme.TextAccent);
+        _lblSeatHint.AddThemeColorOverride("font_outline_color", HudTheme.TextDim);
+        _lblSeatHint.AddThemeConstantOverride("outline_size", 4);
+        _hudRoot.AddChild(_lblSeatHint);
 
         // Комм-лог (H6): слоты + подписка на шину событий.
         for (int i = 0; i < _commLabels.Length; i++)
@@ -307,6 +332,7 @@ public partial class HudLayer : CanvasLayer
         // локальный игрок не пристёгнут к креслу, `GetMyShip()` вернёт null и
         // статус-панель уйдёт в ранний выход, а индикатор гореть обязан.
         UpdateBootsIndicator();
+        UpdateSeatHint();
 
         var ship = GetMyShip();
         if (ship == null)
@@ -393,6 +419,52 @@ public partial class HudLayer : CanvasLayer
         var p = FindLocalPlayer();
         bool boots = p != null && p.Mode == EvaMode.Boots;
         _lblBootsInd.Visible = boots;
+    }
+
+    // ───────── Подсказка посадки над перекрестием (гейт панели) ─────────
+    // Текст — из hover-хита локального EVA-игрока (`EvaTestPanelHintText`:
+    // «F сесть за штурвал …»/«… кресло занято»), либо «F отстегнуться», если
+    // игрок сидит в кресле, занятом через панель. Позиция — точка EVA-прицела
+    // (курсор или центр вьюпорта) на ~40 px выше неё: над самим перекрестием,
+    // как просил запрос.
+
+    private void UpdateSeatHint()
+    {
+        var p = FindLocalPlayer();
+        string text = "";
+        // Позиция: по умолчанию центр экрана (перекрестие aim-режима тоже в
+        // центре, а для EVA-прицела без OS-курсора центр и есть точка прицела).
+        Vector2 aim = _hudRoot.Size * 0.5f;
+        if (p != null)
+        {
+            if (p.IsAttached)
+            {
+                text = p.JustSeatedPanel != null ? "F отстегнуться" : "";
+            }
+            else
+            {
+                text = p.EvaTestPanelHintText();
+                aim = p.EvaAimPx;
+            }
+        }
+
+        bool show = HudVisible && text != "";
+        if (text != _seatHintText)
+        {
+            _seatHintText = text;
+            _lblSeatHint.Text = text;
+            // Ширина под текст: autowrap выключен, grow в обе стороны — label
+            // сам считает минимум; центрируем по точке прицела.
+            _lblSeatHint.ResetSize();
+        }
+        _lblSeatHint.Visible = show;
+        if (!show)
+            return;
+        // Над точкой прицела: низ label'а на 16 px выше прицела.
+        float labelH = _lblSeatHint.GetMinimumSize().Y;
+        _lblSeatHint.Position = new Vector2(
+            aim.X - _lblSeatHint.Size.X * 0.5f,
+            Mathf.Max(0f, aim.Y - 16f - labelH));
     }
 
     // ─────────────── Этап H6: тег мира (левый верх) ───────────────

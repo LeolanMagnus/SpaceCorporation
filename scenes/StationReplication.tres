@@ -43,3 +43,16 @@ properties/5/replication_mode = 2
 properties/6/path = NodePath("StationState:DockStateValue")
 properties/6/spawn = true
 properties/6/replication_mode = 2
+
+; Фикс урона по станции: Hp и щит станции пишет только авторитет (серверный
+; хитскан ProcessPendingFires), пиры получают значения OnChange-дельтами +
+; спавн-снимком (поздно зашедший пир обязан увидеть покалеченную станцию).
+properties/7/path = NodePath("StationState:Hp")
+properties/7/spawn = true
+properties/7/replication_mode = 2
+properties/8/path = NodePath("StationState:Shield")
+properties/8/spawn = true
+properties/8/replication_mode = 2
+properties/9/path = NodePath("StationState:MaxShield")
+properties/9/spawn = true
+properties/9/replication_mode = 2

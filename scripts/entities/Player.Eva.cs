@@ -246,6 +246,7 @@ public partial class Player
         if (!_isLocal)
             return;
         _mode = EvaMode.Jetpack;
+        _justSeatedPanel = null; // панель «своего» кресла больше не своя
         DeactivateBoots(keepPosition: true);
         EnsureEvaInput();
         // EVA по умолчанию — камера от первого лица: риг на глазах, капсула
@@ -350,15 +351,25 @@ public partial class Player
             return;
         }
 
-        AttachPoint? seat = SeatPointUnderCursor();
-        if (seat == null)
+        // Гейт «только через панель» (UX-запрос): встать за штурвал можно,
+        // лишь НАВЕДЯ перекрестие на панель управления корабля/станции. Прежний
+        // поиск кресла свободным лучом по группе «attach_point» позволял сесть
+        // сквозь корпус и мимо самой панели: игрок жал F в пустоту и оказывался
+        // в кресле. Теперь F читает ТОТ ЖЕ hover-хит, что рисует подсказку над
+        // перекрестием (её обновляет `UpdatePanelHover` каждый физический шаг
+        // и стендовые швы): «что подсказано — то и действует», рассинхрон
+        // подсказки и действия исключён по построению. Занятость кресла
+        // перепроверяется внутриActivateHoverSeat свежим лучом — устаревший хит
+        // «в чужое кресло» не срабатывает (Stage7 п.6).
+        if (EvaTestPanelHoverNow() is not { } hover)
         {
             // Пустой клик НЕ должен глотаться молча: игрок не понимает, почему
             // «F не работает» (UX-замечание C4).
-            MissHint($"F: под курсором нет свободного кресла ({_lastMissHint})");
+            MissHint($"F: под курсором нет панели управления ({_panelHoverWhy})");
             return;
         }
-        AttachToPointRouted(seat);
+        if (!ActivateHoverSeat(hover))
+            return; // отказ (занятость/адрес) уже объяснён внутри маршрута
     }
 
     /// <summary>Тот же сетевой маршрут, что у кнопки Attach (Player.cs
@@ -1516,13 +1527,81 @@ public partial class Player
         public bool IsBusy;
     }
 
+    /// <summary>Актуальный hover «панель под прицелом»: ставится каждый
+    /// физический шаг из <c>StepEva</c> (реальные EVA-режимы) и вручную
+    /// стендовыми швами (<see cref="EvaTestHoverAt"/>). Он ОДИН источник истины
+    /// и для HUD-подсказки над перекрестием, и для действия: нажатие F читает
+    /// ровно его, поэтому «что подсказано — то и действует» (рассинхрон
+    /// подсказки и посадки исключён по построению).</summary>
     private PanelHover? _panelHover;
+
+    /// <summary>Причина, по которой последний луч прицела НЕ нашёл панель
+    /// (для объяснения отказа F: «под прицелом нет панели — …»).</summary>
+    private string _panelHoverWhy = "";
+
+    /// <summary>Панель, чьё кресло занято ПОСЛЕДНИМ нажатием F (для HUD-строки
+    /// «F отстегнуться» в кресле; очищается при отстёжке). Ставится только в
+    /// <c>ActivateHoverSeat</c> — единственном живом пути «сесть» (гейт
+    /// «только через панель»).</summary>
+    private ControlPanel? _justSeatedPanel;
 
     /// <summary>Активен ли сбор hover: EVA-режимы (Jetpack/Boots), свободный
     /// игрок, локальность. В кресле панель своей подсказки не просим (В14=B:
     /// одно кресло — один пилот).</summary>
     private bool PanelHoverGate() =>
         _isLocal && !IsAttached && (_mode == EvaMode.Jetpack || _mode == EvaMode.Boots);
+
+    /// <summary>Шаг hover по текущему курсору-прицелу — вызывается из
+    /// <c>StepEva</c> каждый физический кадр локального EVA-игрока. Ключевой
+    /// момент для UX: в ботинках мышь захвачена и OS-курсор зафиксирован в
+    /// центре, поэтому «наведение» происходит поворотом камеры — луч обязан
+    /// исходить из точки взгляда камеры, иначе наведение на панель было бы
+    /// возможно только позиционным курсором джетпака.</summary>
+    private void UpdatePanelHover()
+    {
+        if (!PanelHoverGate())
+        {
+            _panelHover = null;
+            return;
+        }
+        Camera3D? cam = GetActiveCamera();
+        if (cam == null)
+        {
+            _panelHover = null;
+            return;
+        }
+        Vector2 cursor = EvaAimPx; // та же точка, над которой HUD рисует подсказку
+        var from = cam.ProjectRayOrigin(cursor);
+        var dir = cam.ProjectRayNormal(cursor);
+        _panelHover = HoverPanelOnRay(from, dir, out string why);
+        if (_panelHover == null)
+            _panelHoverWhy = why;
+    }
+
+    /// <summary>Экранная точка EVA-прицела (курсор, а без курсора — центр
+    /// вьюпорта): ТОЙ ЖЕ точкой пользуется луч hover в <c>UpdatePanelHover</c>,
+    /// поэтому HUD рисует подсказку ровно «над перекрестием», а не «примерно
+    /// в центре» — точка прицела и луч физически одни и те же.</summary>
+    public Vector2 EvaAimPx =>
+        _evaInput.HasCursor ? _evaInput.CursorPx : EvaViewportSize * 0.5f;
+
+    /// <summary>Панель под перекрестием (для HUD-подсказки «{клавиша} сесть»
+    /// над перекрестием в режиме магнитных ботинок).</summary>
+    public PanelHover? PanelHoverNow =>
+        _panelHover is { } h && GodotObject.IsInstanceValid(h.Seat) &&
+        GodotObject.IsInstanceValid(h.Panel) ? h : null;
+
+    /// <summary>Панель, в которую целится локальный игрок (тот же hover, что
+    /// кормит подсказку HUD). null — под прицелом нет панели.</summary>
+    public ControlPanel? AimedPanel => PanelHoverNow?.Panel;
+
+    /// <summary>Панель, кресло которой игрок занял последним нажатием F — HUD
+    /// показывает над перекрестием подсказку «F отстегнуться», пока игрок сидит
+    /// в этом кресле (гейт снят: сесть можно только через панель ⇒ кресло, в
+    /// которое сели, — всегда «то самое»).</summary>
+    public ControlPanel? JustSeatedPanel =>
+        _justSeatedPanel != null && GodotObject.IsInstanceValid(_justSeatedPanel)
+            ? _justSeatedPanel : null;
 
     /// <summary>Собрать hover по лучу (from → from+dir*PanelHoverRangeM).
     /// Возвращает null и причину отказа в `why`, иначе хит. Гейты:
@@ -1619,6 +1698,8 @@ public partial class Player
             return false;
         }
         AttachToPointRouted(hover.Seat);
+        if (IsAttached)
+            _justSeatedPanel = hover.Panel; // «то самое» кресло для HUD «F отстегнуться»
         return IsAttached;
     }
 
@@ -1634,7 +1715,10 @@ public partial class Player
         dir = dir.LengthSquared() < 1e-8f ? Vector3.Zero : dir.Normalized();
         PanelHover? h = HoverPanelOnRay(from, dir, out string why);
         if (h == null)
+        {
             _lastMissHint = why;
+            _panelHoverWhy = why;
+        }
         _panelHover = h;
         return h;
     }

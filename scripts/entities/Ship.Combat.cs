@@ -150,6 +150,57 @@ public partial class Ship : RigidBody3D
         if (!AimOnShip(_pilotInput.LastMousePx))
             return;
         ShowAimingBeam();
+        TryFire();
+    }
+
+    /// <summary>Мировая точка выстрела (для сетевого гейта В17 п.3 и локального
+    /// хитскана): ствол + серверный/локальный нос `-Basis.Z` на длину луча. Берём
+    /// НОС корабля, а не курсорный луч камеры: сервер сверяет `aimPoint` со своим
+    /// `-Basis.Z`, поэтому намерение по носу проходит допуск `AimToleranceM`
+    /// надёжнее, чем экранный луч чужой камеры.</summary>
+    private Vector3 AimPointWorld()
+        => BeamOriginGlobal() + (-GlobalTransform.Basis.Z) * AimingBeamLength;
+
+    /// <summary>Запуск выстрела после визуала (исправленный баг: раньше `RequestFire`
+    /// рисовал только луч и никогда не звал хитскан — урон не проходил ни в offline,
+    /// ни в сети). Развилка по роли процесса (<see cref="NetworkManager.IsAuthoritySide"/>):
+    ///  - авторитетная сторона (offline/хост-пилот): тот же кулдаун `FireCooldownSec`,
+    ///    что у серверного гейта, и прямой `Enqueue` в очередь хитскана (исполнится в
+    ///    `_PhysicsProcess`); в offline `AcceptFireFrom` отсечён гейтом `IsServer`,
+    ///    поэтому локальный путь обязателен;
+    ///  - клиент-пилот: `SubmitFireToServer` (надёжный RPC, канал 1) — сервер проверит
+    ///    намерение (В17) и сам посчитает хитскан/урон (единый источник истины).</summary>
+    private void TryFire()
+    {
+        var nm = NetworkManager.Instance;
+        if (nm == null || Net == null || Net.ShipNetId == 0)
+            return; // нет адреса — выстрел нечем ни засчитать, ни адресовать
+
+        // Кулдаун на обеих сторонах (как гейт В17 п.2) — клиент так же троттлит RPC.
+        double now = Time.GetTicksMsec() / 1000.0;
+        if (_hasLastFireTime && now - _lastFireTimeSec < FireCooldownSec)
+            return;
+
+        Vector3 aim = AimPointWorld();
+        if (nm.IsAuthoritySide)
+        {
+            uint tick = (uint)Mathf.Max(0, Net.SimTick);
+            _lastAcceptedFireTick = tick;
+            _hasAcceptedFireTick = true;
+            _lastFireTimeSec = now;
+            _hasLastFireTime = true;
+            AcceptedFireCount++;
+            ShotsFired++;
+            _pendingFires.Enqueue((tick, aim));
+        }
+        else
+        {
+            // Клиент: сервер засчитает выстрел; локально запоминаем время, чтобы
+            // троттлить спам RPC с той же периодичностью, что гейт сервера.
+            _lastFireTimeSec = now;
+            _hasLastFireTime = true;
+            SubmitFireToServer(aim);
+        }
     }
 
     /// <summary>Тот же путь кода, что у ЛКМ, но БЕЗ aim-гейта (шов п.17): мышь
@@ -332,61 +383,165 @@ public partial class Ship : RigidBody3D
             if (hit["collider"].AsGodotObject() is not PhysicsBody3D body)
                 continue;
 
-            // Мишень опознаётся по дочернему буферу состояния, а не по имени:
-            // станция (TestStand, слой Station) тоже попала бы под LaserMask, но
-            // у неё нет `TargetState` — значит это НЕ попадание в цель (п.22).
+            // ─── фикс «нет урона по станции и кораблям»: хитскан раньше
+            // признавал ТОЛЬКО мишени (TargetState) и молча пропускал всё
+            // остальное. Теперь три kinds: мишень (TargetState), чужой корабль
+            // (ShipHealthState) и станция (StationState). Событие HitConfirmed,
+            // счётчик HitsRegistered, реестровая сверка и RPC по мишеням — НЕ
+            // изменились: автотесты п.21-п.25 Stage3 завязаны на них и на том,
+            // что TestStand (слой Station, БЕЗ StationState) попаданием не
+            // считается — у стенда нет ни одного буфера состояния.
             TargetState? state = body.GetNodeOrNull<TargetState>("TargetState");
-            if (state == null || state.TargetNetId == 0)
-                continue;
-
-            // Шаг 3.6, риск №7: реестр — единственный владелец живых мишеней.
-            // Если мишень уже снята (удаляется в этом же кадре / гонка с чужим
-            // выстрелом), FindTarget вернёт null — это warning, а не исключение
-            // (п.25). Урон наносим по записи реестра, а не по «сырому» телу.
-            var nm = NetworkManager.Instance;
-            if (nm != null && nm.FindTarget(state.TargetNetId) == null)
+            if (state != null && state.TargetNetId != 0)
             {
-                GhostHitsIgnored++;
-                GD.PushWarning($"ship#{Net.ShipNetId}: хитскан в мишень " +
-                               $"#{state.TargetNetId}, её НЕТ в реестре — попадание " +
-                               $"игнорируется (риск №7: удаление во время полёта)");
+                ApplyLaserToTarget(state, hit["position"].AsVector3(), tick);
                 continue;
             }
-            TargetState target = state;
 
-            Vector3 hitPoint = hit["position"].AsVector3();
-            HitsRegistered++;
-
-            // ─── шаг 3.6: урон наносит ТОЛЬКО сервер (единый источник истины) ───
-            target.Hp = System.Math.Max(0, target.Hp - FireDamage);
-
-            // Рассылка подтверждения всем пирам (Reliable, канал 1): картинке —
-            // вспышка в hitPoint; счёт HP — репликой Hp, параметр damage здесь
-            // только для визуала/логов (риск №5: не второй источник истины).
-            // Offline (peer == null) — рассылать некому: там работает локальный
-            // шов HitConfirmed и локальная вспышка ниже.
-            if (Multiplayer.GetMultiplayerPeer() != null)
-                Rpc(nameof(RpcOnHitConfirmed), target.TargetNetId, FireDamage,
-                    hitPoint, Net.ShipNetId, tick);
-
-            GD.Print($"ship#{Net.ShipNetId}: попадание в мишень #{target.TargetNetId} " +
-                     $"(tick={tick}, HP {target.Hp}/{target.MaxHp})");
-
-            // Локальный шов теста/интерфейса (п.21-23 слушают именно его).
-            HitConfirmed?.Invoke(target.TargetNetId, tick, hitPoint);
-
-            // Уничтожение: сервер QueueFree — MultiplayerSpawner сам снимет узел
-            // у всех пиров; реестр чистит _ExitTree мишени.
-            if (target.Hp <= 0)
+            var health = body.GetNodeOrNull<ShipHealthState>("ShipHealthState");
+            if (health != null && health.MaxHp > 0)
             {
-                GD.Print($"мишень #{target.TargetNetId} уничтожена (стрелок " +
-                         $"ship#{Net.ShipNetId})");
-                target.GetParent()?.QueueFree(); // корень Target (RigidBody3D)
+                ApplyLaserToShip(health, hit["position"].AsVector3(), tick);
+                continue;
             }
 
-            // Вспышка и на сервере (хост видит мир; dedicated — безвредно).
-            ShowHitFlash(hitPoint);
+            var station = body.GetNodeOrNull<StationState>("StationState");
+            if (station != null && station.StationNetId != 0)
+            {
+                ApplyLaserToStation(station, hit["position"].AsVector3(), tick);
+                continue;
+            }
+            // Ни одного буфера состояния (TestStand, декорации) — промах «в
+            // стену»: попадания нет, урона нет (п.22/п.23 Stage3).
         }
+    }
+
+    /// <summary>Шаг 3.6 (поведение без изменений): подтверждённое попадание по
+    /// мишени — сверка с реестром (риск №7), урон, RPC-картинка, событие теста,
+    /// уничтожение при Hp&lt;=0.</summary>
+    private void ApplyLaserToTarget(TargetState target, Vector3 hitPoint, uint tick)
+    {
+        // Шаг 3.6, риск №7: реестр — единственный владелец живых мишеней.
+        // Если мишень уже снята (удаляется в этом же кадре / гонка с чужим
+        // выстрелом), FindTarget вернёт null — это warning, а не исключение
+        // (п.25). Урон наносим по записи реестра, а не по «сырому» телу.
+        var nm = NetworkManager.Instance;
+        if (nm != null && nm.FindTarget(target.TargetNetId) == null)
+        {
+            GhostHitsIgnored++;
+            GD.PushWarning($"ship#{Net.ShipNetId}: хитскан в мишень " +
+                           $"#{target.TargetNetId}, её НЕТ в реестре — попадание " +
+                           $"игнорируется (риск №7: удаление во время полёта)");
+            return;
+        }
+
+        HitsRegistered++;
+
+        // ─── шаг 3.6: урон наносит ТОЛЬКО сервер (единый источник истины) ───
+        target.Hp = System.Math.Max(0, target.Hp - FireDamage);
+
+        // Рассылка подтверждения всем пирам (Reliable, канал 1): картинке —
+        // вспышка в hitPoint; счёт HP — репликой Hp, параметр damage здесь
+        // только для визуала/логов (риск №5: не второй источник истины).
+        // Offline (peer == null) — рассылать некому: там работает локальный
+        // шов HitConfirmed и локальная вспышка ниже.
+        if (Multiplayer.GetMultiplayerPeer() != null)
+            Rpc(nameof(RpcOnHitConfirmed), target.TargetNetId, FireDamage,
+                hitPoint, Net.ShipNetId, tick);
+
+        GD.Print($"ship#{Net.ShipNetId}: попадание в мишень #{target.TargetNetId} " +
+                 $"(tick={tick}, HP {target.Hp}/{target.MaxHp})");
+
+        // Локальный шов теста/интерфейса (п.21-23 слушают именно его).
+        HitConfirmed?.Invoke(target.TargetNetId, tick, hitPoint);
+
+        // Уничтожение: сервер QueueFree — MultiplayerSpawner сам снимет узел
+        // у всех пиров; реестр чистит _ExitTree мишени.
+        if (target.Hp <= 0)
+        {
+            GD.Print($"мишень #{target.TargetNetId} уничтожена (стрелок " +
+                     $"ship#{Net.ShipNetId})");
+            target.GetParent()?.QueueFree(); // корень Target (RigidBody3D)
+        }
+
+        // Вспышка и на сервере (хост видит мир; dedicated — безвредно).
+        ShowHitFlash(hitPoint);
+    }
+
+    /// <summary>Фикс урона: попадание лазера по чужому кораблю. Урон гасится
+    /// щитом (<see cref="ShipHealthState.Shield"/>), остаток уходит в Hp;
+    /// пишущий — только авторитет (метод вызывается из ProcessPendingFires).
+    /// GodMode — вспышка без урона. Hp&lt;=0 — серверная смерть тем же путём,
+    /// что урон от столкновения со станцией (<see cref="ServerDieShip"/>).</summary>
+    private void ApplyLaserToShip(ShipHealthState health, Vector3 hitPoint, uint tick)
+    {
+        int shipNetId = health.Owner?.Net?.ShipNetId ?? 0;
+        if (health.GodMode)
+        {
+            ShowHitFlash(hitPoint);
+            GD.Print($"ship#{Net.ShipNetId}: попадание в корабль #{shipNetId} " +
+                     $"— GodMode, урона нет (tick={tick})");
+            return;
+        }
+
+        int remaining = FireDamage;
+        if (health.Shield > 0)
+        {
+            int absorbed = System.Math.Min(health.Shield, remaining);
+            health.Shield -= absorbed;
+            remaining -= absorbed;
+        }
+        health.Hp = System.Math.Max(0, health.Hp - remaining);
+        health.LastDamage = FireDamage;
+        health.DamageTakenCount++;
+        health.LastDamageTimeSec = Time.GetTicksMsec() / 1000.0;
+
+        // Картинка пирам — тот же паттерн, что RpcOnHitConfirmed: параметры для
+        // вспышки, счёт HP/щита — только репликой (риск №5).
+        if (Multiplayer.GetMultiplayerPeer() != null)
+            Rpc(nameof(RpcOnHitOnShip), shipNetId, FireDamage, hitPoint,
+                Net.ShipNetId, tick);
+        GD.Print($"ship#{Net.ShipNetId}: попадание в корабль #{shipNetId} " +
+                 $"(tick={tick}, щит {health.Shield}/{health.MaxShield}, " +
+                 $"HP {health.Hp}/{health.MaxHp})");
+        HudEventBus.Report($"Damage {FireDamage} — ship#{shipNetId} " +
+                           $"shield {health.Shield}/{health.MaxShield}, " +
+                           $"hull {health.Hp}/{health.MaxHp}");
+        ShowHitFlash(hitPoint);
+
+        if (health.Hp <= 0 && health.Owner != null && health.Owner.Net != null &&
+            health.Owner.Net.ShipNetId != 0 && Net.ShipNetId != health.Owner.Net.ShipNetId)
+        {
+            GD.Print($"ship#{health.Owner.Net.ShipNetId} уничтожен выстрелом " +
+                     $"ship#{Net.ShipNetId}");
+            health.Owner.ServerDieShip();
+        }
+    }
+
+    /// <summary>Фикс урона: попадание лазера по станции. Щит станции
+    /// (<see cref="StationState.Shield"/>) гасит урон первым; станция разрушаема
+    /// до Hp=0, но НЕ удаляется — это постоянный объект мира.</summary>
+    private void ApplyLaserToStation(StationState station, Vector3 hitPoint, uint tick)
+    {
+        int remaining = FireDamage;
+        if (station.Shield > 0)
+        {
+            int absorbed = System.Math.Min(station.Shield, remaining);
+            station.Shield -= absorbed;
+            remaining -= absorbed;
+        }
+        station.Hp = System.Math.Max(0, station.Hp - remaining);
+
+        if (Multiplayer.GetMultiplayerPeer() != null)
+            Rpc(nameof(RpcOnHitOnStation), station.StationNetId, FireDamage,
+                hitPoint, Net.ShipNetId, tick);
+        GD.Print($"ship#{Net.ShipNetId}: попадание в станцию #{station.StationNetId} " +
+                 $"(tick={tick}, щит {station.Shield}/{station.MaxShield}, " +
+                 $"HP {station.Hp}/{station.MaxHp})");
+        HudEventBus.Report($"Damage {FireDamage} — station#{station.StationNetId} " +
+                           $"shield {station.Shield}/{station.MaxShield}, " +
+                           $"hull {station.Hp}/{station.MaxHp}");
+        ShowHitFlash(hitPoint);
     }
 
     /// <summary>Шаг 3.6: подтверждение попадания от сервера всем пирам.
@@ -403,6 +558,31 @@ public partial class Ship : RigidBody3D
         ShowHitFlash(hitPoint);
         GD.Print($"[hit] ship#{shooterNetId} → мишень #{targetNetId}: " +
                  $"-{damage} (HP реплицируется), tick={tick}");
+    }
+
+    /// <summary>Фикс урона: картинка попадания в чужой корабль для всех пиров.
+    /// Тот же контракт, что у <see cref="RpcOnHitConfirmed"/>: только вспышка,
+    /// счёт Hp/щита — исключительная реплика ShipHealthState (риск №5).</summary>
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcOnHitOnShip(int shipNetId, int damage, Vector3 hitPoint,
+                               int shooterNetId, uint tick)
+    {
+        ShowHitFlash(hitPoint);
+        GD.Print($"[hit] ship#{shooterNetId} → корабль #{shipNetId}: " +
+                 $"-{damage} (Hp/щит реплицируются), tick={tick}");
+    }
+
+    /// <summary>Фикс урона: картинка попадания в станцию. Контракт тот же:
+    /// Hp/щит станции — только репликой StationState.</summary>
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcOnHitOnStation(int stationNetId, int damage, Vector3 hitPoint,
+                                  int shooterNetId, uint tick)
+    {
+        ShowHitFlash(hitPoint);
+        GD.Print($"[hit] ship#{shooterNetId} → станция #{stationNetId}: " +
+                 $"-{damage} (Hp/щит реплицируются), tick={tick}");
     }
 
     /// <summary>Краткая эмиссивная сфера в точке попадания (картинка, шаг 3.6).
@@ -449,18 +629,24 @@ public partial class Ship : RigidBody3D
     private void ShowAimingBeam()
     {
         Vector3 start = BeamOriginGlobal();
-        Vector3 end;
-        Camera3D? cam = GetViewport()?.GetCamera3D();
-        if (cam != null)
+        Vector3 fwd = -GlobalTransform.Basis.Z; // тот же курс, что у серверного хитскана
+
+        // Фиксируем КОНЕЦ в мировом луче в момент выстрела (а не «дочерним узлом,
+        // который наследует поворот корабля»): раньше узел был обычным child'ом
+        // корабля, поэтому при довороте носа к курсору (PilotAim) луч «ехал» за
+        // курсором. Направление — вдоль НОСА (`fwd`), как у реального выстрела,
+        // дальше луч обрезаем первым препятствием по `LaserMask` (визуал = трасса
+        // выстрела), иначе фиксированная длина `AimingBeamLength`.
+        Vector3 end = start + fwd * AimingBeamLength;
+        var space = GetWorld3D()?.DirectSpaceState;
+        if (space != null)
         {
-            Vector3 o = cam.ProjectRayOrigin(_pilotInput.LastMousePx);
-            Vector3 d = cam.ProjectRayNormal(_pilotInput.LastMousePx);
-            end = o + d * AimingBeamLength;
-        }
-        else
-        {
-            // Без камеры прицел не определить — ведём луч вдоль носа (страховка headless).
-            end = start - GlobalTransform.Basis.Z * AimingBeamLength;
+            var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var query = PhysicsRayQueryParameters3D.Create(
+                start, start + fwd * LaserRange, CollisionLayers.LaserMask, exclude);
+            Godot.Collections.Dictionary hit = space.IntersectRay(query);
+            if (hit.Count > 0)
+                end = hit["position"].AsVector3(); // зафиксированная точка попадания
         }
 
         Vector3 dir = end - start;
@@ -471,7 +657,14 @@ public partial class Ship : RigidBody3D
         // Узел живёт фиксированное время и удаляется сам (SceneTreeTimer). Новый
         // выстрел убирает старый луч, чтобы не плодить узлы при спаме ЛКМ.
         _aimBeam?.QueueFree();
-        var beam = new MeshInstance3D { Name = "BeamVisual" };
+        var beam = new MeshInstance3D
+        {
+            Name = "BeamVisual",
+            // TopLevel: НЕ наследует трансформацию родителя (корабля) — узел
+            // остаётся child'ом корабля (тест п.17 ищет BeamVisual под ним), но
+            // стоит в МИРОВЫХ координатах и не поворачивается вместе с носом.
+            TopLevel = true,
+        };
         var cyl = new CylinderMesh
         {
             TopRadius = AimingBeamRadius,
@@ -491,7 +684,8 @@ public partial class Ship : RigidBody3D
 
         AddChild(beam);
         // Ориентация: локальная Y цилиндра — вдоль луча. LookAt даёт -Z, поэтому
-        // доворачиваем базис: Y←нормаль луча.
+        // доворачиваем базис: Y←нормаль луча. start/end мировые и ЗАФИКСИРОВАНЫ —
+        // луч стоит на месте, куда стреляли, пока корабль доворачивается.
         beam.GlobalPosition = (start + end) * 0.5f;
         Vector3 up = dir.Normalized();
         // Строим базис, где Y=up, а X/Z — любые перпендикуляры (радиус симметричен).
@@ -502,9 +696,10 @@ public partial class Ship : RigidBody3D
 
         _aimBeam = beam;
 
-        // Самоудаление через AimingBeamLifetime секунд. Замыкание ловит конкретный
+        // Самоудаление: вдвое короче прежнего (`AimingBeamLifetime / 2`) — вспышка
+        // выстрела короткая, не «висит» до конца кулдауна. Замыкание ловит конкретный
         // узел: если его уже сняли раньше (новый выстрел) — проверка IsValid.
-        double secs = AimingBeamLifetime;
+        double secs = AimingBeamLifetime * 0.5;
         var timer = GetTree()?.CreateTimer(secs);
         if (timer != null)
         {

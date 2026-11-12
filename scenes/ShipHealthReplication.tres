@@ -37,3 +37,12 @@ properties/3/replication_mode = 2
 properties/4/path = NodePath("ShipHealthState:LastDamage")
 properties/4/spawn = true
 properties/4/replication_mode = 2
+
+; Фикс стрельбы по кораблям: щит пишет только авторитет (хитскан
+; ProcessPendingFires + очередь восстановления), пиры видят OnChange-дельтами.
+properties/5/path = NodePath("ShipHealthState:Shield")
+properties/5/spawn = true
+properties/5/replication_mode = 2
+properties/6/path = NodePath("ShipHealthState:MaxShield")
+properties/6/spawn = true
+properties/6/replication_mode = 2

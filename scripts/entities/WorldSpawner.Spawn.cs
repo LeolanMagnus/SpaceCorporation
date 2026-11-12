@@ -188,10 +188,14 @@ public partial class WorldSpawner : Node3D
     public TargetState? SpawnTarget(Vector3 position)
     {
         var nm = NetworkManager.Instance;
-        if (nm == null || !nm.IsServer)
+        // Гейт по РОЛИ, а не по IsServer: в offline IsServer == false, и кнопка
+        // «Spawn Target» в одиночной игре молча ничего не делала (исправленный
+        // баг). Авторитетная сторона — IsServer || Offline (как у SpawnStation).
+        if (nm == null || nm.IsClient)
         {
-            GD.PushWarning("WorldSpawner: SpawnTarget вызван не на сервере — " +
-                           "спавн мишеней разрешён только авторитету (§3.2, В17).");
+            GD.PushWarning("WorldSpawner: SpawnTarget вызван на клиенте (или без " +
+                           "NetworkManager) — спавн мишеней разрешён только " +
+                           "авторитету (§3.2, В17).");
             return null;
         }
         var scene = GD.Load<PackedScene>("res://scenes/Target.tscn");
@@ -227,10 +231,12 @@ public partial class WorldSpawner : Node3D
     public int ClearTargets()
     {
         var nm = NetworkManager.Instance;
-        if (nm == null || !nm.IsServer)
+        // Гейт по РОЛИ (как в SpawnTarget): в offline IsServer == false, и кнопка
+        // «Clear Targets» в одиночной игре молча не удаляла мишени.
+        if (nm == null || nm.IsClient)
         {
-            GD.PushWarning("WorldSpawner: ClearTargets вызван не на сервере — " +
-                           "удалять мишени может только авторитет (§3.2).");
+            GD.PushWarning("WorldSpawner: ClearTargets вызван на клиенте (или без " +
+                           "NetworkManager) — удалять мишени может только авторитет (§3.2).");
             return 0;
         }
         int removed = 0;

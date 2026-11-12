@@ -35,6 +35,8 @@ public static class CollisionLayers
     /// <summary>Случайное тело корабля: сталкивается со станцией и мишенями.</summary>
     public const uint ShipMask = Station | Target;
 
-    /// <summary>Хитскан-луч (этап 3): станция + мишени, без корабля и персонажа.</summary>
-    public const uint LaserMask = Station | Target;
+    /// <summary>Хитскан-луч (этап 3 + фикс урона по кораблям): станция + мишени +
+    /// корпуса кораблей (стрельба по станции и чужому кораблю должна наносить
+    /// урон; своё тело снимается через exclude в IntersectRay). Персонаж — нет.</summary>
+    public const uint LaserMask = Station | Target | Ship;
 }
