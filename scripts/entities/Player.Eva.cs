@@ -907,8 +907,15 @@ public partial class Player
         // Дельта мыши → радианы (та же чувствительность, что у скафандра).
         Vector2 mouseRad = _bootsLookAccumPx * EvaMouseSensitivity;
         _bootsLookAccumPx = Vector2.Zero;
-        yawRad += mouseRad.X;
-        pitchRad += mouseRad.Y;
+        // Взгляд как в шутере от первого лица: мышь НЕ инвертирована.
+        //   • вправо (Relative.X > 0) ⇒ персонаж (лицом к −Z) разворачивается
+        //     ПО ЧАСОВОЙ вокруг нормали палубы ⇒ лицо уходит к +X (вправо);
+        //   • вниз (Relative.Y > 0) ⇒ взгляд DOWN (риг крутится вокруг X в минус).
+        // Правка 7-й части: раньше знак был обратный (увод лица влево при
+        // движении мыши вправо) — фиксим только мышонный канал; тестовый
+        // шов `f.LookYaw/LookPitch` остаётся в прежней конвенции.
+        yawRad -= mouseRad.X;
+        pitchRad -= mouseRad.Y;
         // Тестовый шов (InputFrame.Look*): стенды гоняют поворот без мыши.
         Vector2 lookTest = FlightModel.ClampLookRadians(
             new Vector2(f.LookYaw, f.LookPitch), SuitModel.SuitMaxAngularSpeed, dt);

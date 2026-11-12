@@ -238,10 +238,14 @@ public partial class Ship : RigidBody3D
     ///  • мышь (прямой доворот носа) — через `FlightModel.ClampLookRadians`
     ///    в `StepPrediction`;
     ///  • угловую доводку при стыковке и любую внешнюю запись скорости.
-    /// 0 или меньше = без ограничения (так стоят все прогоны, где `Flight`
-    /// собирается вручную: структурный ноль не меняет их числа).
+    /// 0 или меньше = «авто из каталога» (характеристика выбранного типа
+    /// корабля, см. `ShipStatCatalog`) — так стоит по умолчанию, чтобы редактор
+    /// сцены/код не перебивал баланс каталога магическим числом. Ненулевое
+    /// значение, выставленное ДО `AddChild`, — явная настройка: она значима
+    /// только для дефолтного типа сцены (Courier) и переопределяет каталог
+    /// (шов теста п.12: настройка корабля обязана доживать до `Flight`).
     /// </summary>
-    [Export] public float MaxAngularSpeed = 4.5f;
+    [Export] public float MaxAngularSpeed = 0f;
 
     /// <summary>Плечо мыши: радианы поворота носа на 1 пиксель движения мыши.</summary>
     [Export] public float MouseSensitivity = 0.0025f;
@@ -478,7 +482,9 @@ public partial class Ship : RigidBody3D
         SetShipTypeLocal(ShipStatCatalog.FindByByte(Net?.ShipTypeValue
                                                    ?? (byte)ShipType.Courier),
                          fromExportCeiling: false);
-        if (exportCeiling && exportCeilingValue != 6f)
+        // Явная настройка в сцене/кодом (ненулевое значение) приоритетнее
+        // каталога для дефолтного типа Courier; 0 = «взять из каталога».
+        if (exportCeiling && exportCeilingValue > 0f)
         {
             // Ненулевая настройка в сцене/кодом приоритетнее каталога для Courier.
             MaxAngularSpeed = exportCeilingValue;

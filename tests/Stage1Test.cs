@@ -588,9 +588,9 @@ public partial class Stage1Test : Node
                 {
                     Check(Mathf.IsEqualApprox(_ship.Mass, 1200f) &&
                           Mathf.IsEqualApprox(s33.Flight.LinearThrust, 90000f) &&
-                          Mathf.IsEqualApprox(s33.Flight.MaxAngularSpeed, 4.5f),
+                          Mathf.IsEqualApprox(s33.Flight.MaxAngularSpeed, 3.5f),
                           $"обратная смена вернула курьера: mass = {_ship.Mass:F0}, " +
-                          $"thrust = {s33.Flight.LinearThrust:F0}");
+                          $"thrust = {s33.Flight.LinearThrust:F0}, ωmax = {s33.Flight.MaxAngularSpeed:F1} (каталог)");
                     Check(_ship.GetNode<CollisionShape3D>("CollisionShape3D").Shape
                               is BoxShape3D backBox && backBox.Size == new Vector3(2f, 1f, 4f),
                           "обратная смена: коллайдер снова 2×1×4");

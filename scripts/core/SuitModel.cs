@@ -76,7 +76,13 @@ public static class SuitModel
     public const bool RefuelOnAttach = true;   // мгновенная заправка массы при креплении к КОРАБЛЮ
 
     // ── Ботинки (eva-plan §2) ────────────────────────────────────────────────
-    public const float BootsMaxStickDist = 1.0f; // м (ТЗ)
+    // Правка 7-й части: дистанцию магнитного «захвата» палубы подняли с
+    // ТЗ-ных 1.0 м до 2.5 м — раньше ботинки включались только вплотную
+    // (≈1 м) к палубе, игрок не дотягивался до неё с нормальной высоты
+    // шага/прыжка. Константа задаёт и радиус поиска опоры (ActivateBoots:
+    // reach = +0.1), и дальность пробы «есть ли палуба за краем» (+0.3),
+    // и потолок серво-притяжения по нормали (±BootsMaxStickDist м/с).
+    public const float BootsMaxStickDist = 2.5f; // м
     public const float BootsMaxSlopeDeg = 60f;   // ° (ТЗ) — иначе переход невозможен
     public const float BootsWalkSpeed = 3f;      // м/с (дефолт MoveInAttachedPlane)
     public const float BootsStepProbeLen = 1.2f; // м — луч «следующей ступеньки»

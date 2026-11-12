@@ -1416,13 +1416,14 @@ public partial class Stage7Test : Node
         _player.EvaTestFeedBootsLook(new Vector2(400f, 0f));
         _player.EvaTestStep(FlightModel.FixedDt);
         Sync();
-        // Старт Cam0 — Basis=Identity (лицом к +Z), поэтому эталон yaw —
-        // стартовый Z, а не Forward; знак: положительный твист вокруг Up
-        // вращает Z к +X.
+        // Старт Cam0 — Basis=Identity, лицо по конвенции к −Z (нос = −Basis.Z).
+        // Взгляд как в шутере: вброс мыши ВПРАВО (X > 0) разворачивает нос
+        // персонажа к +X (вправо). Это твист вокруг Up на −1 рад, поэтому
+        // Basis.Z уходит к −X: эталон yaw (Atan2 по Z-оси) отрицателен.
         Vector3 bz = _player.GlobalTransform.Basis.Z;
         float yawRad = Mathf.Atan2(bz.X, bz.Z);
-        Check("правка7: дельта мыши X повернула тело ≈1 рад вокруг нормали (FPS)",
-              yawRad > 0.95f && yawRad < 1.05f);
+        Check("правка7: дельта мыши X повернула тело ≈−1 рад вокруг нормали (FPS, нос к +X)",
+              yawRad < -0.95f && yawRad > -1.05f);
         Check("правка7: после FPS-yaw тело перпендикулярно палубе (up·Y>0.999)",
               BodyUp.Dot(Vector3.Up) > 0.999f);
         Vector3 stand = new Vector3(0f, -0.55f + Player.CapsuleHeight * 0.5f
@@ -1431,19 +1432,21 @@ public partial class Stage7Test : Node
               BodyPos.DistanceTo(stand) < 0.05f);
 
         // Pitch (вброс по Y) уходит на CameraRig, НЕ наклоняет тело.
-        _player.EvaTestFeedBootsLook(new Vector2(0f, 200f));   // 0.5 рад
+        // Взгляд как в шутере: вброс мыши ВНИЗ (Y > 0) ⇒ взгляд ВНИЗ ⇒
+        // тангаж рига отрицательный (риг крутится вокруг X в минус).
+        _player.EvaTestFeedBootsLook(new Vector2(0f, 200f));   // −0.5 рад
         _player.EvaTestStep(FlightModel.FixedDt);
         Sync();
-        Check("правка7: дельта мыши Y дала тангаж камеры ≈0.5 рад",
-              Mathf.Abs(_player.EvaTestBootsCamPitch() - 0.5f) < 0.05f);
+        Check("правка7: дельта мыши Y дала тангаж камеры ≈−0.5 рад",
+              Mathf.Abs(_player.EvaTestBootsCamPitch() + 0.5f) < 0.05f);
         Check("правка7: тангаж камеры НЕ наклонил тело (up всё ещё нормаль)",
               BodyUp.Dot(Vector3.Up) > 0.999f);
 
-        // Обрезка потолком 70°.
+        // Обрезка потолком 70° (по модулю; вниз — до −70°).
         _player.EvaTestFeedBootsLook(new Vector2(0f, 100000f));
         _player.EvaTestStep(FlightModel.FixedDt);
         Check("правка7: тангаж обрезан потолком 70°",
-              Mathf.Abs(_player.EvaTestBootsCamPitch() - Mathf.DegToRad(70f)) < 1e-3f);
+              Mathf.Abs(_player.EvaTestBootsCamPitch() + Mathf.DegToRad(70f)) < 1e-3f);
 
         // Straight-модель: без нового вброса дельта нулевая (нет автоповтора
         // курсора, в отличие от позиционного канала джетпака).
