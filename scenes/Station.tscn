@@ -2,8 +2,8 @@
 
 [ext_resource type="Script" uid="uid://c7ypl6lalbt06" path="res://scripts/entities/Station.cs" id="1_station"]
 [ext_resource type="Script" uid="uid://dhexmfk5ftgnr" path="res://scripts/entities/StationState.cs" id="2_stationstate"]
-[ext_resource type="Script" uid="uid://om57jk7hwrnu" path="res://scripts/entities/AttachPoint.cs" id="3_attach"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/StationReplication.tres" id="4_replcfg"]
+[ext_resource type="PackedScene" path="res://scenes/LandingPad.tscn" id="5_landingpad"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_station"]
 height = 40.0
@@ -19,14 +19,6 @@ emission_energy_multiplier = 0.0
 top_radius = 60.0
 bottom_radius = 60.0
 height = 40.0
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_beacon"]
-shading_mode = 0
-albedo_color = Color(0.1, 0.9, 0.3, 1)
-
-[sub_resource type="SphereMesh" id="SphereMesh_beacon"]
-radius = 2.0
-height = 4.0
 
 [node name="Station" type="StaticBody3D" unique_id=1665308744]
 collision_layer = 2
@@ -50,16 +42,8 @@ omni_attenuation = 0.444
 [node name="StationState" type="Node" parent="." unique_id=1627575898]
 script = ExtResource("2_stationstate")
 
-[node name="DockingPoint" type="Node3D" parent="." unique_id=453291434]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 26.55054, 0)
-script = ExtResource("3_attach")
-Kind = 2
-
-[node name="DockBeacon" type="MeshInstance3D" parent="DockingPoint" unique_id=279497286]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3.3205013, 0)
-visible = false
-material_override = SubResource("StandardMaterial3D_beacon")
-mesh = SubResource("SphereMesh_beacon")
+[node name="LandingPad" parent="." instance=ExtResource("5_landingpad")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 20, 0)
 
 [node name="Synchronizer" type="MultiplayerSynchronizer" parent="." unique_id=163452265]
 replication_config = ExtResource("4_replcfg")

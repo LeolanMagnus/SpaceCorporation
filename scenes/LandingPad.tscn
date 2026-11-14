@@ -1,0 +1,90 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://scripts/entities/LandingPad.cs" id="1_pad"]
+[ext_resource type="Script" path="res://scripts/entities/AttachPoint.cs" id="2_attach"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_deck"]
+albedo_color = Color(0.22, 0.26, 0.3, 1)
+metallic = 0.4
+roughness = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_deck"]
+size = Vector3(4.8, 0.2, 4.8)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_deck"]
+size = Vector3(4.8, 0.2, 4.8)
+
+[sub_resource type="BoxMesh" id="BoxMesh_mark"]
+size = Vector3(1.4, 0.04, 0.18)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_mark"]
+shading_mode = 0
+albedo_color = Color(0.95, 0.85, 0.2, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_beacon"]
+shading_mode = 0
+albedo_color = Color(0.1, 0.9, 0.3, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_beacon"]
+radius = 2.0
+height = 4.0
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_zone"]
+size = Vector3(12, 10, 12)
+
+[node name="ПОСАДОЧНАЯ ПЛОЩАДКА S" type="Node3D"]
+script = ExtResource("1_pad")
+
+[node name="Pad" type="StaticBody3D" parent="."]
+collision_layer = 2
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Pad"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 0)
+shape = SubResource("BoxShape3D_deck")
+
+[node name="Deck" type="MeshInstance3D" parent="Pad"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 0)
+material_override = SubResource("StandardMaterial3D_deck")
+mesh = SubResource("BoxMesh_deck")
+
+[node name="MarkN" type="MeshInstance3D" parent="Pad"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.21, -1.9)
+material_override = SubResource("StandardMaterial3D_mark")
+mesh = SubResource("BoxMesh_mark")
+
+[node name="MarkS" type="MeshInstance3D" parent="Pad"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.21, 1.9)
+material_override = SubResource("StandardMaterial3D_mark")
+mesh = SubResource("BoxMesh_mark")
+
+[node name="MarkE" type="MeshInstance3D" parent="Pad"]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 1.9, 0.21, 0)
+material_override = SubResource("StandardMaterial3D_mark")
+mesh = SubResource("BoxMesh_mark")
+
+[node name="MarkW" type="MeshInstance3D" parent="Pad"]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, -1.9, 0.21, 0)
+material_override = SubResource("StandardMaterial3D_mark")
+mesh = SubResource("BoxMesh_mark")
+
+[node name="DockingPoint" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.55054, 0)
+script = ExtResource("2_attach")
+Kind = 2
+
+[node name="DockBeacon" type="MeshInstance3D" parent="DockingPoint"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3.3205013, 0)
+visible = false
+material_override = SubResource("StandardMaterial3D_beacon")
+mesh = SubResource("SphereMesh_beacon")
+
+[node name="LandingZone" type="Area3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.5, 0)
+collision_layer = 16
+collision_mask = 1
+monitoring = true
+monitorable = true
+
+[node name="Shape" type="CollisionShape3D" parent="LandingZone"]
+shape = SubResource("BoxShape3D_zone")

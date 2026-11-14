@@ -11,6 +11,55 @@ public partial class Ship : RigidBody3D
     // предсказание сбрасывается (_hasPrediction=false) и стартует от реплики.
     private bool _clientDockPhaseActive;
 
+    // ==================================================================
+    // Модуль «посадочная площадка»: флаг «посадка» (LandingZone-детекторы)
+    // ==================================================================
+    // Как в X4/Elite Dangerous: посадка привязана к площадке, а не к станции
+    // целиком. Над каждой площадкой (сцена LandingPad.tscn) висит Area3D
+    // детектор; вход корпуса корабля в него выставляет флаг «посадка» —
+    // пилот/интерфейс видят: «мы над площадкой, можно садиться». Счётчик
+    // (а не bool) — чтобы перекрывающиеся зоны нескольких площадок не снимали
+    // флаг раньше времени (выход из одной при входе в другую).
+    private readonly System.Collections.Generic.HashSet<LandingPad> _landingZones = new();
+
+    /// <summary>Флаг «посадка»: корабль внутри детектора хотя бы одной
+    /// посадочной площадки.</summary>
+    public bool IsInLandingZone => _landingZones.Count > 0;
+
+    /// <summary>Площадка, чья зона сейчас «держит» корабль (при пересечении
+    /// нескольких — последняя вошедшая). null вне зон.</summary>
+    public LandingPad? CurrentLandingPad =>
+        _landingZones.Count == 0 ? null : FirstLandingPadOrNull();
+
+    private LandingPad? FirstLandingPadOrNull()
+    {
+        foreach (var p in _landingZones)
+            if (GodotObject.IsInstanceValid(p))
+                return p;
+        return null;
+    }
+
+    /// <summary>Зовёт <see cref="LandingPad"/> при входе корпуса в зону
+    /// детектора. Флаг клиент-сайд-безопасен: каждая сторона знает о контакте
+    /// сама (Area3D работает в своём физмире), репликация не нужна.</summary>
+    public void NotifyLandingZoneEntered(LandingPad pad)
+    {
+        if (_landingZones.Add(pad))
+            DebugInfoBus.Report($"landing: ship#{Net?.ShipNetId ?? 0} flag «посадка» ON " +
+                                $"(pad @ {pad.GlobalPosition}, v = {LinearVelocity.Length():F1})");
+    }
+
+    public void NotifyLandingZoneExited(LandingPad pad)
+    {
+        if (_landingZones.Remove(pad))
+            DebugInfoBus.Report($"landing: ship#{Net?.ShipNetId ?? 0} flag «посадка» OFF " +
+                                $"(zone count = {_landingZones.Count})");
+    }
+
+    /// <summary>Шов автотеста: имитировать вход/выход из зоны площадки.</summary>
+    public void TestEnterLandingZoneForTest(LandingPad pad) => NotifyLandingZoneEntered(pad);
+    public void TestExitLandingZoneForTest(LandingPad pad) => NotifyLandingZoneExited(pad);
+
     /// <summary>Шаг 5.8 (В20): серверная пружина вместо `Joint3D`. У корабля
     /// `CustomIntegrator` — движок `Joint3D` всё равно не читает (§0 п.3),
     /// поэтому доводка считается здесь, в том же `FlightModel`-шаге:

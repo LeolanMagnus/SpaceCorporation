@@ -20,7 +20,7 @@ public partial class Stage5Test
     {
         var nm = NetworkManager.Instance!;
         if (_shipA == null || _station == null) return;
-        var beacon = _station.GetNodeOrNull<MeshInstance3D>("DockingPoint/DockBeacon");
+        var beacon = _station.GetNodeOrNull<MeshInstance3D>("LandingPad/DockingPoint/DockBeacon");
         if (beacon == null) { Check(false, "п.19: DockBeacon есть в сцене"); return; }
 
         // п.19: реплика дописала DockApproved=true у копии станции (так

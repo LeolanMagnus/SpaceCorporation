@@ -366,7 +366,7 @@ public partial class Stage5Test
     {
         var nm = NetworkManager.Instance!;
         if (_shipA == null) return;
-        var beacon = _station!.GetNodeOrNull<MeshInstance3D>("DockingPoint/DockBeacon");
+        var beacon = _station!.GetNodeOrNull<MeshInstance3D>("LandingPad/DockingPoint/DockBeacon");
         Check(beacon != null, "п.18: DockBeacon есть в сцене станции");
         if (beacon == null) return;
         // П.16 снял состояние, но Visible — производное, его гасит _Process
@@ -380,6 +380,23 @@ public partial class Stage5Test
         nm.AbortDock(_shipA.Net!.ShipNetId, "test-p18-cleanup");
         _station._Process(0.0);
         Check(!beacon.Visible, "п.18: после отмены огни снова погашены");
+
+        // Модуль «посадочная площадка»: точка стыковки читается из LandingPad,
+        // и флаг «посадка» ставится швом зоны (детектор над площадкой).
+        var pad = _station.GetNodeOrNull<LandingPad>("LandingPad");
+        Check(pad != null, "п.18b: LandingPad инстансирован в сцене станции");
+        if (pad != null)
+        {
+            Check(pad.LandingPointGlobal == _station.DockPointGlobal,
+                  "п.18b: DockPointGlobal станции = точка зависания площадки");
+            Check(!_shipA.IsInLandingZone, "п.18b: вне зоны флаг «посадка» выключен");
+            _shipA.TestEnterLandingZoneForTest(pad);
+            Check(_shipA.IsInLandingZone && ReferenceEquals(_shipA.CurrentLandingPad, pad),
+                  "п.18b: вход в зону площадки -> флаг «посадка» ON");
+            _shipA.TestExitLandingZoneForTest(pad);
+            Check(!_shipA.IsInLandingZone && _shipA.CurrentLandingPad == null,
+                  "п.18b: выход из зоны -> флаг «посадка» OFF");
+        }
     }
 
     // ──────────────────────────── страховки §3.1 ────────────────────────────

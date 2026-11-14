@@ -544,6 +544,9 @@ public partial class Ship : RigidBody3D
                 // (mode/auth/frozen/HP) не переписаны — assert'ы 3/4 стадий целы.
                 $"dock = {((DockState)(Net?.DockStateValue ?? 0))}, " +
                 $"dockStn = {(Net != null && Net.DockStationNetId != 0 ? Net.DockStationNetId.ToString() : "—")}, " +
+                // Модуль «посадочная площадка»: флаг «посадка» — корабль в зоне
+                // детектора над площадкой (LandingPad/LandingZone).
+                $"landing = {(IsInLandingZone ? "ON" : "OFF")}, " +
                 // frame-plan шаг 10: активная фаза захвата — `cap: #child→#parent
                 // v_rel=(…)` (кадр родителя и локальная скорость в нём). Без
                 // захвата ключа cap в строке нет (не зашумлять панель).

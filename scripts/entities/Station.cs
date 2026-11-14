@@ -33,10 +33,24 @@ public partial class Station : StaticBody3D
     /// <summary>«Огни горят» для корабля DockerNetId.</summary>
     public bool DockApproved => State?.DockApproved ?? false;
 
-    /// <summary>Точка стыковки из сцены (шаг 5.6: гейты «в зоне»/пружины).
-    /// Если узла нет (неполная сцена) — центр станции: безопасный fallback.</summary>
-    public Vector3 DockPointGlobal =>
-        (GetNodeOrNull<Node3D>("DockingPoint") ?? (Node3D)this).GlobalPosition;
+    /// <summary>Посадочная площадка станции (модуль стыковки). Станция принимает
+    /// посадку только там, где стоит <see cref="LandingPad"/>; если площадок
+    /// несколько — ближайшая к кораблю выбирается в <see cref="DockPointGlobal"/>.</summary>
+    public LandingPad? LandingPad => GetNodeOrNull<LandingPad>("LandingPad");
+
+    /// <summary>Точка стыковки (шаг 5.6: гейты «в зоне»/пружины). Читается из
+    /// посадочной площадки (модуль «стыковка»); fallback на старую точку
+    /// DockingPoint и центр станции — для неполных сцен/стендов.</summary>
+    public Vector3 DockPointGlobal
+    {
+        get
+        {
+            var pad = GetNodeOrNull<LandingPad>("LandingPad");
+            if (pad != null)
+                return pad.LandingPointGlobal;
+            return (GetNodeOrNull<Node3D>("DockingPoint") ?? (Node3D)this).GlobalPosition;
+        }
+    }
 
     /// <summary>
     /// Единственный путь записи dock-полей станции (шаг 5.2): пишет только
@@ -69,8 +83,8 @@ public partial class Station : StaticBody3D
     {
         // Станция спавнится сервером в начале мира (шаг 4.3); своей физики/симуляции
         // у неё нет — только существование, коллизия и адрес.
-        // Шаг 5.7: «огни» — маркер видимости разрешения.
-        _beacon = GetNodeOrNull<MeshInstance3D>("DockingPoint/DockBeacon");
+        // Шаг 5.7 + рефакторинг «посадочная площадка»: маяк «огней» переехал на
+        // модуль LandingPad (его _Process красит маяк по DockApproved-реплике).
 
         // Шаг 5.13 (п.35): dock-состояние станции в панели дебаг-инфы. Ключ —
         // Station#{StationNetId}, как Ship#{ShipNetId} (§3.1 п.6).
@@ -87,18 +101,11 @@ public partial class Station : StaticBody3D
         DebugInfoBus.RemoveInfoSource($"Station#{State?.StationNetId ?? 0}");
     }
 
-    private MeshInstance3D? _beacon;
-
-    /// <summary>Шаг 5.7: «огни» — производное от реплицируемого DockApproved.
-    /// НЕ второй транспорт и не RPC: у клиентов маркер загорается сам, из
-    /// реплики свойства (п.6 блока A, тесты п.18-п.20).</summary>
+    /// <summary>Шаг 5.7 + модуль «посадочная площадка»: «огни горят» — маяк
+    /// переехал на LandingPad, но seam остался на станции (тесты п.18–п.20
+    /// дёргают `_station._Process`); станция делегирует кадр площадке.</summary>
     public override void _Process(double delta)
     {
-        if (_beacon != null)
-        {
-            bool on = DockApproved;
-            if (_beacon.Visible != on)
-                _beacon.Visible = on;
-        }
+        GetNodeOrNull<LandingPad>("LandingPad")?._Process(delta);
     }
 }
