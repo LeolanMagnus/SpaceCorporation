@@ -33,6 +33,14 @@ public partial class Ship : RigidBody3D
     /// <summary>Новая линейная скорость после упругого отскока (валидна, если
     /// <see cref="_collisionApplied"/>).</summary>
     private Vector3 _collisionOutVelocity;
+    /// <summary>Порог «осмысленной» угловой скорости, рад/с. Экспоненциальное
+    /// демпфирование модели асимптотически, поэтому через десятки секунд
+    /// «свободного» вращения в <c>AngularVelocity</c> остаётся денормально малое
+    /// ω ≠ 0. Такое ω нельзя нормализовать (<c>Vector3.Normalized()</c> отдаёт
+    /// Zero у слишком коротких векторов, а <c>Quaternion(axis, angle)</c> с
+    /// нулевой осью бросает исключение) и бессмысленно физически:
+    /// 1e-6 рад/с — полный оборот за ~6 суток. Ниже порога ω считаем нулём.</summary>
+    private const float MinAngularSpeed = 1e-6f;
 
     /// <summary>
     /// Собственный интегратор. Вызывается только там, где включён
@@ -79,15 +87,28 @@ public partial class Ship : RigidBody3D
         // модели, по которой клиент предсказывает и сервер переигрывает
         // (шаг 2.4) — рассинхрон предсказания на вращении. Отменяем тем же
         // трюком, что и снос позиции: обратный поворот на ω·dt вокруг оси w0.
-        if (w0 != Vector3.Zero)
-            start.Basis = new Basis(new Quaternion(w0.Normalized(), -w0.Length() * dt)) * start.Basis;
+        // Порог, а не сравнение с нулём: Godot `Vector3.Normalized()` возвращает
+        // нулевой вектор у «слишком коротких» векторов, а `Quaternion(axis, angle)`
+        // бросает ArgumentException наненормализованной оси. Демпфирование модели
+        // (умножение на exp и τ-спад) никогда не обнуляет ω ровно — через
+        // десятки секунд остаётся денормально малое ω ≠ 0, «не нулевое» сравнение
+        // проходило, Normalized() давал Zero и интегратор падал ИСКЛЮЧЕНИЕМ ДО
+        // шага модели и записей в sd: тяга и вращение переставали применяться
+        // вовсе («пропало управление вращением»), а линейно корабль продолжал
+        // по инерции (пред-интегрирование движка осталось неотменённым).
+        float w0Len = w0.Length();
+        if (w0Len > MinAngularSpeed)
+            start.Basis = new Basis(new Quaternion(w0 / w0Len, -w0Len * dt)) * start.Basis;
 
         FlightState s = new FlightState
         {
             Position = start.Origin,
             Rotation = start.Basis.GetRotationQuaternion(),
             LinearVelocity = v0,
-            AngularVelocity = sd.AngularVelocity,
+            // Санитайзер: денормально малое ω (меньше порога) считаем нулём —
+            // иначе оно переживает шаг модели (экспонента от него тоже не ноль)
+            // и навсегда остаётся в теле.
+            AngularVelocity = w0Len > MinAngularSpeed ? w0 : Vector3.Zero,
         };
 
         // --- 2. Ввод пилота за этот шаг + шаг модели + тик ---
@@ -106,7 +127,10 @@ public partial class Ship : RigidBody3D
         // --- 3. Запись в тело (финальна для шага) ---
         sd.Transform = new Transform3D(new Basis(n.Rotation), n.Position);
         sd.LinearVelocity = n.LinearVelocity;
-        sd.AngularVelocity = n.AngularVelocity;
+        // Тот же санитайзер на записи: денормальное «хвостовое» ω не должно
+        // оседать в теле — иначе следующий шаг снова прочитает его на входе.
+        sd.AngularVelocity = n.AngularVelocity.LengthSquared() > MinAngularSpeed * MinAngularSpeed
+            ? n.AngularVelocity : Vector3.Zero;
     }
 
     /// <summary>Общая часть шага: мышь → ориентация, кадр ввода → тяга, тик.
