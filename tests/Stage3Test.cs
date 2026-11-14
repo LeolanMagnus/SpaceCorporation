@@ -180,17 +180,19 @@ public partial class Stage3Test : Node
                 _pilotShip!.TestFireRequest();
                 var beam = _pilotShip.GetNodeOrNull<Node3D>("BeamVisual");
                 Check(beam != null, "п.17: после TestFireRequest() в дереве корабля живой узел луча (BeamVisual)");
-                _beamWait = 0.25; // больше AimingBeamLifetime (0.2) — узел должен удалиться сам
+                _beamWait = 0.15; // этап 6 п.3: больше ПОЛОВИНЫ AimingBeamLifetime (0.1),
+                                  // меньше полной (0.2) — проходит только при множителе *0.5
                 _phase = Phase.P17Wait;
                 break;
             }
             case Phase.P17Wait:
             {
-                // Ждём истечения AimingBeamLifetime в реальном времени.
+                // Ждём истечения ПОЛОВИНЫ AimingBeamLifetime в реальном времени:
+                //assert фиксирует, что линия живёт вдвое короче базовой (9dec6eb).
                 _beamWait -= delta;
                 if (_beamWait > 0) break;
                 var beam = _pilotShip!.GetNodeOrNull<Node3D>("BeamVisual");
-                Check(beam == null, "п.17: через 0.2 с (AimingBeamLifetime) узел луча удалён сам");
+                Check(beam == null, "п.17: через 0.15 с (> AimingBeamLifetime*0.5=0.1, < 0.2) узел луча удалён сам — линия вдвое короче базовой");
                 _phase = Phase.P17Interact;
                 break;
             }
@@ -432,11 +434,12 @@ public partial class Stage3Test : Node
             // ─── шаг 3.6: п.24-п.25 — урон, уничтожение, «мишени нет в реестре» ──
             case Phase.P24:
             {
-                // п.24: одна мишень на трассе, 4 выстрела подряд (FireDamage=25,
-                // MaxHp=100 → 4×25=100 → Hp==0 → сервер QueueFree). Pending-очередь
-                // чиста (выстрелы п.21-23 уже исполнены), слушатель HitConfirmed
-                // висит с п.21.
-                _pilotShip!.FireCooldownSec = 0f; // 4 выстрела в одном кадровом окне
+                // п.24: одна мишень на трассе, 5 выстрелов подряд. Этап 6 шаг 4:
+                // у корабля теперь лазерная ТУРЕЛЬ (WeaponCatalog, HullDamage=20),
+                // а не базовые 25: MaxHp=100 → 5×20=100 → Hp==0 → сервер QueueFree.
+                // Pending-очередь чиста (выстрелы п.21-23 уже исполнены), слушатель
+                // HitConfirmed висит с п.21.
+                _pilotShip!.FireCooldownSec = 0f; // 5 выстрелов в одном кадровом окне
                 Vector3 fwd = -_pilotShip.GlobalTransform.Basis.Z;
                 var ts = _spawner!.SpawnTarget(_pilotShip.GlobalPosition + fwd * 10f);
                 Check(ts != null, "п.24: мишень заспавнена на трассе");
@@ -455,6 +458,11 @@ public partial class Stage3Test : Node
                 var t = _arenaTargets.Count > 0 ? _arenaTargets[0] : null;
                 Check(t != null && t.TargetNetId != 0 && t.Hp == t.MaxHp,
                       "п.24: мишень жива до обстрела (Hp == MaxHp)");
+                // Энергогейт орудия (этап 6 шаг 4/5) не должен ломать проверки
+                // п.24/п.25 — они про последовательность урона и игнор призрака,
+                // а не про буфер реактора. Перед обстрелом поднимаем буфер до
+                // упора (после п.18-23 пилот уже израсходовал ~50 энергии).
+                FullEnergy(_pilotShip!);
                 _p24Id = t?.TargetNetId ?? 0;
                 _p24Root = t?.GetParent();
                 _hitsBaseline = _hitCount;
@@ -473,14 +481,14 @@ public partial class Stage3Test : Node
                 Vector3 fwd = -_pilotShip.GlobalTransform.Basis.Z;
                 Vector3 aim = _pilotShip.GlobalPosition + fwd * 1000f;
                 int accepted = 0;
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < 5; i++)
                 {
                     if (_pilotShip.TestFire(_pilotShip.PilotPeerId, (uint)(24 + i), aim))
                         accepted++;
                 }
-                Check(accepted == 4,
-                      $"п.24: все 4 выстрела приняты гейтами (принято {accepted})");
-                _wait = 3; // 3 кадра: хитскан в _PhysicsProcess + QueueFree +
+                Check(accepted == 5,
+                      $"п.24: все 5 выстрелов приняты гейтами (принято {accepted})");
+                _wait = 4; // 4 кадра: хитскан в _PhysicsProcess + QueueFree +
                            // _ExitTree-реестр + пропуск кадра на всякий случай
                 _phase = Phase.P24Wait2;
                 break;
@@ -492,14 +500,14 @@ public partial class Stage3Test : Node
             case Phase.P24Assert:
             {
                 var nm = NetworkManager.Instance!;
-                Check(_hitCount == _hitsBaseline + 4,
-                      $"п.24: 4 подтверждения попадания (было {_hitsBaseline}, " +
+                Check(_hitCount == _hitsBaseline + 5,
+                      $"п.24: 5 подтверждений попадания (было {_hitsBaseline}, " +
                       $"стало {_hitCount})");
-                Check(_pilotShip!.HitsRegistered == _hitsRegBaseline + 4,
-                      $"п.24: HitsRegistered вырос на 4 (было {_hitsRegBaseline}, " +
+                Check(_pilotShip!.HitsRegistered == _hitsRegBaseline + 5,
+                      $"п.24: HitsRegistered вырос на 5 (было {_hitsRegBaseline}, " +
                       $"стало {_pilotShip.HitsRegistered})");
-                Check(_p24HpSeq == "75/50/25/0",
-                      $"п.24: HP после каждого урона 75/50/25/0 (получено {_p24HpSeq})");
+                Check(_p24HpSeq == "80/60/40/20/0",
+                      $"п.24: HP после каждого урона 80/60/40/20/0 (получено {_p24HpSeq})");
                 Check(_p24Root != null && !GodotObject.IsInstanceValid(_p24Root),
                       "п.24: узел мишени удалён сервером (QueueFree отработал)");
                 Check(nm.FindTarget(_p24Id) == null,
@@ -565,9 +573,15 @@ public partial class Stage3Test : Node
                 _hitsBaseline = _hitCount;
                 _hitsRegBaseline = _pilotShip!.HitsRegistered;
                 _ghostBase = _pilotShip.GhostHitsIgnored;
+                // Энергогейт не относится к проверке «игнор призрака» (этап 6 шаг
+                // 5): после обстрела п.24 (5×10=50) буфер мог просесть ниже цены
+                // выстрела — поднимаем до упора, чтобы выстрел дошёл до трассировки.
+                FullEnergy(_pilotShip);
                 Vector3 fwd = -_pilotShip.GlobalTransform.Basis.Z;
                 Vector3 aim = _pilotShip.GlobalPosition + fwd * 1000f;
-                bool ok = _pilotShip.TestFire(_pilotShip.PilotPeerId, 28u, aim);
+                // Тик 29u: п.24 занял монотонные тики 24..28 (5 выстрелов турели),
+                // монотонный гейт В17 отклонил бы дубликат/устаревший 28u.
+                bool ok = _pilotShip.TestFire(_pilotShip.PilotPeerId, 29u, aim);
                 Check(ok, "п.25: выстрел в призрак принят гейтами");
                 _wait = 4;
                 _phase = Phase.P25Assert;
@@ -867,6 +881,18 @@ public partial class Stage3Test : Node
     }
 
     // ------------------------------------------------------------- утилиты
+    /// <summary>Поднять энергобуфер орудия корабля-авторитета до упора.
+    /// Энергогейт (этап 6 шаг 5) не относится к проверкам урона/призрака
+    /// п.24/п.25 — после обстрелов буфер проседает ниже цены выстрела, и
+    /// гейт отклоняет выстрел раньше трассировки. Тест авторитетен (headless),
+    /// поэтому запись `Energy` разрешена (GuardWrite не ругается).</summary>
+    private static void FullEnergy(Ship ship)
+    {
+        var h = ship.GetNodeOrNull<ShipHealthState>("ShipHealthState");
+        if (h != null)
+            h.Energy = h.MaxEnergy;
+    }
+
     private void Check(bool ok, string what)
     {
         _checks++;

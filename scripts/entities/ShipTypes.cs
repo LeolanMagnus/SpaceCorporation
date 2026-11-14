@@ -56,9 +56,16 @@ public sealed class ShipTypeSpec
     /// в эти детали корабль «входит» freely, это заглушка до art-моделей.</summary>
     public readonly (Vector3 Offset, Vector3 Size, Color Color)[] Accessories;
 
+    /// <summary>Тип орудия корабля (этап 6, фикс стрельбы): все расчёты огня
+    /// (урон щиту/корпусу, дальность, энергия на выстрел, скорострельность)
+    /// ведутся по записи <see cref="WeaponCatalog.Find"/> от этого типа.
+    /// По умолчанию — лазерная турель (единственный тип на сегодня).</summary>
+    public readonly WeaponType Weapon;
+
     public ShipTypeSpec(ShipType type, string displayName, float mass,
                         FlightParams @base, Vector3 hullSize, Color hullColor,
-                        (Vector3 Offset, Vector3 Size, Color Color)[]? accessories = null)
+                        (Vector3 Offset, Vector3 Size, Color Color)[]? accessories = null,
+                        WeaponType weapon = WeaponCatalog.DefaultWeapon)
     {
         Type = type;
         DisplayName = displayName;
@@ -67,6 +74,7 @@ public sealed class ShipTypeSpec
         HullSize = hullSize;
         HullColor = hullColor;
         Accessories = accessories ?? System.Array.Empty<(Vector3, Vector3, Color)>();
+        Weapon = weapon;
     }
 }
 
@@ -113,6 +121,10 @@ public static class ShipStatCatalog
                 // обе стороны. Демпфер остаётся на случай кораблей без τ.
                 AngularDamping = 1.5f,
                 BoostMultiplier = 2f,
+                // ЭТАП 6, баг «скорость вращения не соответствует ShipType»:
+                // значение рассинхронизировалось с замыслом — комментарий и тест
+                // Stage1Test п.33 ждут юркий потолок 3.5 рад/с, а в код вкралось
+                // 0.5f (курьер крутился как неповоротливый). Возвращаем задуманное.
                 MaxAngularSpeed = 3.5f,
                 // Юркий: до своего предела вращения (3.5 рад/с) — быстро
                 // полсекунды; дальше скорость держится на плато, пока зажато
@@ -134,7 +146,10 @@ public static class ShipStatCatalog
                  new Color(0.75f, 0.62f, 0.08f)),
                 (new Vector3(0.8f, 0f, 1.5f), new Vector3(0.2f, 0.8f, 0.9f),
                  new Color(0.75f, 0.62f, 0.08f)),
-            }),
+            },
+            // Стартовый корабль игрока — вооружён лазерной турелью (этап 6,
+            // фикс стрельбы): все расчёты огня идут по WeaponCatalog.
+            weapon: WeaponType.LaserTurret),
 
         new ShipTypeSpec(
             ShipType.Hauler, "Hauler (грузовик)",

@@ -183,6 +183,10 @@ public partial class Ship : RigidBody3D
 
         LinearDamp = spec.Base.LinearDamping;
         AngularDamp = spec.Base.AngularDamping;
+
+        // Этап 6, шаг 4: орудие типа — дальность/интервал/урон хитскана живут
+        // в спецификации оружия (`WeaponTypes.cs`), зеркалятся в рабочие поля.
+        ApplyWeaponSpec(WeaponCatalog.Find(spec.Weapon));
     }
 
     /// <summary>Пересобрать навесные примитивы силуэта корпуса (чистая картинка,

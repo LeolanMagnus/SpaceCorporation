@@ -418,8 +418,15 @@ public partial class Ship : RigidBody3D
             // ловушка существует только у локального пилота (EnsureMouseCatcher),
             // но гейт на всякий случай продублирован внутри — шов теста дёргает
             // RequestFire напрямую, минуя мышь.
+            // Этап 6, шаг 5: Pressed стреляет сразу и поднимает флаг автоогня
+            // (темп держит кулдаун TryFire); Released флаг снимает.
             if (@event.IsActionPressed("fire"))
+            {
+                _ship.SetFireHeld(true);
                 _ship.RequestFire();
+            }
+            else if (@event.IsActionReleased("fire"))
+                _ship.SetFireHeld(false);
         }
     }
 

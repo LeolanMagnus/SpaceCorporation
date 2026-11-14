@@ -63,8 +63,9 @@ public struct FlightState
 /// <summary>
 /// Параметры движения корабля (stage2-plan §1.1). Значения — настройки МОДЕЛИ, а
 /// не движка: при `CustomIntegrator = true` движок не применяет ни демпфирование,
-/// ни гравитацию (пробы `tests/probes/probe_custom_integrator.*`,
-/// `probe_ci_angular.*`), поэтому всё считает `FlightModel`.
+/// ни гравитацию (пробы `tests/probes/probe_custom_integrator.*`),
+/// но сдвигает и вращает тело скоростями прошлого шага — см. `Ship.Physics.cs`,
+/// поэтому всё считает `FlightModel`.
 /// </summary>
 public struct FlightParams
 {
@@ -335,19 +336,49 @@ public static class FlightModel
             // исполнителей (без множителя длины ввода) и в наборе, и в остановке
             // — иначе времена сторон разошлись бы.
             float aMax = angAccelScale; // ускорение от полной команды, с форсажем
-            float tau = tauCmd;
-            if (aMax > 0f)
-            {
-                float tauActuator = p.MaxAngularSpeed / aMax;
-                tau = Mathf.Max(tauCmd, tauActuator);
-            }
-            float decay = tau > 0f ? Mathf.Exp(-dt / tau) : 0f;
             // Команда: зажатая клавиша — на потолок (одиночная даёт ровно 1,
             // диагональ нормализована выше), отпущенные клавиши — торможение
             // реверсом до нуля, тем же законом и за то же время.
-            Vector3 wCmd = localTorque.LengthSquared() > 0f
-                ? basis * localTorque.Normalized() * p.MaxAngularSpeed
-                : Vector3.Zero;
+            //
+            // Мышиный канал (шаг 5.х): в режиме следования доворот курсором —
+            // ТОТ ЖЕ руль, что и клавиши момента, только аналоговый. `ApplyLookRadians`
+            // в режиме B доворачивает нос прямой дозаписью (там нет потолков и τ),
+            // но в режиме A это давало бы мгновенный доворот на всём потолке
+            // `MaxAngularSpeed` в обход `AngularRiseTime` — курьер крутил бы нос
+            // в 4 раза отзывчивее, чем обещано каталогом. Поэтому look превращается
+            // в КОМАНДНУЮ угловую скорость: кадр несёт радианы за шаг (команда
+            // `PilotInput.LookRadiansPerStep` уже урезана `ClampLookRadians` до
+            // cap·dt), делим на dt → локальные оси (тангаж X, рыскание Y — знаки
+            // те же, что в `ApplyLookRadians`: поворот на (−pitch вокруг X, −yaw
+            // вокруг Y)), и ω догоняет её той же τ, что и клавиши. Состояние —
+            // сам `AngularVelocity`: новых полей в кадре/состоянии нет, реконсиляция
+            // и реплей кадров работают как раньше. Клавиши момента (если зажаты)
+            // перекрывают мышь: бинарная команда сильнее аналоговой.
+            Vector3 wCmd;
+            if (localTorque.LengthSquared() > 0f)
+                wCmd = basis * localTorque.Normalized() * p.MaxAngularSpeed;
+            else if (f.LookYaw != 0f || f.LookPitch != 0f)
+            {
+                Vector3 cmdLocal = new Vector3(-f.LookPitch, -f.LookYaw, 0f) / dt;
+                if (cmdLocal.LengthSquared() > p.MaxAngularSpeed * p.MaxAngularSpeed)
+                    cmdLocal = cmdLocal.Normalized() * p.MaxAngularSpeed;
+                wCmd = basis * cmdLocal;
+            }
+            else wCmd = Vector3.Zero;
+
+            // Предел исполнителей — по фактической команде (для клавиш это ровно
+            // потолок рамы, как раньше; для мыши — её собственный |ωcmd| ≤ потолок,
+            // чтобы аналоговая команда не наказывалась τ от полного хода). В
+            // остановке (команда ноль) предел считается по текущей ω: иначе спад
+            // шёл бы быстрее набора и симметрия времёй, которую обещает п.12b,
+            // нарушалась бы на рамах, где предел сопел круче обещания дизайнера.
+            float tau = tauCmd;
+            if (aMax > 0f)
+            {
+                float cmdMag = Mathf.Max(wCmd.Length(), s.AngularVelocity.Length());
+                if (cmdMag > 0f) tau = Mathf.Max(tauCmd, cmdMag / aMax);
+            }
+            float decay = tau > 0f ? Mathf.Exp(-dt / tau) : 0f;
             n.AngularVelocity = wCmd + (s.AngularVelocity - wCmd) * decay;
         }
         else

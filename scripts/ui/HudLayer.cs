@@ -131,6 +131,9 @@ public partial class HudLayer : CanvasLayer
 
         _targeting = GetNode<TargetingService>("TargetingService");
         _targetMarker = GetNode<TargetOverlay>("HudRoot/TargetOverlay");
+        // Баг «выделение в локе в режиме пилотирования»: клик-выделение целей
+        // живёт только в режиме взаимодействия — ворота по локальному кораблю.
+        _targetMarker.LocalShipGate = GetMyShip;
         _reticle = GetNode<AimReticle>("HudRoot/AimReticle");
 
         // Подсказка посадки над перекрестием (создаётся кодом — она не несут
@@ -182,6 +185,8 @@ public partial class HudLayer : CanvasLayer
         _radarView.Source = _radarSource;
         _radarView.Targeting = _targeting;
         _radarSource.TargetingServiceRef = _targeting;
+        // Ворота режима для клик-выбора по блипам (см. LocalShipGate у панели).
+        _radarView.LocalShipGate = GetMyShip;
     }
 
     private void SetPanelStyle(string path)
@@ -207,6 +212,10 @@ public partial class HudLayer : CanvasLayer
         else if (@event.IsActionPressed("target_cycle"))
         {
             // Tab — цикл целей (H3). Сервис живёт рядом на HudLayer.
+            // Баг «лок-он в режиме пилотирования»: смена цели — только в
+            // режиме взаимодействия (в полёте Tab лок-он не ставит).
+            Ship? mineC = GetMyShip();
+            if (mineC != null && !mineC.IsInteractionMode) return;
             _targeting.CycleNext();
             _targetMarker.QueueRedraw();
             GetViewport().SetInputAsHandled();

@@ -20,8 +20,9 @@ namespace SpaceCorporation;
 ///    с живой позиции узла (плавнее) и получает подпись имени+дистанции (LblTargetInfo).
 ///
 /// Захват кликом: ЛКМ по внутренней части квадрата цели на экране либо по
-/// квадрату-метке у края → TargetingService.Select. Работает только при видимом
-/// курсоре (режим взаимодействия): в пилоте мышь захвачена и ЛКМ = выстрел.
+/// квадрату-метке у края → TargetingService.Select. Работает только в режиме
+/// взаимодействия локального корабля (`LocalShipGate`; раньше гейтился видимым
+/// курсором — с пилотированием 2.0 это сломалось: там курсор тоже виден).
 ///
 /// Весь внешний вид настраивается ресурсом <see cref="LockMarkerSkin"/> (Skin в
 /// инспекторе) — чтобы привести UI к единому дизайну/цвету без правки кода.
@@ -38,6 +39,12 @@ public partial class TargetOverlay : Control
     private RadarSource _radar = null!;
     private Label _lbl = null!;
     private bool _labelsOn;
+
+    /// <summary>Ворота «локальный корабль пилота» для кликов-выделений (баг:
+    /// лок-он ставился в режиме пилота). HudLayer назначает `GetMyShip`;
+    /// null = нет локального корабля → клики работают по-прежнему
+    /// (наблюдатель/EVA/headless-сьюты).</summary>
+    public System.Func<Ship?>? LocalShipGate;
 
     // Панель данных залоканной цели (HP/щит/скорость) — строится кодом,
     // вся типографика/цвета берутся из Skin (единый редактируемый дизайн).
@@ -563,9 +570,15 @@ public partial class TargetOverlay : Control
     public override void _UnhandledInput(InputEvent e)
     {
         if (!Visible) return;
-        // Только в режиме взаимодействия (курсор виден): в пилоте мышь
-        // захвачена и ЛКМ = выстрел — оверлей не должен мешать.
-        if (Input.MouseMode != Input.MouseModeEnum.Visible) return;
+        // Только в режиме взаимодействия. СТАРАЯ правка гейтила курсором
+        // (`Input.MouseMode == Visible`), но с пилотированием 2.0 это неверно:
+        // там курсор тоже свободен и виден (он и есть прицел), ЛКМ = выстрел,
+        // и клик по рамке цели в мире ставил лок-он прямо во время полёта.
+        // Теперь гейт — явный режим локального корабля (баг «выделение в локе
+        // в режиме пилотирования»): без локального корабля (наблюдатель/EVA,
+        // headless-сьюты) прежнее поведение сохраняется.
+        Ship? mine = LocalShipGate?.Invoke();
+        if (mine != null && !mine.IsInteractionMode) return;
         if (e is not InputEventMouseButton mb || !mb.Pressed || mb.ButtonIndex != MouseButton.Left)
             return;
 

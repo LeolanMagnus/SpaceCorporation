@@ -435,10 +435,17 @@ public partial class RadarPanel : Control
         return p;
     }
 
-    /// <summary>Клик по блипу → цель (блип в ClickRadius px от курсора).</summary>
+    /// <summary>Клик по блипу → цель (блип в ClickRadius px от курсора).
+    /// Ворота режима (баг «лок-он в пилоте»): HudLayer назначает функцию
+    /// локального корабля; в режиме пилота клик по радару цель не выделяет.</summary>
+    public System.Func<Ship?>? LocalShipGate;
+
     private void ClickSelect(Vector2 at)
     {
         if (Targeting == null)
+            return;
+        Ship? mine = LocalShipGate?.Invoke();
+        if (mine != null && !mine.IsInteractionMode)
             return;
         int id = HitTestBlipId(at);
         if (id != 0)

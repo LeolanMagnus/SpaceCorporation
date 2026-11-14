@@ -101,6 +101,46 @@ public partial class ShipHealthState : Node
     /// <summary>Максимум щита (0 — щита нет).</summary>
     [Export] public int MaxShield { get; set; } = 100;
 
+    private int _energy = 100;
+    /// <summary>Энергобуфер орудия (этап 6, фикс стрельбы): каждый выстрел
+    /// стоит <see cref="WeaponSpec.EnergyCost"/>; недобор — выстрела нет.
+    /// Пишет только авторитет (как Hp/Щит): сервер списывает при принятом
+    /// выстреле и же регенит в своём `_PhysicsProcess` (реактор).</summary>
+    [Export] public int Energy
+    {
+        get => _energy;
+        set
+        {
+            GuardWrite(nameof(Energy), value.ToString());
+            _energy = value;
+        }
+    }
+
+    /// <summary>Ёмкость энергобуфера (реген до этого предела).</summary>
+    [Export] public int MaxEnergy { get; set; } = 100;
+
+    /// <summary>Сколько энергии восстанавливает реактор в секунду (серверный
+    /// интегратор; не реплицируется — баланс одинаков у всех).</summary>
+    [Export] public float EnergyRegenPerSec { get; set; } = 20f;
+
+    private double _energyAccum; // дробитель регена (сервер)
+
+    /// <summary>Серверный тик регена энергии (зовётся из `_PhysicsProcess`
+    /// авторитета, сразу после хитскана). Накопление дробей — чтобы реген
+    /// 20/с при 60 Гц не терял хвосты (аккумулятор дробной части).</summary>
+    public void TickEnergyRegen(double delta)
+    {
+        if (MaxEnergy <= 0)
+            return;
+        _energyAccum += EnergyRegenPerSec * delta;
+        int whole = (int)_energyAccum;
+        if (whole <= 0)
+            return;
+        _energyAccum -= whole;
+        if (Energy < MaxEnergy)
+            Energy = Mathf.Min(MaxEnergy, Energy + whole);
+    }
+
     private double _lastDamageTimeSec;
     /// <summary>Время последнего урона (сек, `Time.GetTicksMsec()/1000`) — для
     /// паузы перед восстановлением щита. Серверное поле.</summary>

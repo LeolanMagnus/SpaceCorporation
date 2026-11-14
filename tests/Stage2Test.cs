@@ -525,6 +525,13 @@ public partial class Stage2Test : Node3D
 
     private Quaternion _mRot;
     private float _mYawBefore;
+    // Шаг 5.х (доворот мышью через ω): кадры удержания курсора, ω на входе в
+    // слепую зону и предыдущее |ω| для проверки монотонного спада.
+    private int _mTurnFrames;
+    private float _mDzW0;
+    private float _mDzPrevW;
+    private Vector3 _mDzFwd0;
+    private float _mDzInteg;
     // Пилотирование 2.0: позиции курсора-прицела (полная скорость / слепая зона).
     private Vector2 _mAimCursor;
     private Vector2 _mAimDz;
@@ -756,16 +763,50 @@ public partial class Stage2Test : Node3D
                 Check(dyaw < -1e-3f,
                     $"п.6b: курсор справа от центра довернул нос (Δyaw={dyaw:F4} рад, " +
                     "нос уходит влево — знак как в дельтовой модели)");
+                // Шаг 5.х: доворот мышью — ТОТ ЖЕ руль, что клавиши момента:
+                // командная ω догоняется по τ (`AngularRiseTime`), поэтому за
+                // 2 кадра нос не может уйти на всю команду (2·fullPerStep =
+                // 0.117 рад). Прямая дозапись ориентации (старый вид) давала бы
+                // сюда почти всю команду сразу — вот от этого мы и ушли.
+                Check(AngleBetween(_mRot, _ship.GlobalTransform.Basis.GetRotationQuaternion())
+                        < 2f * fullPerStep * 0.5f,
+                    $"п.6b: за 2 кадра доворот НЕ мгновенный (разгон через ω, " +
+                    $"как с клавиш): {AngleBetween(_mRot, _ship.GlobalTransform.Basis.GetRotationQuaternion()):F4} рад " +
+                    $"< {2f * fullPerStep * 0.5f:F4}");
+                float wNow = _ship.AngularVelocity.Length();
+                Check(wNow > 0f && wNow <= _ship.MaxAngularSpeed + 1e-3f,
+                    $"п.6b: доворот мышью идёт ЧЕРЕЗ ω и под потолком рамы " +
+                    $"(|w| = {wNow:F3} ≤ {_ship.MaxAngularSpeed})");
+                _mTurnFrames = 2;
+                _pilotStep = 10; // дождаться выхода на потолок (~AngularRiseTime)
+                return;
+            }
+
+            case 10:
+            {
+                // Держим курсор за окружностью ещё ~0.7 с (курьер: τ = 0.2 с ⇒
+                // 95% потолка за AngularRiseTime = 0.6 с = 36 кадров). Нос обязан
+                // довернуться существенно И встать на потолок ω — т.е. мышь
+                // ограничена теми же числами каталога, что и клавиши (п.12b).
+                _mTurnFrames++;
+                if (_pilotFrames < 36) return;
+                float w = _ship.AngularVelocity.Length();
                 Check(AngleBetween(_mRot, _ship.GlobalTransform.Basis.GetRotationQuaternion()) > 0.02f,
                     "п.6b: ориентация корпуса реально изменилась от позиции курсора");
+                Check(w > 0.95f * _ship.MaxAngularSpeed &&
+                      w <= _ship.MaxAngularSpeed + 1e-3f,
+                    $"п.6b: через {(_mTurnFrames - 2) * FlightModel.FixedDt:F2} с доворот встал " +
+                    $"на потолок рамы (|w| = {w:F3} ≈ {_ship.MaxAngularSpeed}, " +
+                    $"AngularRiseTime = {_ship.Flight.AngularRiseTime})");
 
                 // СЛЕПАЯ ЗОНА: ставим курсор вплотную к центру (r = dz/2) —
-                // доворот обязан пропасть, команда ввода = 0. Поворот — ПРЯМАЯ
-                // дозапись ориентации (ApplyLookRadians), угловой скорости не
-                // копится: стоит обнулить look — yaw сразу замирает. therefore
-                // снимаем отсчёт СЕЙЧАС (после доворота case6), и case7 меряет
-                // приращение уже от слепой зоны.
-                _mYawBefore = yaw;
+                // команда ввода пропадает. Доворот мышью теперь рулится ω
+                // (шаг 5.х), поэтому нос ещё доворачивается по инерции, но
+                // тормозится тем же законом и за то же время, что и разгонялся
+                // (п.12b симметрия): case7 меряет именно гашение, а не «миг».
+                _mDzFwd0 = _ship.GlobalTransform.Basis.Z;
+                _mDzW0 = _ship.AngularVelocity.Length();
+                _mDzPrevW = _mDzW0;
                 _mAimDz = AimCenter() + new Vector2(PilotAim.DeadzoneRadiusPx * 0.5f, 0f);
                 PushLookPos(_mAimDz);
                 _pilotFrames = 0;
@@ -774,17 +815,40 @@ public partial class Stage2Test : Node3D
             }
 
             case 7:
-                if (_pilotFrames < 2) return;
+                // СЛЕПАЯ ЗОНА: курсор внутри неё (r = dz/2) → команда 0. ω (а с
+                // ней и доворот) гаснет τ-законом: монотонно, без отскока, и за
+                // ~AngularRiseTime нос замирает. «Мгновенной остановки» здесь нет
+                // ровно потому, что мышь больше не пишет ориентацию напрямую.
+                if (_pilotFrames >= 1)
+                {
+                    float wDz = _ship.AngularVelocity.Length();
+                    _mDzInteg += wDz * FlightModel.FixedDt; // диагностика двойной интеграции
+                    Check(wDz <= _mDzPrevW + 1e-9f,
+                        $"п.6b: в слепой зоне ω монотонно гаснет ({_mDzPrevW:F4} → {wDz:F4})");
+                    _mDzPrevW = wDz;
+                }
+                if (_pilotFrames < 40) return; // ≥ 3τ (0.6 с) — полный спад
 
-                // СЛЕПАЯ ЗОНА: курсор внутри неё (r = dz/2) → команда 0,
-                // ориентация замирает (look — прямая дозапись, w не копится).
-                float yaw2 = _ship.GlobalTransform.Basis.GetEuler().Y;
-                Check(Mathf.Abs(yaw2 - _mYawBefore) < 1e-4f,
-                    $"п.6b: курсор в слепой зоне — нос не доворачивает (Δ = {yaw2 - _mYawBefore:E2} рад)");
-                // Команда ввода в слепой зоне тоже строго ноль (а не «мало»).
+                // Команда ввода в слепой зоне строго ноль (а не «мало»).
                 Check(Mathf.Abs(_ship.LocalInput.LookYaw) < 1e-6f &&
                       Mathf.Abs(_ship.LocalInput.LookPitch) < 1e-6f,
                       "п.6b: в слепой зоне команда ввода = 0");
+                float wEnd = _ship.AngularVelocity.Length();
+                Check(wEnd < 0.05f * _mDzW0,
+                    $"п.6b: курсор в слепой зоне — доворот погас тем же временем, " +
+                    $"что и разгонялся (|w|: {_mDzW0:F3} → {wEnd:E2} за " +
+                    $"{_pilotFrames * FlightModel.FixedDt:F2} с ≈ AngularRiseTime " +
+                    $"{_ship.Flight.AngularRiseTime})");
+                // Инерционный доворот — от входа в слепую зону, а не от старта
+                // разворота (за время разгона нос уже ушёл на ~полный оборот).
+                // За время спада (≈AngularRiseTime, ω с ~3.5 рад/с) нос уходит
+                // конечной долей оборота — не «до бесконечности».
+                Vector3 dzFwd = _ship.GlobalTransform.Basis.Z;
+                float dzTurned = _mDzFwd0.AngleTo(dzFwd);
+                Check(dzTurned < 1.2f,
+                    $"п.6b: инерционный доворот в слепой зоне конечен " +
+                    $"(Δ = {dzTurned:F4} рад, ∫ω·dt = {_mDzInteg:F4} рад за время " +
+                    $"спада ω {_mDzW0:F2}→{wEnd:E2})");
                 // Aim-хелпер (направление выстрела) жив: центр ловится, угол — нет.
                 Check(_ship.TestAimOnShip(AimCenter()),
                     "п.6b: центр экрана = направление выстрела активно");
@@ -1357,6 +1421,91 @@ public partial class Stage2Test : Node3D
                 Check(monotonicFall,
                     "п.12b: после отпускания Q живой курьер не отскакивает и не пикует");
                 s3.QueueFree();
+            }
+        }
+
+        // ======================================================================
+        GD.Print("[Stage2Test] п.12c: мышь (доворот носом) — ТОТ ЖЕ руль, что " +
+                 "клавиши: разгон через ω по AngularRiseTime, потолок MaxAngularSpeed, " +
+                 "аналоговая команда ниже потолка рамы");
+        // ======================================================================
+        {
+            if (GD.Load<PackedScene>("res://scenes/Ship.tscn") is PackedScene mScene)
+            {
+                Ship s4 = mScene.Instantiate<Ship>();
+                AddChild(s4);
+                s4.TestSetPilotForTest(1);
+                s4.TestSetVelocity(Vector3.Zero);
+                float cap = s4.MaxAngularSpeed;
+                float riseTime = s4.Flight.AngularRiseTime;
+
+                // Полный ход мыши: курсор за окружностью ⇒Look = cap·dt каждый
+                // кадр (так же, как его выставляет PilotLookFromCursor). Кадр
+                // look-канал несёт в тех же полях, что и живой пилот.
+                var lf = new InputFrame { Tick = 40_000, LookYaw = cap * dt };
+                int m95 = -1, mFall = -1;
+                float wAtTau = 0f, wHold = 0f, prevWM = -1f;
+                bool monoM = true, overM = false;
+                for (int i = 0; i < 55; i++)
+                {
+                    lf.Tick = (uint)(40_000 + i + 1);
+                    s4.TestSetInputForTest(lf);
+                    s4.TestStepForTest(dt);
+                    float w = s4.AngularVelocity.Length();
+                    if (w < prevWM - 1e-9f) monoM = false;
+                    if (w > cap + 1e-6f) overM = true;
+                    if (m95 < 0 && w >= 0.95f * cap) m95 = i + 1;
+                    prevWM = w;
+                    if (i == (int)(riseTime / 3f / dt)) wAtTau = w; // одна τ
+                    wHold = w;
+                }
+                // Доворот НЕ мгновенный: на одной τ (курьер: 0.2 с) апериодическая
+                // система набирает ~63% команды. Прямая дозапись (старый вид)
+                // дала бы здесь уже весь потолок и |ω| = 0.
+                Check(wAtTau > 0.3f * cap && wAtTau < 0.75f * cap,
+                    $"п.12c: мышь на середине разгона (одна τ) в {wAtTau / cap:P0} " +
+                    $"потолка — разгон как у клавиш, а не мгновенный доворот");
+                Check(monoM && !overM,
+                    "п.12c: |ω| под монотонным разгоном мыши не падает и не пробивает потолок");
+                Check(Math.Abs(wHold - cap) < 0.1f * cap,
+                    $"п.12c: при удержании курсора за окружностью ω встаёт на потолок " +
+                    $"рамы ({wHold:F3} ≈ {cap})");
+                Check(m95 >= 0 && Math.Abs(m95 * dt - riseTime) < 0.06f,
+                    $"п.12c: 95% потолка мышью за {m95 * dt:F2} с ≈ AngularRiseTime " +
+                    $"{riseTime:F2} с (те же числа каталога, что и клавиши)");
+
+                // Аналоговость: курсор в середине рампы (50% хода) — ω встаёт на
+                // ПОЛОВИНУ потолка, а не на весь (команда = 0.5·cap·dt).
+                var lfHalf = new InputFrame { Tick = 41_000, LookYaw = 0.5f * cap * dt };
+                for (int i = 0; i < 180; i++)
+                {
+                    lfHalf.Tick = (uint)(41_000 + i + 1);
+                    s4.TestSetInputForTest(lfHalf);
+                    s4.TestStepForTest(dt);
+                }
+                float wHalf = s4.AngularVelocity.Length();
+                Check(Math.Abs(wHalf - 0.5f * cap) < 0.05f * cap,
+                    $"п.12c: половинная позиция курсора = половина потолка " +
+                    $"(|w| = {wHalf:F3} ≈ {0.5f * cap:F3})");
+
+                // Отпустили курсор (в центр/мёртвую зону — кадр look = 0): спад
+                // той же τ и за то же время, что и разгон (симметрия п.12b).
+                prevWM = wHalf; monoM = true; mFall = -1;
+                for (int i = 0; i < 200; i++)
+                {
+                    var idle = new InputFrame { Tick = (uint)(42_000 + i + 1) };
+                    s4.TestSetInputForTest(idle);
+                    s4.TestStepForTest(dt);
+                    float w = s4.AngularVelocity.Length();
+                    if (w > prevWM + 1e-9f) monoM = false;
+                    if (mFall < 0 && w <= 0.05f * wHalf) mFall = i + 1;
+                    prevWM = w;
+                }
+                Check(monoM, "п.12c: после возврата курсора в центр ω гаснет монотонно, без отскока");
+                Check(mFall >= 0 && Math.Abs(mFall * dt - riseTime) < 0.06f,
+                    $"п.12c: остановка доворота — за то же время, что и разгон " +
+                    $"({mFall * dt:F2} с ≈ {riseTime:F2} с)");
+                s4.QueueFree();
             }
         }
     }
