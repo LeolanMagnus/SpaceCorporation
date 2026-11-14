@@ -119,9 +119,24 @@ public partial class Ship : RigidBody3D
         // см. HandleMouseMotion).
         _pilotInput.Active = IsLocalPilot;
         _pilotInput.InteractionMode = IsInteractionMode;
+        // Круговое меню (Tab) прерывает управление поворотом: пока кольцо
+        // открыто, позиционный look-канал заглушён; наведение на секторы
+        // больше не доворачивает нос к курсору (баг «скафандр/корабль
+        // вращается при выборе опции»).
+        // Падающий фронт (кольцо только что закрылось): OS-курсор остался на
+        // секторе — возвращаем прицел в центр и глушим накопленную дельту,
+        // иначе первый же шаг довернёт нос к месту выбора (тот же приём, что
+        // возврат из режима взаимодействия → `WarpPilotCursorToCenter`).
+        bool menuOpen = RadialMenu.AnyOpen;
+        if (_menuWasOpen && !menuOpen)
+        {
+            _pilotInput.ClearLookDelta();
+            WarpPilotCursorToCenter();
+        }
+        _menuWasOpen = menuOpen;
         return _pilotInput.Collect(_tick, ViewportSize, MaxAngularSpeed,
             FlightModel.FixedDt, MouseSensitivity, extraMask,
-            lookSuppressed: NetworkManager.Autopilot);
+            lookSuppressed: NetworkManager.Autopilot || menuOpen);
     }
 
     /// <summary>Размер вьюпорта этого корабля (пиксели) — нулевой, если окна нет

@@ -116,6 +116,7 @@ public partial class PilotInputShimTest : Node3D
             RunAccumulatedChannelTests();
             RunInteractionModeTests();
             RunInactivePilotTests();
+            RunRadialMenuTests();
             RunWireFormatTests();
             Finish();
         }
@@ -336,6 +337,55 @@ public partial class PilotInputShimTest : Node3D
         Check(a.LookYaw == 0f && a.LookPitch == 0f && b.LookYaw == 0f && b.LookPitch == 0f,
             "п.6: look-канал обнулён на обеих сторонах (несуществующий курсор не крутит объект)");
         _ship.TestSetPilotForTest(1);
+    }
+
+    // ==================================================================
+    // П.8 — круговое меню (Tab) прерывает look: открытый канал заглушён,
+    // закрытие возвращает прицел в центр без рывка (баг «скафандр/корабль
+    // вращается при выборе опции»)
+    // ==================================================================
+    private void RunRadialMenuTests()
+    {
+        GD.Print("[Shim] п.8: круговое меню — look заглушён, закрытие без рывка");
+
+        _ship.SetInteractionMode(false);
+        _ship.TestSetPilotForTest(1);
+        _ship.Pilot.Active = true;
+        _ship.Pilot.InteractionMode = false;
+        _ship.Pilot.HasCursor = false;
+        _ship.Pilot.ClearLookDelta();
+        RadialMenu.AnyOpen = false;
+        _ship.TestCollectInputFrame(); // сбросить фронт _menuWasOpen чистым шагом
+
+        // Прицел_far от центра: без меню он дал бы ненулевой доворот.
+        var motion = new InputEventMouseMotion { Position = new Vector2(1200f, 150f), Relative = new Vector2(50f, 50f) };
+        _ship.Pilot.HandleMouse(motion, ViewportSize);
+
+        RadialMenu.AnyOpen = true;   // как HudLayer.Open()
+        InputFrame open1 = _ship.TestCollectInputFrame();
+        InputFrame open2 = _ship.TestCollectInputFrame();
+        Check(open1.LookYaw == 0f && open1.LookPitch == 0f
+              && open2.LookYaw == 0f && open2.LookPitch == 0f,
+            "п.8: при открытом кольце look-канал заглушён (0,0) — курсор на секторе не крутит нос");
+        Check(_ship.Pilot.AccumulatedLookPx == Vector2.Zero,
+            "п.8: накопленные пиксели не копятся, пока меню открыто (сборщик глушится на входе)");
+
+        // Закрытие (отпускание Tab с выбором): падающий фронт в CollectInputFrame
+        // обязан вернуть прицел в центр и обнулить дельту — иначе первый шаг
+        // после закрытия довернул бы нос к месту, где закрылось кольцо.
+        RadialMenu.AnyOpen = false;
+        InputFrame closed = _ship.TestCollectInputFrame();
+        Vector2 center = ViewportSize * 0.5f;
+        Check(_ship.Pilot.CursorPx == center && _ship.Pilot.HasCursor,
+            $"п.8: после закрытия прицел возвращён в центр ({_ship.Pilot.CursorPx} == {center})");
+        Check(closed.LookYaw == 0f && closed.LookPitch == 0f,
+            $"п.8: кадр закрытия без рывка (look = {closed.LookYaw:F6}, {closed.LookPitch:F6})");
+
+        // Дальше управление живёт как раньше: новое движение мыши снова даёт look.
+        var motion2 = new InputEventMouseMotion { Position = center + new Vector2(120f, 0f), Relative = new Vector2(120f, 0f) };
+        _ship.Pilot.HandleMouse(motion2, ViewportSize);
+        InputFrame after = _ship.TestCollectInputFrame();
+        Check(after.LookYaw != 0f, $"п.8: после закрытия look-канал снова жив (yaw = {after.LookYaw:F6})");
     }
 
     // ==================================================================

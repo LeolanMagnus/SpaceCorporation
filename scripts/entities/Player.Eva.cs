@@ -78,6 +78,7 @@ public partial class Player
     private const float SeatRayLength = 30f;
 
     private PilotInput _evaInput = new();
+    private bool _menuWasOpen; //.круговое меню было открыто в прошлом физшаге
     private EvaMouseCatcher? _evaCatcher;
     /// <summary>Пилот-ассист джетпака (ФЛАГ В11: константа по умолчанию, T
     /// переключает). В кресле за него отвечает `Ship.Loadout.PilotAssist`.</summary>
@@ -279,9 +280,25 @@ public partial class Player
         _evaInput.Active = !ui && _evaCatcher != null;
         // Правка 7-й части: в ботинках look — «от мыши» (FPS), позиционный
         // доворот на позицию курсора глушим (его ведёт `StepBoots` по дельте).
+        // Круговое меню (Tab) прерывает управление поворотом: пока кольцо
+        // открыто, позиционный look-канал заглушён — наведение на секторы
+        // двигает курсор от центра, и скафандр доворачивался бы за курсором
+        // (баг «при выборе опции скафандр вращается»).
+        // Падающий фронт (кольцо только что закрылось): курсор-прицел остался
+        // на секторе — возвращаем его в центр и глушим накопленную дельту,
+        // иначе первый же шаг довернёт нос к месту выбора. (Симметрия возврату
+        // из режима взаимодействия у корабля: `WarpPilotCursorToCenter`.)
+        bool menuOpen = RadialMenu.AnyOpen;
+        if (_menuWasOpen && !menuOpen)
+        {
+            _evaInput.ClearLookDelta();
+            _bootsLookAccumPx = Vector2.Zero;
+            _evaInput.WarpCursorToCenter(EvaViewportSize);
+        }
+        _menuWasOpen = menuOpen;
         InputFrame f = _testInput ?? _evaInput.Collect(++_evaTick, vp,
             SuitModel.SuitMaxAngularSpeed, dt, EvaMouseSensitivity,
-            lookSuppressed: _mode == EvaMode.Boots);
+            lookSuppressed: _mode == EvaMode.Boots || menuOpen);
         _testInput = null;
         _lastFrame = f;
 
@@ -1777,6 +1794,14 @@ public partial class Player
         {
             if (@event is InputEventMouseMotion m)
             {
+                // Баг «скафандр крутится при открытом круговом меню» (Tab):
+                // наведение на секторы двигает курсор-прицел от центра экрана,
+                // и позиционный look-канал каждый физшаг доворачивает нос
+                // скафандра к курсору — управление не прерывается, а при
+                // выборе опции скафандр ещё и доворачивается к сектору.
+                // Сборщик глушим на входе — ровно как у корабля
+                // (`Ship.ShipMouseCatcher`, гейт `RadialMenu.AnyOpen`).
+                if (RadialMenu.AnyOpen) return;
                 _player._evaInput.HandleMouse(m, _player.EvaViewportSize);
                 // Правка 7-й части (переделка): взгляд в ботинках — «как в
                 // шутере от первого лица», мышь ЗАХВАЧЕНА (`Input.MouseMode =
