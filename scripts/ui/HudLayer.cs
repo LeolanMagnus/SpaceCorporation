@@ -58,6 +58,10 @@ public partial class HudLayer : CanvasLayer
     private TargetingService _targeting = null!;
     private TargetOverlay _targetMarker = null!;
 
+    // Круговое меню контекстных действий (Tab): кольцо из 8 секторов вокруг
+    // центра экрана; вызов/закрытие — в _UnhandledInput.
+    private RadialMenu _radialMenu = null!;
+
     // Марка пилотирования 2.0 (AimReticle): слой прицела (курсор-перекрестие,
     // пунктир, галочки) горит только когда локальный пир реально ведёт корабль
     // в режиме пилота (не в режиме взаимодействия).
@@ -136,6 +140,10 @@ public partial class HudLayer : CanvasLayer
         _targetMarker.LocalShipGate = GetMyShip;
         _reticle = GetNode<AimReticle>("HudRoot/AimReticle");
 
+        // Круговое меню: доступность «Связи с целью» читается из TargetingService.
+        _radialMenu = GetNode<RadialMenu>("HudRoot/RadialMenu");
+        _radialMenu.Targeting = _targeting;
+
         // Подсказка посадки над перекрестием (создаётся кодом — она не несут
         // ни текстуру, ни макет, только текст у прицела): не перехватывает мышь,
         // рисуется поверх всех панелей (добавлена последней в HudRoot).
@@ -204,14 +212,41 @@ public partial class HudLayer : CanvasLayer
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (@event.IsActionPressed("hud_toggle"))
+        if (_radialMenu.IsOpen && @event is InputEventKey esc
+            && esc.Pressed && esc.Keycode == Key.Escape)
+        {
+            _radialMenu.Close();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+        if (@event.IsActionPressed("radial_menu"))
+        {
+            // Tab — круговое меню: кольцо открыто, пока клавиша зажата;
+            // отпустили — закрылось. (Открытие/закрытие и выбор работают
+            // в любом режиме.)
+            if (_radialMenu.IsOpen
+                && @event is InputEventKey rk && rk.Pressed && rk.Keycode == Key.Enter)
+                _radialMenu.ActivateHovered();
+            else if (!_radialMenu.IsOpen)
+                _radialMenu.Open();
+            GetViewport().SetInputAsHandled();
+        }
+        else if (@event.IsActionReleased("radial_menu"))
+        {
+            // Отпустили Tab — кольцо закрывается, и в этот момент ВЫБИРАЕТСЯ
+            // сектор, который был подсвечен (не кликом).
+            _radialMenu.Close(commit: true);
+            GetViewport().SetInputAsHandled();
+        }
+        else if (@event.IsActionPressed("hud_toggle"))
         {
             ToggleHud();
             GetViewport().SetInputAsHandled();
         }
         else if (@event.IsActionPressed("target_cycle"))
         {
-            // Tab — цикл целей (H3). Сервис живёт рядом на HudLayer.
+            // Y (бывш. Tab, теперь занят круговым меню) — цикл целей (H3).
+            // Сервис живёт рядом на HudLayer.
             // Баг «лок-он в режиме пилотирования»: смена цели — только в
             // режиме взаимодействия (в полёте Tab лок-он не ставит).
             Ship? mineC = GetMyShip();

@@ -515,9 +515,11 @@ public partial class TargetOverlay : Control
     {
         float wLbl = Skin!.LabelWidthPx;
         float hLbl = Mathf.Max(16f, Skin.LabelHeightPx);
+        // Max(...,4): в headless бывают ранние кадры с крошечным вьюпортом —
+        // иначе Clamp(max<min) кидает ArgumentException в _Draw.
         _lbl.Position = new Vector2(
-            Mathf.Clamp(p.X - wLbl * 0.5f, 4, Size.X - wLbl - 4),
-            Mathf.Clamp(p.Y + margin + 4, 4, Size.Y - hLbl - 4));
+            Mathf.Clamp(p.X - wLbl * 0.5f, 4, Mathf.Max(4f, Size.X - wLbl - 4)),
+            Mathf.Clamp(p.Y + margin + 4, 4, Mathf.Max(4f, Size.Y - hLbl - 4)));
         _lbl.Size = new Vector2(wLbl, hLbl);
     }
 

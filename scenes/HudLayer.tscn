@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://6bedomdan8pg" path="res://scripts/ui/RadarSource.cs" id="5_radar_src"]
 [ext_resource type="Script" uid="uid://c15lmma6p31rn" path="res://scripts/ui/RadarPanel.cs" id="6_radar_view"]
 [ext_resource type="Resource" path="res://assets/ui/LockMarkerSkin.tres" id="7_skin"]
+[ext_resource type="PackedScene" path="res://scenes/RadialMenu.tscn" id="9_radial_scene"]
 
 [node name="HudLayer" type="CanvasLayer" unique_id=1695803689]
 layer = 5
@@ -281,3 +282,6 @@ Skin = ExtResource("7_skin")
 
 [node name="RadarSource" type="Node" parent="." unique_id=573472663]
 script = ExtResource("5_radar_src")
+
+[node name="RadialMenu" parent="HudRoot" instance=ExtResource("9_radial_scene")]
+z_index = 20

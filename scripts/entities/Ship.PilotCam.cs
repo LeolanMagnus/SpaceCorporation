@@ -410,6 +410,10 @@ public partial class Ship : RigidBody3D
             }
             if (@event is InputEventMouseMotion m)
             {
+                // Круговое меню (Tab зажат) — мышь не управляет кораблём/взглядом:
+                // сборщик глушим на входе. (SetInputAsHandled у HudLayer не помог бы:
+                // этот узел ловит события раньше, в фазе _Input.)
+                if (RadialMenu.AnyOpen) return;
                 _ship.HandleMouseMotion(m);
                 return;
             }
