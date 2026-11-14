@@ -175,8 +175,17 @@ public partial class Ship : RigidBody3D
             return false;
         if (!AimOnShip(_pilotInput.LastMousePx))
             return false;
-        ShowAimingBeam();
-        return TryFire();
+        // BUG-015: луч рисуется ТОЛЬКО на состоявшемся выстреле. Порядок был
+        // обратный (ShowAimingBeam до TryFire): при зажатым ЛКМ (автоогонь)
+        // RequestFire вызывается каждый физшаг, и луч перерисовывался даже
+        // когда TryFire отказывал по кулдауну/энергии — визуал лился
+        // непрерывной линией весь зажим вместо дискретных вспышек по темпу
+        // орудия. Плюс трасса рисуется тем же aimPoint, что ушёл в хитскан
+        // (турель → точка хитскана).
+        if (!TryFire(out Vector3 aim))
+            return false;
+        ShowAimingBeam(aim);
+        return true;
     }
 
     // Этап 6, шаг 5: зажатое ЛКМ = автоогонь с частотой орудия. Pressed в
@@ -193,10 +202,13 @@ public partial class Ship : RigidBody3D
     ///     допуска `AimToleranceM` вокруг локального носа (нос доворачивается к
     ///     курсору PilotAim, поэтому вне конуса целиться в цель нельзя: сервер
     ///     отклонил бы выстрел гейтом В17 п.3);
-    ///  2) ЛУЧ КАМЕРЫ через курсор — точка на нем на дистанции `LaserRange`:
-    ///     хитскан идёт от ствола к этой точке, поэтому линия луча совпадает с
-    ///     тем, куда смотрит пилот (фикс «попадание ниже центра»: раньше
-    ///     прицел рисовался по курсору, а урон летел строго по носу);
+    ///  2) ТОЧКА ПОПАДАНИЯ РЕЙКАСТА ИГРОКА (камера → курсор, маска `LaserMask`,
+    ///     своё тело исключено) — ровно туда, куда игрок навёл перекрестие на
+    ///     объект (фикс бага «хитскан не в точку перекрестия»: раньше целью
+    ///     была дальняя точка луча камеры на дистанции `LaserRange`, и из-за
+    ///     параллакса «ствол ≠ камера» луч от ствола к этой дальней точке
+    ///     проходил МИМО объекта, в который реально уперлось перекрестие);
+    ///     если рейкаст в пустоту — точка на луче камеры на `LaserRange`;
     ///  3) фолбэк — нос `-Basis.Z` на длину луча (headless/без курсора).</summary>
     public Vector3 AimPointWorld()
     {
@@ -217,7 +229,25 @@ public partial class Ship : RigidBody3D
             Vector3 o = cam.ProjectRayOrigin(px);
             Vector3 d = cam.ProjectRayNormal(px);
             Vector3 far = o + d * LaserRange;
-            Vector3 aimDir = far - origin;
+
+            // Точка прицела = фактическое попадание рейкаста игрока (камера →
+            // курсор) в объект, а не дальняя точка луча: только она совпадает с
+            // тем, куда смотрит перекрестие. Направление хитскана «ствол → эта
+            // точка» проходит через объект; `to` хитскана дальше точки, поэтому
+            // луч гарантированно накрывает цель.
+            Vector3 aimTarget = far;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space != null)
+            {
+                var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+                var query = PhysicsRayQueryParameters3D.Create(
+                    o, far, CollisionLayers.LaserMask, exclude);
+                Godot.Collections.Dictionary hit = space.IntersectRay(query);
+                if (hit.Count > 0)
+                    aimTarget = hit["position"].AsVector3();
+            }
+
+            Vector3 aimDir = aimTarget - origin;
             if (aimDir.LengthSquared() > 1e-6f)
                 return origin + aimDir.Normalized() * LaserRange;
         }
@@ -248,7 +278,15 @@ public partial class Ship : RigidBody3D
     ///  - клиент-пилот: `SubmitFireToServer` (надёжный RPC, канал 1) — сервер проверит
     ///    намерение (В17) и сам посчитает хитскан/урон (единый источник истины).</summary>
     private bool TryFire()
+        => TryFire(out _);
+
+    /// <summary>То же, но при успехе отдаёт aimPoint, с которым реально ушёл
+    /// выстрел (он же цель хитскана на авторитете), — чтобы трассер рисовался
+    /// ровно туда, куда полетел луч (BUG-015: визуал = турель → точка
+    /// хитскана, и только на состоявшемся выстреле).</summary>
+    private bool TryFire(out Vector3 aimPoint)
     {
+        aimPoint = Vector3.Zero;
         var nm = NetworkManager.Instance;
         if (nm == null || Net == null || Net.ShipNetId == 0)
             return false; // нет адреса — выстрел нечем ни засчитать, ни адресовать
@@ -266,7 +304,7 @@ public partial class Ship : RigidBody3D
         if (health != null && health.Energy < Weapon.EnergyCost)
             return false; // энергии на выстрел не хватает — выстрела нет
 
-        Vector3 aim = AimPointWorld();
+        aimPoint = AimPointWorld();
         if (nm.IsAuthoritySide)
         {
             uint tick = (uint)Mathf.Max(0, Net.SimTick);
@@ -276,7 +314,7 @@ public partial class Ship : RigidBody3D
             _hasLastFireTime = true;
             AcceptedFireCount++;
             ShotsFired++;
-            _pendingFires.Enqueue((tick, aim));
+            _pendingFires.Enqueue((tick, aimPoint));
         }
         else
         {
@@ -284,7 +322,7 @@ public partial class Ship : RigidBody3D
             // троттлить спам RPC с той же периодичностью, что гейт сервера.
             _lastFireTimeSec = now;
             _hasLastFireTime = true;
-            SubmitFireToServer(aim);
+            SubmitFireToServer(aimPoint);
         }
         return true;
     }
@@ -742,17 +780,24 @@ public partial class Ship : RigidBody3D
         }
     }
 
-    /// <summary>Построить/обновить визуальный луч от ствола до точки прицела.
-    /// Точка прицела = луч камеры через курсор, умноженный на длину луча (пока без
-    /// пересечения с мишенями — это добавит шаг 3.5). Без камеры (headless) —
-    /// просто вперёд по носу. Узел называется BeamVisual — на него смотрит тест п.17.</summary>
+    /// <summary>Перестроить/обновить трассер выстрела (шов п.17 без aim-гейта:
+    /// точка прицела считается заново через `AimPointWorld`). BUG-015: основной
+    /// путь — перегрузка с точкой хитскана, отданной `TryFire`.</summary>
     private void ShowAimingBeam()
+        => ShowAimingBeam(AimPointWorld());
+
+    /// <summary>Трассер выстрела (0.2 c, самоудаляемый узел-потомок), BUG-015:
+    /// от турели (`Muzzle`) до точки хитскана — той самой aimPoint, с которой
+    /// реально ушёл выстрел; если на этой трассе раньше встречается препятствие
+    /// по `LaserMask`, трасса обрывается на фактическом попадании.</summary>
+    private void ShowAimingBeam(Vector3 hitscanPoint)
     {
         Vector3 start = BeamOriginGlobal();
-        // Шаг 5: трасса луча = реальное направление хитскана (к точке прицела),
-        // а не строгий нос: визуал обязан совпадать с тем, куда уходит урон
-        // (иначе марка на HUD и выстрел расходятся — тот же баг «ниже центра»).
-        Vector3 aimDir = AimPointWorld() - start;
+        // Шаг 5 + BUG-015: трасса = реальное направление хитскана (в точку
+        // aimPoint этого выстрела), а не строгий нос: визуал обязан совпадать
+        // с тем, куда ушёл урон (иначе марка на HUD и выстрел расходятся —
+        // тот же баг «ниже центра»).
+        Vector3 aimDir = hitscanPoint - start;
         Vector3 fwd = aimDir.LengthSquared() > 1e-6f
             ? aimDir.Normalized()
             : -GlobalTransform.Basis.Z; // фолбэк — курс (headless)
@@ -760,9 +805,9 @@ public partial class Ship : RigidBody3D
         // Фиксируем КОНЕЦ в мировом луче в момент выстрела (а не «дочерним узлом,
         // который наследует поворот корабля»): раньше узел был обычным child'ом
         // корабля, поэтому при довороте носа к курсору (PilotAim) луч «ехал» за
-        // курсором. Направление — вдоль НОСА (`fwd`), как у реального выстрела,
-        // дальше луч обрезаем первым препятствием по `LaserMask` (визуал = трасса
-        // выстрела), иначе фиксированная длина `AimingBeamLength`.
+        // курсором. Направление — вдоль трассы выстрела, дальше луч обрезаем
+        // первым препятствием по `LaserMask` (визуал = трасса выстрела), иначе
+        // фиксированная длина `AimingBeamLength`.
         Vector3 end = start + fwd * AimingBeamLength;
         var space = GetWorld3D()?.DirectSpaceState;
         if (space != null)
