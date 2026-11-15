@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://b4nhmt5oasyr1"]
+[gd_scene load_steps=13 format=3 uid="uid://b4nhmt5oasyr1"]
 
 [ext_resource type="Script" uid="uid://c4agxptd4h3ct" path="res://scripts/entities/Ship.cs" id="1_ship"]
 [ext_resource type="Script" uid="uid://om57jk7hwrnu" path="res://scripts/entities/AttachPoint.cs" id="2_attach"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://6dd4d87tobcw" path="res://scripts/entities/ShipHealthState.cs" id="5_health"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/ShipHealthReplication.tres" id="6_healthcfg"]
 [ext_resource type="Script" path="res://scripts/core/ControlPanel.cs" id="7_panel"]
+[ext_resource type="PackedScene" path="res://scenes/WeaponTurret.tscn" id="8_weapon"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hull"]
 size = Vector3(2, 1, 4)
@@ -44,8 +45,8 @@ script = ExtResource("2_attach")
 IsDefaultForPlayer = true
 PlayerOffset = Vector3(0, 0.9, 0)
 
-[node name="Muzzle" type="Node3D" parent="." unique_id=1098832947]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)
+[node name="Weapon" parent="." unique_id=1098832947 instance=ExtResource("8_weapon")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1.6)
 
 [node name="ControlPanel" type="Area3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, -2.2)

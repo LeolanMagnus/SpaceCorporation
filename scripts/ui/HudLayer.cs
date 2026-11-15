@@ -305,6 +305,24 @@ public partial class HudLayer : CanvasLayer
         _reticle.ShowAim =
             myShip != null && myShip.IsLocalPilot && !myShip.IsInteractionMode;
 
+        // Этап «наводки»: прицельная точка ОРУДИЯ на HUD (docs/weapon-aim-plan.md):
+        // мировая точка прицела ствола (схлопнута в конус «углов наводки») —
+        // проекция активной камеры в экранные пиксели. За сектором наводки марка
+        // остаётся на линии «центр → курсор», на краю угла поворота ствола.
+        _reticle.HasWeaponAim = false;
+        if (_reticle.ShowAim)
+        {
+            Camera3D? aimCam = GetViewport().GetCamera3D();
+            Vector3? wp = myShip!.WeaponAimPointWorld();
+            if (aimCam != null && wp != null)
+            {
+                // мировая точка → экранные пиксели активной камеры
+                _reticle.WeaponAimPx = aimCam.UnprojectPosition(wp.Value);
+                _reticle.WeaponAimColor = myShip.Weapon.BeamColor;
+                _reticle.HasWeaponAim = true;
+            }
+        }
+
         // H3: цель могла умереть/исчезнуть — снимаем её (маркер сам пустеет).
         if (_targeting.TargetNode != null && !_targeting.ValidateTarget())
         {

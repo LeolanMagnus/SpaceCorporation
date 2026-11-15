@@ -32,6 +32,18 @@ public partial class AimReticle : Control
     /// корабль в режиме пилотирования (не в режиме взаимодействия).</summary>
     public bool ShowAim { get; set; }
 
+    /// <summary>Экранная позиция прицельной ТОЧКИ ОРУДИЯ (этап «наводки»):
+    /// проекция мировой точки прицела ствола (<c>Ship.WeaponAimPointWorld</c>) —
+    /// при выходе курсора за «углы наводки» точка стоит на границе конуса, и
+    /// марка уходит с курсора на край сектора. Ставит HudLayer каждый кадр.</summary>
+    public Vector2 WeaponAimPx { get; set; }
+    /// <summary>Есть ли в этом кадре прицельная точка оружия (пир ведёт корабль
+    /// в режиме пилотирования и орудие целилось).</summary>
+    public bool HasWeaponAim { get; set; }
+    /// <summary>Цвет марки прицельной точки = цвет трассера орудия
+    /// (<c>WeaponSpec.BeamColor</c>: лазер белый, тесты — красный/зелёный).</summary>
+    public Color WeaponAimColor { get; set; } = Colors.White;
+
     /// <summary>Центр экрана = нос + «центр» расчёта PilotAim. Полноэкранный
     /// Control с якорями на весь rect: Size == размер вьюпорта, центр — Size/2.</summary>
     private Vector2 Center => Size * 0.5f;
@@ -76,6 +88,12 @@ public partial class AimReticle : Control
                 DrawChevrons(c, off, r, skin);
             }
             DrawCursorReticle(cursor, skin);
+
+            // Этап «наводки»: прицельная точка ОРУДИЯ (ствол в конусе «углов
+            // наводки»): пока курсор в секторе — совпадает с прицелом, за
+            // сектором — остаётся на границе. Рисуем поверх: маленький крест
+            // в цвет трассера оружия.
+            DrawWeaponAimPoint(skin);
         }
         else
         {
@@ -87,6 +105,21 @@ public partial class AimReticle : Control
     // ────────────────────────────── Элементы ───────────────────────────────────
 
     /// <summary>Точка-маркер носа (центр экрана).</summary>
+    /// <summary>Марка прицельной точки орудия: крест + тонкое кольцо в цвет
+    /// трассера оружия. Совпадает с прицелом, пока курсор в секторе наводки;
+    /// за сектором — уходит на край конуса (данные считает Ship, здесь только рисунок).</summary>
+    private void DrawWeaponAimPoint(ReticleSkin skin)
+    {
+        if (!HasWeaponAim)
+            return;
+        Vector2 p = WeaponAimPx;
+        Color col = WeaponAimColor;
+        const float a = 7f; // полуразмер креста, px
+        DrawLine(p - new Vector2(a, 0), p + new Vector2(a, 0), col, 1.5f);
+        DrawLine(p - new Vector2(0, a), p + new Vector2(0, a), col, 1.5f);
+        DrawArc(p, 9f, 0f, Mathf.Tau, 24, new Color(col.R, col.G, col.B, 0.7f), 1.5f);
+    }
+
     private void DrawNosePoint(Vector2 c, ReticleSkin skin)
     {
         if (DrawTextured(skin.NoseDot, c, 0f, skin.NoseColor))

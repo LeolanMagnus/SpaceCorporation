@@ -140,6 +140,14 @@ public partial class Ship : RigidBody3D
                 _typeHandles[i] = DebugInfoBus.RegisterDebugButton(
                     $"ShipType: {spec.DisplayName}", () => RequestShipType(captured));
             }
+
+            // Этап «наводка»: смена орудия (перебор каталога Weapons) — локальному
+            // пилоту, через штатный путь RequestWeaponType (гейт пилота → RPC →
+            // сервер → реплика NetState.WeaponTypeValue всем пирам). Прототип
+            // замены оснащения корабля: вся логика смены — в EquipWeapon/Request.
+            // Метка фиксированная (по ней Remove по хенделу), текущий тип — в
+            // подписи, обновляем текст кнопки после переключения.
+            _weaponHandle = DebugInfoBus.RegisterDebugButton("Switch Weapon", OnButtonSwitchWeapon);
         }
 
         _debugButtonsBuilt = true;
@@ -167,11 +175,38 @@ public partial class Ship : RigidBody3D
         _teleportHandle = null;
         _interpHandle = null;
         _assistHandle = null;
+        DebugInfoBus.RemoveDebugButton(_weaponHandle); // этап «наводки»: смена орудия
+        _weaponHandle = null;
+    }
+
+    // ─── Этап «наводка»: перебор орудия дебаг-кнопкой ─────────────────────────
+
+    private DebugButtonHandle? _weaponHandle;
+
+    /// <summary>Нажатие «Switch Weapon»: следующий тип каталога через штатный
+    /// RequestWeaponType (тот же путь, по которому пойдёт будущая замена
+    /// оснащения), затем обновляем подпись кнопки на новый ожидаемый тип.</summary>
+    private void OnButtonSwitchWeapon()
+    {
+        var next = NextWeaponType();
+        RequestWeaponType(next);
+        if (_weaponHandle?.Button is Button b)
+            b.Text = $"Weapon: {WeaponCatalog.Find(next).DisplayName} →";
     }
 
     /// <summary>Шов автеста (по образцу `TestFire`): «запрос стыковки пришёл от
     /// пира X» без UDP. Зовёт боевой серверный гейт, а не копию.</summary>
     public void TestSetPilotForTest(int peerId) => PilotPeerId = peerId;
+
+    // ─── Этап «наводки»: швы автотеста WeaponAimTest ──────────────────────────
+
+    /// <summary>Шов теста: мировое начало луча (срез ствола турели) — проверка,
+    /// что BeamOriginGlobal берёт Muzzle из отдельной сцены, а не центр корпуса.</summary>
+    public Vector3 BeamOriginForTest() => BeamOriginGlobal();
+
+    /// <summary>Шов теста: текущий серверный угловой допуск В17 п.3 — после
+    /// EquipWeapon он обязан равняться «углам наводки» выбранного орудия.</summary>
+    public float AimToleranceForTest() => AimToleranceM;
 
     public Vector3 TestGetVelocity() => LinearVelocity;
 

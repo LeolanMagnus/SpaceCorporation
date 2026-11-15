@@ -37,6 +37,14 @@ public partial class TargetingService : Node
     /// <summary>Смена цели по хоткею (для теста/внешнего вызова).</summary>
     public int CycleCount { get; private set; }
 
+    /// <summary>Шов автотеста (WeaponAimTest): назначить цель напрямую, минуя
+    /// Tab-кандидатов — проверить ветку «захваченная цель» наводки.</summary>
+    public void TestSetTargetForTest(Node node)
+    {
+        TargetNode = node;
+        TargetName = node.Name.ToString();
+    }
+
     /// <summary>Tab: пересобрать список и переключиться на следующую цель.
     /// true — новая цель выбрана; false — кандидатов нет (цель снята).</summary>
     public bool CycleNext()

@@ -131,8 +131,11 @@ public partial class Stage1Test : Node
                   $"Ship: слой Ship (получено {_ship.CollisionLayer})");
             Check(_ship.CollisionMask == (CollisionLayers.Station | CollisionLayers.Target),
                   $"Ship: маска Station|Target (получено {_ship.CollisionMask})");
-            Check(_ship.GetNodeOrNull<Node3D>("Muzzle") != null,
-                  "у корабля есть нос Muzzle (пригодится на этапе 3)");
+        // Этап «наводка»: нос больше не голый Muzzle — орудие вынесено в
+        // отдельную сцену WeaponTurret.tscn (инстанс "Weapon", срез ствола —
+        // Weapon/Pivot/Muzzle).
+        Check(_ship.GetNodeOrNull<Node3D>("Weapon/Pivot/Muzzle") != null,
+            "у корабля есть турель с срезом ствола Weapon/Pivot/Muzzle (пригодится на этапе 3)");
             // Точки крепления переехали под картинку ShipHull (§3.3 переделки стадии 1):
             // игрок в кабине обязан совпадать с картинкой, а не с физическим корпусом.
             Check(_ship.GetNodeOrNull<AttachPoint>("ShipHull/AttachPoints/Seat") != null,

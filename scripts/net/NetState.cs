@@ -79,6 +79,17 @@ public partial class NetState : Node
     /// <summary>Тип корабля (<c>(ShipType)ShipTypeValue</c>), 0 = Courier.</summary>
     [Export] public byte ShipTypeValue { get; set; } = (byte)ShipType.Courier;
 
+    // ─────────── Этап «наводка»: тип орудия (смена оснащения, прототип) ────────
+    // Тип орудия корабля (byte enum <c>WeaponType</c>, 0 = LaserTurret). Пишет
+    // ТОЛЬКО авторитет (offline — локально, в сети — сервер по RPC пилота из
+    // дебаг-кнопки «Switch Weapon»). Транспорт — как у ShipTypeValue:
+    // спавн-снимок (поздно зашедший пир обязан сразу увидеть меш/цвета орудия)
+    // + OnChange-дельта (смена редкая — дебаг или будущая замена оснащения).
+    // Это же поле — слот оснащения в будущей системе модулей (docs/weapon-aim-plan.md).
+
+    /// <summary>Тип орудия (<c>(WeaponType)WeaponTypeValue</c>), 0 = LaserTurret.</summary>
+    [Export] public byte WeaponTypeValue { get; set; } = (byte)WeaponType.LaserTurret;
+
     // ─────────────────── Этап H4 (hud-plan.md §1): фракция ───────────────────
     // Фракция корабля (byte enum <c>Faction</c>, 0 = Neutral). Пишет авторитет
     // при спавне (в сети — сервер ДО AddChild, в offline — спавнер); транспорт

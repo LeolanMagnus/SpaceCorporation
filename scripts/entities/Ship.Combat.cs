@@ -10,6 +10,19 @@ public partial class Ship : RigidBody3D
     // Ствол из сцены — начало луча; null, если в сцене нет узла Muzzle (тогда
     // луч рисуется от центра корпуса).
     private Node3D? _muzzle;
+    // Этап «наводка»: орудие вынесено в отдельную сцену WeaponTurret.tscn
+    // (инстанс "Weapon"): меш-турель + доворот ствола + срез Muzzle. null для
+    // legacy-сцен без турели (тогда Muzzle — голый узел, луч от центра — нет).
+    private WeaponTurret? _weapon;
+    /// <summary>Направление прицела этого кадра (из AimPointWorld, уже в конусе
+    /// «углов наводки») — им же доворачивается ствол локального пилота.</summary>
+    private Vector3 _weaponAimDir = Vector3.Zero;
+    /// <summary>ФАКТИЧЕСКАЯ точка прицела этого кадра для марки HUD (баг-фикс):
+    /// попадание рейкаста курсора / позиция захваченной цели — а НЕ точка на
+    /// фиксированной дистанции от ствола (из-за параллакса «камера ≠ срез ствола»
+    /// такая марка не совпадала с рейкастом и висела выше цели). Вне сектора
+    /// наводки — точка на границе конуса на глубине цели/курсора.</summary>
+    private Vector3? _weaponAimMarker;
 
     // ─── Шаг 3.4: серверная авторизация выстрела (В17) ──────────────────────
     // Гейты В17: (1) стреляющий = пилот корабля (тот же гейт, что у ввода);
@@ -58,13 +71,121 @@ public partial class Ship : RigidBody3D
     public WeaponSpec Weapon = WeaponCatalog.DefaultWeaponSpec;
 
     /// <summary>Применить орудие: зеркалим дальность/интервал/урон по корпусу
-    /// в рабочие поля и запоминаем спецификацию (щит/энергия — из неё).</summary>
+    /// в рабочие поля и запоминаем спецификацию (щит/энергия — из неё).
+    /// Этап «наводки»: «углы наводки» оружия (AimLimitRad) становятся и
+    /// серверным угловым допуском В17 п.3 (AimToleranceM): конус, за который
+    /// ствол не заходит при наводке, — ровно тот, который принимает сервер.
+    /// Турель (если стоит в сцене) перекрашивается под орудие — единая точка
+    /// оснащения, задел под замену снаряжения корабля.</summary>
     public void ApplyWeaponSpec(WeaponSpec spec)
     {
         Weapon = spec ?? WeaponCatalog.DefaultWeaponSpec;
         FireCooldownSec = Weapon.FireIntervalSec;
         LaserRange = Weapon.RangeM;
         FireDamage = Weapon.HullDamage;
+        AimToleranceM = Weapon.AimLimitRad;
+        _weapon?.ApplyWeapon(Weapon);
+    }
+
+    // ─── Этап «наводка»: смена орудия (задел под замену оснащения корабля) ───
+
+    /// <summary>Текущий тип орудия корабля (для дебаг-переключателя и будущей
+    /// смены оснащения: реплика байта — NetState.WeaponTypeValue).</summary>
+    public WeaponType CurrentWeaponType => Weapon.Type;
+
+    /// <summary>Последний увиденный байт реплики орудия (255 = ещё не видел) —
+    /// опрос по образцу PollShipTypeReplica.</summary>
+    private byte _lastWeaponReplica = 255;
+
+    /// <summary>ЕДИНСТВЕННАЯ точка смены орудия корабля: применяет спецификацию
+    /// (дальность/интервал/урон/углы наводки/цвета) и перекрашивает меш турели.
+    /// Сеть: RequestWeaponType (пилот) → сервер пишет реплику → все пиры видят
+    /// по байту; offline/host — сразу. Дебаг-кнопка «Switch Weapon» циклично
+    /// зовёт именно RequestWeaponType (прототип замены оснащения корабля).</summary>
+    public void EquipWeapon(WeaponType type)
+        => ApplyWeaponSpec(WeaponCatalog.Find(type));
+
+    /// <summary>Запросить орудие (дебаг-панель локального пилота; в будущем —
+    /// замена оснащения). Запрос — только от локального пилота этого корабля,
+    /// по образцу RequestShipType: offline — сразу, хост-авторитет — серверная
+    /// истина, пилот-клиент — RPC с гейтом пилота на сервере (без предсказания).</summary>
+    public void RequestWeaponType(WeaponType type)
+    {
+        if (!IsLocalPilot)
+        {
+            GD.PrintErr($"ship: RequestWeaponType({type}) — локальный игрок не пилот " +
+                        $"этого корабля (pilot = {PilotPeerId}) — отказ");
+            return;
+        }
+        if (Net == null)
+        {
+            EquipWeapon(type); // offline-корпус без NetState: применяем локально
+            return;
+        }
+        if (HasAuthority)
+        {
+            ApplyServerWeaponType((byte)type);
+            return;
+        }
+        RpcSetWeaponTypeRpc((byte)type);
+    }
+
+    /// <summary>Серверный приём смены орудия от пилота. Гейт и транспорт — как у
+    /// RpcSetShipTypeRpc: только пилот, надёжный канал 1.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcSetWeaponTypeRpc(byte typeValue)
+    {
+        int sender = Multiplayer.GetRemoteSenderId();
+        if (sender != PilotPeerId)
+        {
+            GD.PrintErr($"ship: RpcSetWeaponType от пира {sender}, а пилот = " +
+                        $"{PilotPeerId} — отказ (не пилот не меняет орудие)");
+            return;
+        }
+        ApplyServerWeaponType(typeValue);
+    }
+
+    /// <summary>Серверная истина: записать орудие в реплику и применить к себе
+    /// (реплика разойдётся по пирам сама, spawn + OnChange).</summary>
+    private void ApplyServerWeaponType(byte typeValue)
+    {
+        var spec = WeaponCatalog.FindByByte(typeValue);
+        if (typeValue != (byte)spec.Type)
+            GD.PrintErr($"ship: неизвестный байт орудия {typeValue} — применяем " +
+                        $"{spec.DisplayName} (запись каталога по умолчанию)");
+        if (Net == null) return;
+        Net.WeaponTypeValue = (byte)spec.Type;
+        if (_lastWeaponReplica != (byte)spec.Type)
+        {
+            _lastWeaponReplica = (byte)spec.Type;
+            if (Weapon.Type != spec.Type)
+                EquipWeapon(spec.Type);
+        }
+    }
+
+    /// <summary>Опросить байт реплики орудия и применить смену у не-авторитета
+    /// (и у авторитета, если реплика пришла извне). Паттерн PollShipTypeReplica:
+    /// OnChange-дельта меняет свойство без callback — сверяем байт за физшаг.</summary>
+    private void PollWeaponReplica()
+    {
+        if (Net == null || Net.WeaponTypeValue == _lastWeaponReplica)
+            return;
+        _lastWeaponReplica = Net.WeaponTypeValue;
+        var spec = WeaponCatalog.FindByByte(Net.WeaponTypeValue);
+        if (Weapon.Type != spec.Type)
+            EquipWeapon(spec.Type);
+    }
+
+    /// <summary>Следующий тип орудия каталога по кругу (дебаг-переключатель):
+    /// список — WeaponCatalog.Types, порядок = порядок записей каталога.</summary>
+    public WeaponType NextWeaponType()
+    {
+        var types = WeaponCatalog.Types;
+        for (int i = 0; i < types.Length; i++)
+            if (types[i].Type == Weapon.Type)
+                return types[(i + 1) % types.Length].Type;
+        return types[0].Type;
     }
 
     /// <summary>Принятые, но ещё не исполненные запросы выстрела: тик + мировая
@@ -198,10 +319,14 @@ public partial class Ship : RigidBody3D
 
     /// <summary>Мировая точка выстрела (для сетевого гейта В17 п.3 и локального
     /// хитскана), этап 6 (шаг 5): совпадает с маркой прицела на HUD. Приоритет:
-    ///  1) ЗАХВАЧЕННАЯ цель (Tab, `TargetingService`) — если она уже внутри
-    ///     допуска `AimToleranceM` вокруг локального носа (нос доворачивается к
-    ///     курсору PilotAim, поэтому вне конуса целиться в цель нельзя: сервер
-    ///     отклонил бы выстрел гейтом В17 п.3);
+    ///  1) ЗАХВАЧЕННАЯ цель (Tab, `TargetingService`) — та же математика, что и
+    ///     у курсора (этап «наводки», унификация ветвей): внутри конуса «углов
+    ///     наводки» — точка = сама цель; вне конуса — направление схлопывается
+    ///     на границу (марка и ствол «следят» за целью с края сектора, а не
+    ///     убегают на курсор). Раньше был исторический допуск `AimToleranceM *
+    ///     0.9` и провал на курсор вне него — теперь единый конус
+    ///     `Weapon.AimLimitRad` = серверный `AimToleranceM` (гейт В17 п.3
+    ///     принимает границу: сравнение строго «больше допус ка»).</summary>
     ///  2) ТОЧКА ПОПАДАНИЯ РЕЙКАСТА ИГРОКА (камера → курсор, маска `LaserMask`,
     ///     своё тело исключено) — ровно туда, куда игрок навёл перекрестие на
     ///     объект (фикс бага «хитскан не в точку перекрестия»: раньше целью
@@ -209,7 +334,15 @@ public partial class Ship : RigidBody3D
     ///     параллакса «ствол ≠ камера» луч от ствола к этой дальней точке
     ///     проходил МИМО объекта, в который реально уперлось перекрестие);
     ///     если рейкаст в пустоту — точка на луче камеры на `LaserRange`;
-    ///  3) фолбэк — нос `-Basis.Z` на длину луча (headless/без курсора).</summary>
+    ///  3) фолбэк — нос `-Basis.Z` на длину луча (headless/без курсора).
+    ///
+    /// Этап «наводка» (docs/weapon-aim-plan.md): направление хитскана ограничивается
+    /// конусом «углов наводки» орудия (`Weapon.AimLimitRad`) вокруг носа: если курсор
+    /// вышел за угол, точка остаётся на ЛОСЬ «ствол → курсор» до границы конуса —
+    /// то есть прицельная точка уходит на край возможного поворота ствола, не сходя
+    /// с линии «центр экрана → курсор» (в проекции камеры — та же линия). Итоговое
+    /// направление кешируется в `_weaponAimDir` — тем же направлением доворачивается
+    /// ствол турели (один источник правды: марка HUD, ствол и хитскан совпадают).</summary>
     public Vector3 AimPointWorld()
     {
         Vector3 origin = BeamOriginGlobal();
@@ -218,8 +351,24 @@ public partial class Ship : RigidBody3D
         if (LockedTargetPos(out Vector3 targetPos))
         {
             Vector3 to = targetPos - origin;
-            if (to.LengthSquared() > 1e-6f && fwd.AngleTo(to.Normalized()) <= AimToleranceM * 0.9f)
-                return targetPos;
+            if (to.LengthSquared() > 1e-6f)
+            {
+                // Единый конус с ветвью курсора: внутри — цель как есть,
+                // снаружи — граница «углов наводки» в плоскости (нос, цель).
+                // Сравнение «внутри» — по углу (не float-== нормализованных!).
+                float depth = to.Length();
+                _weaponAimDir = WeaponAim.ClampToCone(fwd, to, Weapon.AimLimitRad);
+                bool inside = fwd.AngleTo(to / depth) <= Weapon.AimLimitRad + 1e-4f;
+                // Марка HUD = фактическая точка прицела: позиция цели (внутри
+                // сектора) или точка на границе конуса на глубине цели — марка
+                // сидит НА цели, а не на фиксированной дистанции от ствола.
+                _weaponAimMarker = inside
+                    ? targetPos
+                    : origin + _weaponAimDir * Mathf.Min(depth, LaserRange);
+                return inside
+                    ? targetPos
+                    : origin + _weaponAimDir * LaserRange;
+            }
         }
 
         Camera3D? cam = GetViewport()?.GetCamera3D();
@@ -249,10 +398,54 @@ public partial class Ship : RigidBody3D
 
             Vector3 aimDir = aimTarget - origin;
             if (aimDir.LengthSquared() > 1e-6f)
-                return origin + aimDir.Normalized() * LaserRange;
+            {
+                // «Углы наводки» орудия: направление вне конуса схлопывается на
+                // границу конуса в плоскости «нос → курсор» (WeaponAim.ClampToCone).
+                _weaponAimDir = WeaponAim.ClampToCone(fwd, aimDir, Weapon.AimLimitRad);
+                // Марка HUD = фактическая точка прицела (попадание рейкаста),
+                // а не точка на фиксированной дистанции от ствола: иначе из-за
+                // параллакса «камера ≠ срез ствола» марка не совпадает с
+                // рейкастом и висит выше цели. Вне конуса — точка на границе
+                // конуса на глубине точки прицела (та же линия «ствол → цель»).
+                float depth = aimTarget.DistanceTo(origin);
+                bool inside = fwd.AngleTo(aimDir.Normalized()) <= Weapon.AimLimitRad + 1e-4f;
+                _weaponAimMarker = inside
+                    ? aimTarget
+                    : origin + _weaponAimDir.Normalized() * Mathf.Min(depth, LaserRange);
+                return origin + _weaponAimDir * LaserRange;
+            }
         }
 
+        _weaponAimDir = fwd;
         return origin + fwd * AimingBeamLength;
+    }
+
+    /// <summary>Мировая точка прицела орудия для HUD (марка на экране): ФАКТИЧЕСКАЯ
+    /// точка прицела этого кадра — попадание рейкаста курсора / позиция цели
+    /// (баг-фикс: раньше марка пересчитывалась на фиксированной дистанции от
+    /// ствола и из-за параллакса «камера ≠ ствол» не совпадала с рейкастом).
+    /// null, если орудие ещё ни разу не целилось.</summary>
+    public Vector3? WeaponAimPointWorld()
+    {
+        if (_weaponAimDir == Vector3.Zero)
+            return null;
+        // Если рейкаст этого кадра ещё не выполнялся (физшаг раньше HUD), марка
+        // — вдоль направления ствола на дистанции прицела (линия та же).
+        return _weaponAimMarker ?? (BeamOriginGlobal() + _weaponAimDir * LaserRange);
+    }
+
+    /// <summary>Доворот ствола турели за прицелом (локальный пилот, этап «наводки»):
+    /// пересчитывает точку прицела (AimPointWorld — со схлопыванием по «углам
+    /// наводки») и ставит ствол по полученному направлению. Один дешёвый рейкаст
+    /// раз в физшаг — тот же порядок, что у прицела-визуала. Без турели/без пилота
+    /// или в режиме взаимодействия — no-op (курсор не является прицелом).</summary>
+    private void AimTurretLocal()
+    {
+        if (_weapon == null || !IsLocalPilot || IsInteractionMode)
+            return;
+        AimPointWorld(); // обновляет _weaponAimDir (в конусе орудия)
+        if (_weaponAimDir != Vector3.Zero)
+            _weapon.AimBarrel(_weaponAimDir);
     }
 
     /// <summary>Мировая позиция цели, захваченной локальным пиром (Tab):
@@ -843,11 +1036,13 @@ public partial class Ship : RigidBody3D
             Height = len,
         };
         beam.Mesh = cyl;
-        // Светящийся белый материал — картинка, не физический объект (нет коллизии).
+        // Светящийся трассер цветом ОРУДИЯ (WeaponSpec.BeamColor, этап «наводки»:
+        // красное орудие — красный луч, зелёное — зелёный; лазер — исторический
+        // белый). Картинка, не физический объект (нет коллизии).
         var mat = new StandardMaterial3D
         {
             EmissionEnabled = true,
-            Emission = new Color(1, 1, 1),
+            Emission = Weapon.BeamColor,
             EmissionEnergyMultiplier = 2.0f,
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
         };

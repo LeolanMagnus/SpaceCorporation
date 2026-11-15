@@ -163,10 +163,19 @@ public partial class Ship : RigidBody3D
             }
             mat.AlbedoColor = spec.HullColor;
         }
-        // Ствол — срез носа: при смене корпуса смещаем Muzzle на новый нос.
-        var muzzle = GetNodeOrNull<Node3D>("Muzzle");
-        if (muzzle != null)
-            muzzle.Position = new Vector3(0f, 0f, -spec.HullSize.Z * 0.5f);
+        // Ствол — срез носа: при смене корпуса смещаем крепление турели (Weapon)
+        // на новый нос. Этап «наводки»: Muzzle больше не голый узел — турель
+        // вынесена в отдельную сцену WeaponTurret.tscn (инстанс "Weapon").
+        var weapon = GetNodeOrNull<Node3D>("Weapon");
+        if (weapon != null)
+            weapon.Position = new Vector3(0f, 0f, -spec.HullSize.Z * 0.5f);
+        else
+        {
+            // Legacy-сцены без турели: смещаем голый Muzzle (обратная совместимость).
+            var muzzle = GetNodeOrNull<Node3D>("Muzzle");
+            if (muzzle != null)
+                muzzle.Position = new Vector3(0f, 0f, -spec.HullSize.Z * 0.5f);
+        }
         // Навесные примитивы силуэта (только картинка): пересобираем с нуля —
         // их набор зависит от типа (контейнеры, груз, кили). Узел-обёртка живёт
         // под ShipHull, сами меш-инстансы пересоздаются при каждой смене типа.
@@ -186,7 +195,11 @@ public partial class Ship : RigidBody3D
 
         // Этап 6, шаг 4: орудие типа — дальность/интервал/урон хитскана живут
         // в спецификации оружия (`WeaponTypes.cs`), зеркалятся в рабочие поля.
-        ApplyWeaponSpec(WeaponCatalog.Find(spec.Weapon));
+        // Этап «наводка»: если в реплике уже стоит выбранный орудие-байт
+        // (спавн-снимок после смены оснащения), тип корабля его не перетирает.
+        byte weaponByte = Net != null && Net.WeaponTypeValue != (byte)spec.Type
+            ? Net.WeaponTypeValue : (byte)spec.Weapon;
+        ApplyWeaponSpec(WeaponCatalog.FindByByte(weaponByte));
     }
 
     /// <summary>Пересобрать навесные примитивы силуэта корпуса (чистая картинка,
@@ -477,6 +490,7 @@ public partial class Ship : RigidBody3D
         // и массу тела, и базу полётной модели, и вид корпуса.
         Net = GetNodeOrNull<NetState>("NetState");
         _lastShipTypeReplica = Net?.ShipTypeValue ?? 255;
+        _lastWeaponReplica = Net?.WeaponTypeValue ?? (byte)WeaponType.LaserTurret;
         // Экспорт MaxAngularSpeed, заданный ДО AddChild (шов теста п.12 стадии 2:
         // настройка корабля в сцене/кодом должна доживать до Flight). Он значим
         // только для типа по умолчанию (Courier — тип сцены); для остальных
@@ -498,8 +512,11 @@ public partial class Ship : RigidBody3D
 
         CollisionLayer = CollisionLayers.Ship;
         CollisionMask = CollisionLayers.ShipMask;
-        // Шаг 3.3: ствол — начало визуального луча (Ship.tscn: Muzzle, pos (0,0,-2)).
-        _muzzle = GetNodeOrNull<Node3D>("Muzzle");
+        // Шаг 3.3 + этап «наводки»: начало луча — срез ствола турели из отдельной
+        // сцены WeaponTurret.tscn (Ship.tscn: инстанс "Weapon", дочка Pivot/Muzzle);
+        // legacy-голый "Muzzle" остаётся фолбэком для старых сцен/сценариев.
+        _weapon = GetNodeOrNull<WeaponTurret>("Weapon");
+        _muzzle = (Node3D?)_weapon?.MuzzleNode ?? GetNodeOrNull<Node3D>("Muzzle");
         // Этап 4, шаг 4.7: форма корпуса для IntersectShape-запроса контакта со
         // станцией (Ship.tscn: CollisionShape3D, BoxShape3D 2×1×4).
         _hullShapeNode = GetNodeOrNull<CollisionShape3D>("CollisionShape3D");
