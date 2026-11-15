@@ -140,11 +140,12 @@ public static class WeaponCatalog
             fireRatePerSec: 2f),
 
         // Тестовое орудие «наводки» (ТЗ): угол наводки 5°, красный меш и луч;
-        // остальные параметры — копия лазера.
+        // остальные параметры — копия лазера, КРОМЕ дальности: +200 м (600 м)
+        // для теста «дальность/марка вне зоны поражения» (этап «формы марки»).
         new WeaponSpec(
             WeaponType.RedFiveDegTurret, "Red Turret 5\u00b0 (тест, узкий сектор)",
             isHitscan: true,
-            rangeM: 400f,
+            rangeM: 600f,
             shieldDamage: 10,
             hullDamage: 20,
             energyCost: 10,

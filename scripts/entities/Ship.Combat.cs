@@ -23,6 +23,14 @@ public partial class Ship : RigidBody3D
     /// такая марка не совпадала с рейкастом и висела выше цели). Вне сектора
     /// наводки — точка на границе конуса на глубине цели/курсора.</summary>
     private Vector3? _weaponAimMarker;
+    /// <summary>Прицельная марка этого кадра в зоне поражения орудия: True —
+    /// в конусе «углов наводки» есть фактическая цель/попадание рейкаста на
+    /// дистанции не больше дальности оружия (маркер прицела реален); False —
+    /// прицел ушёл за сектор наводки или в пустоту за пределами дальности
+    /// (марка — точка «в никуда» на границе конуса/на дальности). Ставится
+    /// вместе с <see cref="_weaponAimMarker"/> в AimPointWorld, читает HUD
+    /// (<see cref="WeaponAimMarkerInRange"/>) для формы марки.</summary>
+    private bool? _weaponAimMarkerInRange;
 
     // ─── Шаг 3.4: серверная авторизация выстрела (В17) ──────────────────────
     // Гейты В17: (1) стреляющий = пилот корабля (тот же гейт, что у ввода);
@@ -365,6 +373,9 @@ public partial class Ship : RigidBody3D
                 _weaponAimMarker = inside
                     ? targetPos
                     : origin + _weaponAimDir * Mathf.Min(depth, LaserRange);
+                // Марка «в зоне поражения»: цель захвачена ИЛИ в секторе наводки,
+                // И на дистанции не дальше дальности орудия.
+                _weaponAimMarkerInRange = inside && depth <= LaserRange;
                 return inside
                     ? targetPos
                     : origin + _weaponAimDir * LaserRange;
@@ -372,7 +383,10 @@ public partial class Ship : RigidBody3D
         }
 
         Camera3D? cam = GetViewport()?.GetCamera3D();
-        if (cam != null && _pilotInput.LastMousePx != Vector2.Zero)
+        // Режим взаимодействия (ТЗ «марка в INTERACT): курсор — НЕ прицел:
+        // рейкаст от мыши пропускается, марка держится на захваченной цели
+        // (ветка выше) либо сводится к направлению ствола по умолчанию (низ).
+        if (cam != null && !IsInteractionMode && _pilotInput.LastMousePx != Vector2.Zero)
         {
             Vector2 px = _pilotInput.LastMousePx;
             Vector3 o = cam.ProjectRayOrigin(px);
@@ -412,11 +426,19 @@ public partial class Ship : RigidBody3D
                 _weaponAimMarker = inside
                     ? aimTarget
                     : origin + _weaponAimDir.Normalized() * Mathf.Min(depth, LaserRange);
+                // Марка «в зоне поражения»: ствол смотрит на неё в секторе
+                // наводки, а рейкаст не длиннее дальности орудия (дальняя точка
+                // луча как раз на дальности — считается дострелимой).
+                _weaponAimMarkerInRange = inside && depth <= LaserRange + 1f;
                 return origin + _weaponAimDir * LaserRange;
             }
         }
 
         _weaponAimDir = fwd;
+        // Марка «ствол по умолчанию» (низ): вдоль носа на дальности орудия —
+        // на экране у центра; в секторе и на границе дальности → «в зоне».
+        _weaponAimMarker = origin + fwd * LaserRange;
+        _weaponAimMarkerInRange = true;
         return origin + fwd * AimingBeamLength;
     }
 
@@ -434,14 +456,23 @@ public partial class Ship : RigidBody3D
         return _weaponAimMarker ?? (BeamOriginGlobal() + _weaponAimDir * LaserRange);
     }
 
+    /// <summary>Точка прицела этого кадра ПОПАДАЕТ в зону поражения орудия:
+    /// ствол довернут на неё внутри «углов наводки» и дистанция не больше
+    /// дальности оружия. HUD рисует по этому флагу форму марки: круг — внутри
+    /// зоны, круг с косым крестом — снаружи (марка «в никуда»). null — прицел
+    /// ещё не считан в этом кадре (HUD держит форму прошлого кадра).</summary>
+    public bool? WeaponAimMarkerInRange() => _weaponAimMarkerInRange;
+
     /// <summary>Доворот ствола турели за прицелом (локальный пилот, этап «наводки»):
     /// пересчитывает точку прицела (AimPointWorld — со схлопыванием по «углам
     /// наводки») и ставит ствол по полученному направлению. Один дешёвый рейкаст
     /// раз в физшаг — тот же порядок, что у прицела-визуала. Без турели/без пилота
-    /// или в режиме взаимодействия — no-op (курсор не является прицелом).</summary>
+    /// — no-op. В режиме взаимодействия НЕ пропускается: там AimPointWorld не
+    /// смотрит на мышь (рейкаст от курсора отсечён внутри), марка и ствол
+    /// следуют за захваченной целью либо сводятся к носу (ствол по умолчанию).</summary>
     private void AimTurretLocal()
     {
-        if (_weapon == null || !IsLocalPilot || IsInteractionMode)
+        if (_weapon == null || !IsLocalPilot)
             return;
         AimPointWorld(); // обновляет _weaponAimDir (в конусе орудия)
         if (_weaponAimDir != Vector3.Zero)

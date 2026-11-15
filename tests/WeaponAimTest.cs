@@ -126,11 +126,15 @@ public partial class WeaponAimTest : Node
             "красное орудие: красный меш И красный луч");
         Check(green.MeshColor.G > 0.5f && green.MeshColor.R < 0.4f && green.BeamColor.G > 0.5f,
             "зелёное орудие: зелёный меш И зелёный луч");
-        Check(red.RangeM == laser.RangeM && red.HullDamage == laser.HullDamage
+        Check(red.RangeM == laser.RangeM + 200f,
+            "Red5 (наименьший угол наводки): дальность +200 м к лазеру (600 м, тест марки вне зоны)");
+        Check(red.HullDamage == laser.HullDamage
               && red.ShieldDamage == laser.ShieldDamage && red.EnergyCost == laser.EnergyCost
               && Mathf.Abs(red.FireIntervalSec - laser.FireIntervalSec) < 1e-6f
               && red.IsHitscan == laser.IsHitscan,
             "тестовые орудия: остальные параметры — копия лазера");
+        Check(green.RangeM == laser.RangeM,
+            "Green15: дальность как у лазера (+200 м только у наименьшего угла наводки)");
         Check(WeaponSpec.DefaultMeshColor.B > 0.5f && WeaponSpec.DefaultMeshColor.R < 0.4f,
             "меш орудия по умолчанию — синий (ТЗ)");
         Check(Mathf.Abs(laser.AimLimitRad - 0.15f) < 2e-3f,
@@ -263,12 +267,16 @@ public partial class WeaponAimTest : Node
         Check(ship.WeaponAimPointWorld() is Vector3 mIn
               && (mIn - target.GlobalPosition).Length() < 0.05f,
             "захват внутри сектора: марка HUD сидит НА цели (совпадает с точкой прицела, фикс. дистанции нет)");
+        Check(ship.WeaponAimMarkerInRange() == true,
+            "захват внутри сектора на 100 м (< дальность 600 м): марка В зоне поражения (HUD: круг)");
 
         // Цель ВНЕ сектора: под 30° вправо от носа — направление на границе 5°
         // в плоскости «нос → цель», марка на глубине цели (не на самой цели).
         Vector3 offDir = nose.Rotated(Vector3.Up, Mathf.DegToRad(30f));
         target.GlobalPosition = origin + offDir * 100f;
         ship.AimPointWorld(); // пересчитывает марку (побочный эффект _weaponAimMarker)
+        Check(ship.WeaponAimMarkerInRange() == false,
+            "захват вне сектора: марка ВНЕ зоны поражения (HUD: круг с косым крестом)");
         Check(ship.WeaponAimPointWorld() is Vector3 mOut
               && Mathf.Abs((mOut - origin).Length() - 100f) < 0.05f,
             "захват вне сектора: марка на глубине цели (та же линия, граница конуса)");
@@ -282,6 +290,40 @@ public partial class WeaponAimTest : Node
             Check(Mathf.Abs(markerDir.Dot(offDir.Cross(nose).Normalized())) < 1e-2f,
                 "захват вне сектора: марка в плоскости «нос → цель» (не сходит с линии)");
         }
+
+        // Цель В секторе, но дальше дальности (Red5 = 600 м, тест +200 м):
+        // марка за пределами зоны поражения → HUD рисует круг с косым крестом.
+        target.GlobalPosition = origin + nose * 700f;
+        ship.AimPointWorld();
+        Check(ship.WeaponAimMarkerInRange() == false,
+            "захват в секторе, но за дальностью 600 м: марка вне зоны поражения");
+        target.GlobalPosition = origin + nose * 500f; // в зоне: 500 м < 600 м
+        ship.AimPointWorld();
+        Check(ship.WeaponAimMarkerInRange() == true,
+            "захват в секторе и внутри дальности 600 м: марка в зоне поражения");
+
+        // ── Режим взаимодействия (ТЗ «марка в INTERACT»): курсор не прицел ──
+        // Цель вне сектора — марка по-прежнему следует за ЦЕЛЬЮ (на границе
+        // конуса на глубине цели), а не за мышью.
+        ship.SetInteractionMode(true);
+        target.GlobalPosition = origin + offDir * 100f;
+        ship.AimPointWorld();
+        Check(ship.WeaponAimPointWorld() is Vector3 mInteract
+              && Mathf.Abs((mInteract - origin).Length() - 100f) < 0.05f
+              && (mInteract - origin).Normalized().AngleTo(nose) < Mathf.DegToRad(6f),
+            "INTERACT: марка следует за захваченной целью (не за курсором)");
+        Check(ship.WeaponAimMarkerInRange() == false,
+            "INTERACT: цель вне сектора — марка вне зоны поражения (крест)");
+
+        // Без захваченной цели в INTERACT — марка сводится к стволу по
+        // умолчанию: направление носа, дистанция дальности орудия, «в зоне».
+        targeting.Clear();
+        ship.AimPointWorld();
+        Check(ship.WeaponAimPointWorld() is Vector3 mNose
+              && (mNose - (origin + nose * 600f)).Length() < 0.05f
+              && ship.WeaponAimMarkerInRange() == true,
+            "INTERACT без цели: марка на носу (ствол по умолчанию) на дальности 600 м, в зоне");
+        ship.SetInteractionMode(false);
 
         RemoveChild(target);
         target.Free();

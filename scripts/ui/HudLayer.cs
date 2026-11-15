@@ -309,8 +309,12 @@ public partial class HudLayer : CanvasLayer
         // мировая точка прицела ствола (схлопнута в конус «углов наводки») —
         // проекция активной камеры в экранные пиксели. За сектором наводки марка
         // остаётся на линии «центр → курсор», на краю угла поворота ствола.
+        // ТЗ «марка в INTERACT»: марка орудия остаётся на HUD и в режиме
+        // взаимодействия — но НЕ следует за мышью: Ship.AimPointWorld там
+        // игнорирует курсор (марка на захваченной цели или на носу, ствол
+        // по умолчанию). Поэтому гейт — локальный пилот, а не ShowAim.
         _reticle.HasWeaponAim = false;
-        if (_reticle.ShowAim)
+        if (myShip != null && myShip.IsLocalPilot)
         {
             Camera3D? aimCam = GetViewport().GetCamera3D();
             Vector3? wp = myShip!.WeaponAimPointWorld();
@@ -318,7 +322,9 @@ public partial class HudLayer : CanvasLayer
             {
                 // мировая точка → экранные пиксели активной камеры
                 _reticle.WeaponAimPx = aimCam.UnprojectPosition(wp.Value);
-                _reticle.WeaponAimColor = myShip.Weapon.BeamColor;
+                // Форма марки зависит от зоны поражения орудия (этап «дальности»):
+                // внутри — просто круг, снаружи — круг с косым крестом.
+                _reticle.WeaponAimInRange = myShip.WeaponAimMarkerInRange() ?? true;
                 _reticle.HasWeaponAim = true;
             }
         }

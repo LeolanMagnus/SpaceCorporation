@@ -40,9 +40,15 @@ public partial class AimReticle : Control
     /// <summary>Есть ли в этом кадре прицельная точка оружия (пир ведёт корабль
     /// в режиме пилотирования и орудие целилось).</summary>
     public bool HasWeaponAim { get; set; }
-    /// <summary>Цвет марки прицельной точки = цвет трассера орудия
-    /// (<c>WeaponSpec.BeamColor</c>: лазер белый, тесты — красный/зелёный).</summary>
-    public Color WeaponAimColor { get; set; } = Colors.White;
+    /// <summary>Точка прицела этого кадра в зоне поражения орудия (ствол
+    /// довернут на неё внутри «углов наводки», дистанция ≤ дальности).
+    /// Определяет ФОРМУ марки: true — круг, false — круг с косым крестом.
+    /// Ставит HudLayer из <c>Ship.WeaponAimMarkerInRange</c>.</summary>
+    public bool WeaponAimInRange { get; set; } = true;
+
+    /// <summary>Цвет марки прицельной точки — фиксированный, ОТ ОРУДИЯ НЕ
+    /// ЗАВИСИТ (этап «формы марки»: цвет меняет только вспышка/трассер лазера).</summary>
+    public static readonly Color WeaponAimColor = new Color(0.9f, 0.95f, 1.0f, 0.95f);
 
     /// <summary>Центр экрана = нос + «центр» расчёта PilotAim. Полноэкранный
     /// Control с якорями на весь rect: Size == размер вьюпорта, центр — Size/2.</summary>
@@ -89,35 +95,48 @@ public partial class AimReticle : Control
             }
             DrawCursorReticle(cursor, skin);
 
-            // Этап «наводки»: прицельная точка ОРУДИЯ (ствол в конусе «углов
-            // наводки»): пока курсор в секторе — совпадает с прицелом, за
-            // сектором — остаётся на границе. Рисуем поверх: маленький крест
-            // в цвет трассера оружия.
+            // Этап «наводки/формы марки»: прицельная точка ОРУДИЯ (ствол в
+            // конусе «углов наводки»): пока курсор в секторе — совпадает с
+            // прицелом, за сектором — остаётся на границе. Рисуем поверх:
+            // круг (в зоне поражения) / круг с косым крестом (вне зоны).
             DrawWeaponAimPoint(skin);
         }
         else
         {
             // Не пилотируем — точка носа остаётся ориентиром «куда смотрит нос».
             DrawNosePoint(c, skin);
+            // ТЗ «марка в INTERACT»: марка прицельной точки орудия живёт и вне
+            // прицельного слоя (не следует за мышью — её позицию даёт Ship).
+            DrawWeaponAimPoint(skin);
         }
     }
 
     // ────────────────────────────── Элементы ───────────────────────────────────
 
     /// <summary>Точка-маркер носа (центр экрана).</summary>
-    /// <summary>Марка прицельной точки орудия: крест + тонкое кольцо в цвет
-    /// трассера оружия. Совпадает с прицелом, пока курсор в секторе наводки;
-    /// за сектором — уходит на край конуса (данные считает Ship, здесь только рисунок).</summary>
+    /// <summary>Марка прицельной точки орудия (этап «формы марки»): ФОРМА по
+    /// зоне поражения — <see cref="WeaponAimInRange"/>: true — просто круг,
+    /// false — круг, перечеркнутый косым крестом. Цвет фиксированный, от
+    /// орудия НЕ зависит (цвет меняет только вспышка/трассер лазера).
+    /// Положение марки считает Ship (в секторе наводки / на его границе),
+    /// здесь только рисунок.</summary>
     private void DrawWeaponAimPoint(ReticleSkin skin)
     {
         if (!HasWeaponAim)
             return;
         Vector2 p = WeaponAimPx;
         Color col = WeaponAimColor;
-        const float a = 7f; // полуразмер креста, px
-        DrawLine(p - new Vector2(a, 0), p + new Vector2(a, 0), col, 1.5f);
-        DrawLine(p - new Vector2(0, a), p + new Vector2(0, a), col, 1.5f);
-        DrawArc(p, 9f, 0f, Mathf.Tau, 24, new Color(col.R, col.G, col.B, 0.7f), 1.5f);
+        const float r = 9f; // радиус кольца, px
+        DrawCircle(p, r, new Color(col.R, col.G, col.B, 0.18f));
+        DrawArc(p, r, 0f, Mathf.Tau, 32, col, 1.5f);
+        if (!WeaponAimInRange)
+        {
+            // Снаружи зоны поражения — косой (диагональный) крест через круг.
+            const float d = r + 3f;
+            Vector2 k = new Vector2(d * 0.7071f, d * 0.7071f);
+            DrawLine(p - k, p + k, col, 1.5f);
+            DrawLine(p - new Vector2(-k.X, k.Y), p + new Vector2(-k.X, k.Y), col, 1.5f);
+        }
     }
 
     private void DrawNosePoint(Vector2 c, ReticleSkin skin)
