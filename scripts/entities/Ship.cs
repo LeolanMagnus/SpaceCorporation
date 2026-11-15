@@ -421,8 +421,53 @@ public partial class Ship : RigidBody3D
     /// <summary>Пилотирует ли этот корабль локальный пир: именно он собирает кадры
     /// ввода и шлёт их серверу. С шага 2.3 это НЕ равно авторитету: авторитет
     /// корабля навсегда у сервера (id = 1), пилот — клиент (§3.5 п.8, В14=B).
-    /// В offline SelfId = 1 = PilotPeerId, поэтому поведение стадии 1 сохраняется.</summary>
-    public bool IsLocalPilot => PilotPeerId == NetworkManager.Instance?.SelfId;
+    /// В offline SelfId = 1 = PilotPeerId, поэтому поведение стадии 1 сохраняется.
+    ///
+    /// BUG-008 (рецидив в сети): в хост-режиме «свободный корабль» имеет
+    /// `PilotPeerId = FreeShipPilotId = 1` (автопилот сервера), а сам хост — пир 1,
+    /// поэтому одна только проверка `PilotPeerId == SelfId` делала хоста пилотом
+    /// ВСЕХ незанятых кораблей: `SetProcessInput(true)` + `FrameForStep` читал
+    /// глобальную клавиатуру, и второй корабль повторял ввод игрока. Отличить
+    /// «хост пристёгнут» от «автопилот» по номеру нельзя (оба = 1), поэтому для
+    /// пилота-значения «свободный корабль» право ввода даёт только факт «локальный
+    /// игрок сидит в кабине этого корабля». Клиент (SelfId ≥ 2) и offline
+    /// (FreeShipPilotId = 0) в эту ветку не попадают — поведение не меняется.</summary>
+    public bool IsLocalPilot
+    {
+        get
+        {
+            var nm = NetworkManager.Instance;
+            if (nm == null || PilotPeerId != nm.SelfId)
+                return false;
+            // Гейт нужен ТОЛЬКО в Host-режиме: там хост — пир 1, и «автопилот 1»
+            // неотличим от «хост-игрок 1» по номеру. На Dedicated клавиатуры нет
+            // (пира 1 в игре нет как игрока), и на конвенции «пилот 1 = локальный
+            // пилот» держится стендовый автопилот (OBS-002) и тесты (Stage3 п.17) —
+            // там оставляем прежнее поведение.
+            if (PilotPeerId == nm.FreeShipPilotId && nm.Role == NetworkManager.NetRole.Host)
+                return LocalPlayerSeatsInCockpit();
+            return true;
+        }
+    }
+
+    /// <summary>Пристёгнут ли ЛОКАЛЬНЫЙ игрок (авторитет узла = мы) к креслу этого
+    /// корабля. Тот же признак, что в `Player.PilotedShip`, только развёрнутый от
+    /// корабля. Помогает различить «автопилот 1» и «хост-игрок 1» (BUG-008, сеть).</summary>
+    private bool LocalPlayerSeatsInCockpit()
+    {
+        var nm = NetworkManager.Instance;
+        if (GetTree() == null || nm == null || Net == null || Net.ShipNetId == 0)
+            return false;
+        foreach (var node in GetTree().GetNodesInGroup("player"))
+        {
+            if (node is Player p && GodotObject.IsInstanceValid(p) &&
+                p.GetMultiplayerAuthority() == nm.SelfId &&
+                p.IsAttached && p.AttachedTo!.Kind == AttachPoint.KindOf.Seat &&
+                p.AttachedTo!.OwnerNetId == Net.ShipNetId)
+                return true;
+        }
+        return false;
+    }
 
     /// <summary>Симулирует ли это тело локальный пир (авторитет узла = мы).
     /// С шага 2.3 для корабля это «мы сервер».</summary>

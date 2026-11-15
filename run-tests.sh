@@ -13,4 +13,4 @@ echo "### dotnet build"
 dotnet build -v q --nologo
 
 echo "### godot --headless $SCENE"
-"$GODOT" --headless --path . "$SCENE"
+"$GODOT" --headless --path . "$SCENE" ${EXTRA_ARGS:-} "$@"

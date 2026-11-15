@@ -368,6 +368,34 @@
   пристёгнут), `ship#2 pilot=0 IsLocalPilot=False inputOn=False`. Прогон тестов:
   Stage1Test 104/0, Stage2Test 83/0, Stage3Test OK, Stage4Test OK, Stage5Test OK,
   NetTest 123/0.
+- **Рецидив №2 (сетевой, Host-режим):** «в сетевой игре второй корабль в главной
+  сцене повторяет ввод игрока». Офлайн-фикс (`FreeShipPilotId = 0`) сети не касается:
+  `FreeShipPilotId => Role == Offline ? 0 : 1`, то есть в сети «свободный корабль»
+  имеет пилота-автопилота **1**, а хост — пир 1 (`SelfId == 1`). Значит
+  `PilotPeerId == SelfId` снова true у обоих кораблей: `ApplyAuthority` включает
+  `SetProcessInput(true)` второму, а `FrameForStep` у него читает глобальную
+  клавиатуру (`CollectInputFrame`) — второй корпус повторяет WASD/мышь первого.
+  Отличить «хост пристёгнут» от «автопилот» по номеру нельзя: `AttachServerSide`
+  пишет пилоту хост-игрка то же 1. Клиент (`SelfId ≥ 2`) и offline не затронуты —
+  потому баг виден только у хоста.
+- **Исправление (рецидив №2):** гейт по факту крепления в `Ship.IsLocalPilot` —
+  вариант «локальный игрок сидит в кабине», помеченный выше как второй: при
+  `PilotPeerId == FreeShipPilotId` **и роли Host** право ввода даёт только
+  `LocalPlayerSeatsInCockpit()` (тот же признак, что в `Player.PilotedShip`:
+  `Player` с авторитетом нашего пира пристёгнут к креслу с `OwnerNetId` этого
+  корабля). Гейт намеренно НЕ распространён на Dedicated: там у пира 1 клавиатуры
+  нет, а на конвенции «пилот 1 = локальный пилот» держатся стендовый автопилот
+  (OBS-002) и тесты (Stage3Test п.17) — распространение гейта на Dedicated ломало
+  п.17 (проверено прогоном).
+- **Проверено (рецидив №2):** `ProbePilotAtSpawn` дополнен фазой 3 (`-- --host`):
+  offline-мир → `StartServer(withLocalPlayer: true)` → автопристёжка хост-игрка,
+  второй заход газа уже в host-фазе. До фикса второй корабль при `PilotPeerId = 1`
+  имел `IsLocalPilot = True, inputOn = True` и ехал от чужого газа; после —
+  `[host] ship#1 ... IsLocalPilot = True |v| = 32,5, ship#2 pilot = 1
+  IsLocalPilot = False inputOn = False |v| = 0`. Прогон: offline-проба PASS,
+  host-проба PASS, Stage2/4/5/7Test 0 FAIL, Stage3Test 0 FAIL (было 2 с неверной
+  шириной гейта — см. выше), Stage1Test 3 и NetTest п.7 — предсуществующие FAIL
+  (воспроизведены на чистом `git stash`).
 
 ---
 
