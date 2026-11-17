@@ -93,7 +93,6 @@ public partial class NetworkManager : Node
             st.DockApproved = phase >= DockState.Approved && phase < DockState.Docked;
         }
         DebugInfoBus.Report($"dock: ship#{shipNetId} фаза -> {phase.ToString().ToLower()}");
-        DebugInfoBus.Report($"dock: ship#{shipNetId} фаза -> {phase.ToString().ToLower()}");
         // H6 (hud-plan): событие «пристыкован» — в комм-лог HUD (один вызов на
         // событие). Пока событие локальное (хост/сервер); у чистого клиента
         // комм-лог об этом не узнает — RPC-рассылка событий будет позже.

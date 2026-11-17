@@ -46,7 +46,8 @@ public partial class Stage7Test : Node
         Hover0, Hover1, Hover2, Hover3, SuitHud0,
             NetSeat0, NetSeat1, NetSeat2,
             EvaNet0,
-            Turn0, Cam0, Jump0, Edge0, Edge1,
+            Turn0, Cam0, Jump0, Edge0, Edge1, Edge2,
+            Dock0,
             Done
     }
     private Phase _phase = Phase.Build;
@@ -323,6 +324,14 @@ public partial class Stage7Test : Node
                 break;
             case Phase.Edge1:
                 Edge1_WalkStopsAtEdge();      // проба-луч гасит тягу у края
+                Next(Phase.Edge2);
+                break;
+            case Phase.Edge2:
+                Edge2_LedgeStepDownToPad();   // обрыв к нижней палубе: шаг вниз, не «по воздуху»
+                Next(Phase.Dock0);
+                break;
+            case Phase.Dock0:
+                Dock0_UnifiedDockedStatus();  // единый статус «пристыкован» (П9/П10)
                 Next(Phase.Done);
                 break;
 

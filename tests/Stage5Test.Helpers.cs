@@ -33,6 +33,80 @@ public partial class Stage5Test
         Check(Docking.AllowDock(Docking.DockSpeedLimit),
               "п.1: AllowDock ровно DockSpeedLimit == true (<=)");
 
+        // П6: ComputeAlignError — чистая схема выравнивания.
+        // Конвенция: nose = −Z, «над площадкой» = вдоль up (+Y).
+        var id = Docking.ComputeAlignError(new Vector3(0, 20, 0), Quaternion.Identity,
+                                           Vector3.Zero, Vector3.Up, Vector3.Forward);
+        Check(Mathf.Abs(id.YawDeg) < 1e-3f && Mathf.Abs(id.PitchDeg) < 1e-3f
+              && Mathf.Abs(id.RollDeg) < 1e-3f && id.OffsetM < 1e-3f && id.Within,
+              $"п.1: AlignError(идеальное) все нули && Within (yaw={id.YawDeg} pitch={id.PitchDeg} roll={id.RollDeg} off={id.OffsetM})");
+        // Рыскание: доворот +10° вокруг up — проекция носа уходит по −right → −10°.
+        var yawQ = new Quaternion(Vector3.Up, Mathf.DegToRad(10f));
+        var yawE = Docking.ComputeAlignError(new Vector3(0, 20, 0), yawQ, Vector3.Zero,
+                                             Vector3.Up, Vector3.Forward);
+        Check(Mathf.Abs(yawE.YawDeg - -10f) < 0.1f && !yawE.Within,
+              $"п.1: AlignError(yaw -10°): YawDeg≈-10 && !Within (получено {yawE.YawDeg})");
+        // Допуск: тангаж 4.99° — Within, 5.01° — нет (нос вверх = доворот +X).
+        var p5 = Docking.ComputeAlignError(new Vector3(0, 20, 0),
+                                           new Quaternion(Vector3.Right, Mathf.DegToRad(4.99f)),
+                                           Vector3.Zero, Vector3.Up, Vector3.Forward);
+        var p51 = Docking.ComputeAlignError(new Vector3(0, 20, 0),
+                                            new Quaternion(Vector3.Right, Mathf.DegToRad(5.01f)),
+                                            Vector3.Zero, Vector3.Up, Vector3.Forward);
+        Check(p5.Within && !p51.Within && Mathf.Abs(Mathf.Abs(p5.PitchDeg) - 4.99f) < 0.1f
+              && Mathf.Abs(Mathf.Abs(p51.PitchDeg) - 5.01f) < 0.1f,
+              $"п.1: AlignError |тангаж| 4.99° Within, 5.01° нет (pitch={p5.PitchDeg:F3}/{p51.PitchDeg:F3}, in={p5.Within}/{p51.Within})");
+        // Смещение: 2.4 м — Within, 2.6 м — нет (по правой оси площадки +X).
+        var oA = Docking.ComputeAlignError(new Vector3(2.4f, 20, 0),
+                                           Quaternion.Identity, Vector3.Zero, Vector3.Up, Vector3.Forward);
+        var oB = Docking.ComputeAlignError(new Vector3(2.6f, 20, 0),
+                                           Quaternion.Identity, Vector3.Zero, Vector3.Up, Vector3.Forward);
+        Check(oA.Within && !oB.Within,
+              $"п.1: AlignError смещение 2.4 м Within, 2.6 м нет (off={oA.OffsetM:F2}/{oB.OffsetM:F2}, in={oA.Within}/{oB.Within})");
+        // Крен: доворот вокруг оси носа (-Z) на 10° → ошибка крена ≈10°.
+        var rollE = Docking.ComputeAlignError(new Vector3(0, 20, 0),
+                                              new Quaternion(Vector3.Back, Mathf.DegToRad(10f)),
+                                              Vector3.Zero, Vector3.Up, Vector3.Forward);
+        Check(Mathf.Abs(Mathf.Abs(rollE.RollDeg) - 10f) < 0.1f && !rollE.Within,
+              $"п.1: AlignError крен |10°| && !Within (получено {rollE.RollDeg})");
+
+        // BUG «стыкуется вверх ногами» (два корня): (1) `up.Cross(fwd)` давал
+        // ЗЕРКАЛЬНЫЙ базис (det=-1) — кватернион переворачивал корабль килем
+        // вверх; (2) Vector3.Back в Godot = (0,0,+1), а нос модели = −Z, т.е.
+        // Vector3.Forward — прежний `rot * Vector3.Back` брал ХВОСТ и разворачивал
+        // рысканием на 180°. UprightPose: верх = нормаль палубы, азимут носа
+        // сохранён, базис правый (det=+1).
+        var upQ = Docking.UprightPose(Quaternion.Identity, Vector3.Up);
+        Check(Docking.UprightCos(upQ, Vector3.Up) > 0.999f,
+              $"п.1: UprightPose(идеал) верх совпадает с палубой (cos={Docking.UprightCos(upQ, Vector3.Up):F3})");
+        Check((upQ * Vector3.Forward).Dot(Vector3.Forward) > 0.999f,
+              "п.1: UprightPose(идеал) = идеал (нос -Z не меняется)");
+        // Перевёрнутый вход (килем вверх) -> выпрямленный выход тем же рысканием.
+        var flip = new Quaternion(Vector3.Right, Mathf.Pi);
+        var fixQ = Docking.UprightPose(flip, Vector3.Up);
+        Vector3 noseIn = flip * Vector3.Forward;
+        Check(Docking.UprightCos(fixQ, Vector3.Up) > 0.999f
+              && (fixQ * Vector3.Forward).Dot(noseIn) > 0.99f,
+              $"п.1: UprightPose(перевёрнутый) выпрямлен, рыскание сохранено (up={Docking.UprightCos(fixQ, Vector3.Up):F3} nose·noseIn={(fixQ * Vector3.Forward).Dot(noseIn):F3})");
+        // Косой вход (нос вниз под 45°, тангаж) -> upright с тем же азимутом носа.
+        var dive = new Quaternion(Vector3.Right, Mathf.DegToRad(45f));
+        var diveOut = Docking.UprightPose(dive, Vector3.Up);
+        var noseInFlat = dive * Vector3.Forward; noseInFlat.Y = 0f; noseInFlat = noseInFlat.Normalized();
+        Check(Docking.UprightCos(diveOut, Vector3.Up) > 0.999f
+              && (diveOut * Vector3.Forward).Dot(noseInFlat) > 0.99f,
+              "п.1: UprightPose(тангаж 45°) -> upright, азимут носа сохранён");
+        // Правый базис: X-ось выхода = Y×Z (det=+1) — проверка через ортогональность
+        // и ориентацию: (outX × outY)·outZ > 0.
+        var bo = new Basis(fixQ);
+        Check(bo.X.Cross(bo.Y).Dot(bo.Z) > 0.99f,
+              $"п.1: UprightPose базис правый (det={bo.X.Cross(bo.Y).Dot(bo.Z):F3})");
+        // UprightLatchCos: боковой вход (верх к +X) не проходит латч.
+        var sideQ = new Quaternion(Vector3.Back, Mathf.DegToRad(90f));
+        Check(!Docking.IsLatchedUpright(Vector3.Zero, Vector3.Zero, Docking.UprightCos(sideQ, Vector3.Up)),
+              "п.1: IsLatchedUpright(бок 90°) == false");
+        Check(Docking.IsLatchedUpright(Vector3.Zero, Vector3.Zero, Docking.UprightCos(upQ, Vector3.Up)),
+              "п.1: IsLatchedUpright(upright) == true");
+
         // CaptureAccel: dx = (0,0,10), v = 0 → ускорение +z и |a| <= MaxSpringAccel.
         var a = Docking.CaptureAccel(new Vector3(0, 0, 10), Vector3.Zero);
         Check(a.Z > 0, $"п.1: CaptureAccel(dx=+z, v=0) -> a.z > 0 (получено {a.Z})");
@@ -71,7 +145,7 @@ public partial class Stage5Test
         // AlignError: нос (-Z) смотрит в точку стыка (ось +z от корабля к доку —
         // т.е. axis = направление «нос к доку»). Кватернион identity: нос = -Z;
         // axis = -Z → ошибка 0; axis = +X → π/2.
-        float err0 = Docking.AlignError(Quaternion.Identity, Vector3.Back);
+        float err0 = Docking.AlignError(Quaternion.Identity, Vector3.Forward);
         Check(err0 < 1e-3f, $"п.1: AlignError(identity, -Z) ≈ 0 (получено {err0})");
         float err90 = Docking.AlignError(Quaternion.Identity, Vector3.Right);
         Check(Mathf.Abs(err90 - Mathf.Pi / 2f) < 1e-3f,
@@ -290,6 +364,28 @@ public partial class Stage5Test
         bool okF = _shipB.TestAcceptDockFromForTest(1, _shipB.Net!.ShipNetId, stationId);
         Check(!okF, "п.12: чужой/не-пилотный адрес в RPC отвергнут");
         _shipB.TestSetPilotForTest(1);
+
+        // п.12b (регресс бага «запрос стыковки не работает из режима
+        // взаимодействия»): радиоменю открывается ТОЛЬКО в Interaction-режиме,
+        // а гейт клавиши F (RequestDocking без fromCommlink) глушил запрос там
+        // целиком. Проверка клиентских гейтов (не серверного шва): в
+        // Interaction обычный вызов (путь F) — мёртв, вызов из комм-меню
+        // (fromCommlink) — проходит; отмена из радиоменю — тоже проходит.
+        _shipA.TestSetPilotForTest(1);
+        _shipA.SetInteractionMode(true);
+        _shipA.RequestDocking(stationId);
+        Check(!nm.HasDockRequest(shipA),
+              "п.12b: в Interaction путь F (без fromCommlink) по-прежнему закрыт");
+        _shipA.RequestDocking(stationId, fromCommlink: true);
+        Check(nm.HasDockRequest(shipA) && (DockState)_shipA.Net!.DockStateValue == DockState.Approved,
+              "п.12b: запрос из комм-меню в Interaction принят (Approved)");
+        _shipA.RequestDockCancel();
+        Check(nm.HasDockRequest(shipA),
+              "п.12b: отмена без fromCommlink в Interaction по-прежнему закрыта");
+        _shipA.RequestDockCancel(fromCommlink: true);
+        Check(!nm.HasDockRequest(shipA) && !_station.DockApproved,
+              "п.12b: отмена из радиоменю в Interaction сработала (чисто, огни гаснут)");
+        _shipA.SetInteractionMode(false);
     }
 
     /// <summary>п.13: вызов на не-авторитете (роль клиента) — отказ без записи.</summary>

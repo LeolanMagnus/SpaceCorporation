@@ -299,12 +299,17 @@ public partial class RadialMenu : Control
         return true;
     }
 
-    /// <summary>«Связь с целью» — начало процесса связи. Сам процесс ещё не
-    /// реализован: сейчас только событие в комм-лог HUD.</summary>
+    /// <summary>Крючок «радиовызов сделан»: HudLayer решает исход связи
+    /// (сейчас — всегда успешный ответ: открывается меню радиосвязи CommlinkMenu,
+    /// П2; заложена ветка отказа: false-исход = только событие в комм-лог).</summary>
+    public System.Action<string>? OnCommlinkCalled;
+
+    /// <summary>«Связь с целью» — начало процесса связи. Сейчас: событие в
+    /// комм-лог + вызов крючка (меню радиосвязи открывается в HudLayer, П2).</summary>
     private void StartCommlink()
     {
         string name = Targeting?.TargetName ?? "";
         HudEventBus.Report($"Commlink: contacting {name}...");
-        //.процесс связи (длительный, с прогрессом) — реализуется позднее
+        OnCommlinkCalled?.Invoke(name);
     }
 }

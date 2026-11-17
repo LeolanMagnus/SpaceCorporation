@@ -403,6 +403,30 @@ public partial class Player : CharacterBody3D
         return null;
     }
 
+    /// <summary>
+    /// Механика посадки, П7 (docs/landing-mechanic-plan.md): статус
+    /// «пристыкован» для игрока, сидящего в кресле корабля в фазе Docked
+    /// (пилот остаётся в кресле — статус приходит вместе с фазой сделки,
+    /// реплика DockState есть на каждом пиру; отдельного флага-реплики нет —
+    /// статус ПРОИЗВОДНЫЙ, синхронизировать нечего). Входят/выходят из статуса
+    /// по правилам П10 (следующий пункт плана).
+    /// </summary>
+    public bool IsDockedToShip
+    {
+        get
+        {
+            if (!IsAttached || AttachedTo == null || AttachedTo.Kind != AttachPoint.KindOf.Seat)
+                return false;
+            for (Node n = AttachedTo.GetParent(); n != null; n = n.GetParent())
+            {
+                if (n is Ship ship)
+                    return ship.Net != null
+                           && (DockState)ship.Net.DockStateValue == DockState.Docked;
+            }
+            return false;
+        }
+    }
+
     // ------------------------------------------------------ дебаг-кнопки
 
     private void OnButtonAttach()

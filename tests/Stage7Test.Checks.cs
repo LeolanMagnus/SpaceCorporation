@@ -1600,4 +1600,213 @@ public partial class Stage7Test : Node
               BodyPos.X < 1.2f && _player.EvaTestBootsBody() != null
               && Mode == EvaMode.Boots && BodyPos.Y > -0.5f);
     }
+
+    /// <summary>Регресс бага «отстегнулся от пристыкованного корабля — иду по
+    /// воздуху над площадкой»: край ВЕРХНЕй плиты (корабль) нависает над
+    /// НИЖНЕй палубой (площадка станции) с перепадом глубже замерного луча
+    /// ботинок (~1.4 м). Прежний код: проба «есть ли опора впереди» видела
+    /// нижний пол и не гасила шаг, а серво зазора (луч короткий, до нижнего
+    /// пола не дотягивается) молчало — игрок шёл по воздуху на уровне верхнего
+    /// края. Новый код: зазор неизмерим, но длинный прыжковый луч опору под
+    /// собой видит ⇒ это обрыв ⇒ сходим с него баллистикой и прилипаем к
+    /// нижней палубе.</summary>
+    protected void Edge2_LedgeStepDownToPad()
+    {
+        RebuildWorld();
+        DisableShipColliders(_ship);
+        DisableShipColliders(_deck);
+        var upper = MakeSmallDeck(0f, -0.55f, 0f);       // «палуба корабля», край x=+1.25
+        // «Площадка станции» под кораблём: шире (ловит прыжок), верх y=-3.0,
+        // перепад 2.45 м — глубже замерного луча (1.4), внутри прыжкового (3.5).
+        var pad = new StaticBody3D
+        {
+            Name = "LowerPad",
+            CollisionLayer = CollisionLayers.Deck,
+            CollisionMask = 0u,
+            Transform = new Transform3D(Basis.Identity, new Vector3(2.5f, -3.25f, 0f)),
+        };
+        pad.AddChild(new CollisionShape3D
+        {
+            Shape = new BoxShape3D { Size = new Vector3(6f, 0.5f, 3f) },
+        });
+        _world.AddChild(pad);
+
+        _player.EvaTestStickTo(upper, new Vector3(0f, -0.55f, 0f), Vector3.Up);
+        for (int i = 0; i < 3; i++)
+            _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("обрыв2: старт на верхней плите прилип",
+              Mode == EvaMode.Boots && Mathf.Abs(BodyPos.X) < 0.2f
+              && BodyPos.Y > -0.6f && !_player.EvaTestBootsJumping());
+
+        StepsMask(InputMask.ThrustR, 40);   // 0.66 с по +X: центр уходит за край
+        bool jumped = _player.EvaTestBootsJumping();
+        Check("обрыв2: за край верхней плиты центр ушёл (x > 1.25)",
+              BodyPos.X > 1.25f);
+        Check("обрыв2: сработала фаза схода с обрыва (не шаг по воздуху)", jumped);
+        StepsMask(0u, 10);                  // 0.16 с свободного падения
+        Check("обрыв2: в прыжке игрок уже ниже уровня равновесия верхней плиты",
+              BodyPos.Y < -0.55f);
+
+        StepsMask(0u, 90);                  // 1.5 с: баллистика + приземление
+        bool landed = Mode == EvaMode.Boots && !_player.EvaTestBootsJumping()
+                      && _player.EvaTestBootsBody() == pad;
+        Check("обрыв2: приземление на нижнюю палубу, прилип к ней", landed);
+        Check("обрыв2: финальная высота у нижней палубы (y≈-2.05±0.2)",
+              Mathf.Abs(BodyPos.Y - (-3.0f + Player.CapsuleHeight * 0.5f
+                  + SuitModel.BootsStickOffset)) < 0.2f);
+        Check("обрыв2: приземлился подальше края (x в пределах площадки)",
+              BodyPos.X > 1.5f && BodyPos.X < 5.5f);
+    }
+
+    // ==================================================================
+    // Dock0 — механика посадки, П9/П10 (правка ТЗ): ЕДИНЫЙ статус
+    // «пристыкован» в обитаемой зоне. Игрок НЕ получает два статуса
+    // («ботинки» + «пристыкован»): зашедший в ботинках в зону получает
+    // только «пристыкован», индикатор ботинок с HUD исчезает, G внутри
+    // зоны молчит; за краем зоны — статус гаснет и возвращается джетпак.
+    // ==================================================================
+    protected void Dock0_UnifiedDockedStatus()
+    {
+        RebuildWorld();
+        // Донор-корабль и домашняя палуба вне игры: их формы перехватывали бы
+        // лучи ботинок (Frozen RigidBody держит позу в физсервере, а большая
+        // палуба — фантомный пол под всем стендом).
+        DisableShipColliders(_ship);
+        DisableShipColliders(_deck);
+
+        // Станция со сцены: HabDeck — плита 9.6×0.2×9.6 с центром (0,20,0) в
+        // осях станции (верх y=+20.2 локально), зона обитаемости — куб 9.6×
+        // (0.2+8)×9.6 над палубой. Ставим станцию так, чтобы центр палубы
+        // лёг в (0, 20.2, 0) мирового — игрок спавнится над ней.
+        var station = ((PackedScene)GD.Load("res://scenes/Station.tscn")).Instantiate<Station>();
+        station.Name = "DockStation";
+        // HabDeck локально y=20, форма со сдвигом +0.1 (толщина 0.2 ⇒ верх
+        // палубы y=20.2 в осях станции). Станция в начале координат — верх
+        // палубы мирового = 20.2.
+        _world.AddChild(station);
+
+        // Стыковка «Docked» на станции (офлайн — авторитет, гейт пройден).
+        station.SetDockStateServerOnly(DockState.Docked, 7);
+        Check("Dock0: станция в мире, площадка в группе, фаза Docked",
+              station.DockingState == DockState.Docked
+              && station.GetNodeOrNull<LandingPad>("LandingPad") != null);
+
+        // Живой HUD стенда (индикаторы ботинок/DOCKED живут в его ModeBox).
+        var hud = ((PackedScene)GD.Load("res://scenes/HudLayer.tscn")).Instantiate<HudLayer>();
+        hud.Name = "DockHud";
+        AddChild(hud);
+
+        // RebuildWorld гасит и QueueFree'ит старый мир, но его узлы (со
+        // вторым игроком в группе "player") выпадают из дерева только в конце
+        // кадра — а HUD ищет «единственного игрока» именно по группе. Снимаем
+        // остатки старых миров с группы явно: иначе FindLocalPlayer берёт
+        // призрака прошлого сценария (порядок в группе не гарантирован).
+        foreach (Node n in GetTree().GetNodesInGroup("player"))
+            if (n != _player)
+                n.RemoveFromGroup("player");
+
+        // Полёт к палубе станции: игрок спавнится на домашней палубе (y≈1.95).
+        // Сначала телепортируем его ЗА борт станции (x=10 > половины зоны
+        // 4.8), но на высоте палубы — шаг вне зоны: статуса нет, джетпак.
+        Vector3 deckTop = station.HabDeckSurfaceGlobal;   // (0, 20.2, 0)
+        _player.GlobalPosition = deckTop + new Vector3(10f, 1.2f, 0f);
+        _player.EvaTestSetBoots(false);                   // чистый старт в джетпаке
+        _player.EvaTestStep(FlightModel.FixedDt);         // шаг ВНЕ зоны — статуса нет
+        Check("Dock0: до входа в зону статуса «пристыкован» нет",
+              !_player.IsDockedStatus && _player.Mode == EvaMode.Jetpack);
+
+        // Шаг ВНУТРИ зоны (в джетпаке): RefreshDockedStatus даёт статус И сам
+        // прилипает ботинками — шутерное управление, но ЕДИНЫЙ статус.
+        _player.GlobalPosition = deckTop + new Vector3(0f, 1.2f, 0f);
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("Dock0: вход в зону ⇒ статус «пристыкован»",
+              _player.IsDockedStatus && _player.DockZoneStation == station);
+        Check("Dock0: в статусе ноги прилипли к палубе (механизм ходьбы)",
+              Mode == EvaMode.Boots && _player.EvaTestBootsBody() != null);
+
+        // HUD: индикатор ботинок СКРЫТ (статуса «магнитные ботинки» нет),
+        // горит только строка DOCKED. _Process hud'а пересчитывает видимость.
+        hud._Process(0.016);
+        var modeBox = hud.GetNode<Control>("HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox");
+        bool bootsLblVisible = false, dockedLblVisible = false;
+        foreach (Node c in modeBox.GetChildren())
+        {
+            if (c is not Label l) continue;
+            if (l.Text.Contains("МАГНИТНЫЕ БОТИНКИ")) bootsLblVisible |= l.Visible;
+            if (l.Text.Contains("DOCKED")) dockedLblVisible |= l.Visible;
+        }
+        Check("Dock0: HUD — индикатор «магнитные ботинки» скрыт в статусе",
+              !bootsLblVisible);
+        Check("Dock0: HUD — строка «DOCKED» горит", dockedLblVisible);
+
+        // G внутри зоны молчит: «ботинки» не выключаются, статус не теряется
+        // (правка ТЗ: отдельного статуса ботинок в обитаемой зоне нет).
+        string missBefore = _player.EvaTestLastMiss();
+        _player.EvaTestKeyPress("toggle_boots");
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("Dock0: G в зоне не выключает ходьбу (статус единый)",
+              _player.IsDockedStatus && Mode == EvaMode.Boots
+              && _player.EvaTestBootsBody() != null
+              && _player.EvaTestLastMiss() != missBefore);
+
+        // Прыжок внутри зоны — «как в шутере»: фаза прыжка НЕ гасит ботинки
+        // (хук InsideDockedHabitatZone), после приземления снова прилип.
+        StepsMask(InputMask.ThrustU, 1, hold: false);
+        Check("Dock0: прыжок в зоне не рвёт ботинки (шутерное поведение)",
+              _player.EvaTestBootsJumping() && Mode == EvaMode.Boots
+              && _player.IsDockedStatus);
+        for (int i = 0; i < 40; i++)
+            _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("Dock0: приземление в зоне — снова прилип, статус держится",
+              !_player.EvaTestBootsJumping() && _player.EvaTestBootsBody() != null
+              && _player.IsDockedStatus && Mode == EvaMode.Boots);
+
+        // Выход за край ЗОНЫ (x > 4.8 от оси станции; палуба/зона 9.6 шириной):
+        // статус гаснет, ботинки выключаются, доступен джетпак (П9 п.2).
+        _player.GlobalPosition = deckTop + new Vector3(6.5f, 1.2f, 0f);
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("Dock0: за краем зоны — статус потерян, ботинки погасли",
+              !_player.IsDockedStatus && _player.DockZoneStation == null
+              && Mode == EvaMode.Jetpack && _player.EvaTestBootsBody() == null);
+        // За бортом ЗОНЫ (x=6.5) физическая палуба станции ещё под ногами —
+        // правка ТЗ: ВНЕ обитаемой зоны G легально включает магнитные ботинки
+        // как ОТДЕЛЬНЫЙ статус (с опорой в пределах досягаемости лучей).
+        _player.EvaTestKeyPress("toggle_boots");
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        hud._Process(0.016);
+        bool dockedShown = false;
+        foreach (Node c in modeBox.GetChildren())
+            if (c is Label l && l.Text.Contains("DOCKED")) dockedShown |= l.Visible;
+        Check("Dock0: вне зоны G включил ботинки — статуса «пристыкован» нет",
+              Mode == EvaMode.Boots && !_player.IsDockedStatus && !dockedShown);
+
+        // Возврат в зону (TRL-кейс баг-репорта «два статуса»): в зоне
+        // включён лишь ЕДИНЫЙ статус, а ботинки — его механизм ходьбы:
+        // индикатор ботинок скрыт, горит только DOCKED.
+        _player.GlobalPosition = deckTop + new Vector3(0f, 1.2f, 0f);
+        _player.EvaTestStep(FlightModel.FixedDt);
+        Sync();
+        Check("Dock0: возврат в зону — статус и прилип снова",
+              _player.IsDockedStatus && Mode == EvaMode.Boots
+              && _player.EvaTestBootsBody() != null);
+        hud._Process(0.016);
+        bootsLblVisible = false;
+        dockedLblVisible = false;
+        foreach (Node c in modeBox.GetChildren())
+        {
+            if (c is not Label l) continue;
+            if (l.Text.Contains("МАГНИТНЫЕ БОТИНКИ")) bootsLblVisible |= l.Visible;
+            if (l.Text.Contains("DOCKED")) dockedLblVisible |= l.Visible;
+        }
+        Check("Dock0: заход в зоне в ботинках — HUD единый (ботинки скрыты, DOCKED горит)",
+              !bootsLblVisible && dockedLblVisible);
+
+        hud.QueueFree();
+    }
 }

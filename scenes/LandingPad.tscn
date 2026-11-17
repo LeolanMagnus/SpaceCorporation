@@ -29,11 +29,24 @@ albedo_color = Color(0.1, 0.9, 0.3, 1)
 radius = 2.0
 height = 4.0
 
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_cornerlight"]
+shading_mode = 0
+albedo_color = Color(0.1, 0.9, 0.3, 1)
+emission_enabled = true
+emission = Color(0.1, 0.9, 0.3, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_cornerlight"]
+radius = 0.22
+height = 0.44
+
 [sub_resource type="BoxShape3D" id="BoxShape3D_zone"]
 size = Vector3(12, 10, 12)
 
-[node name="ПОСАДОЧНАЯ ПЛОЩАДКА S" type="Node3D" unique_id=462673618]
+[node name="LandingSiteS" type="Node3D" unique_id=462673618]
 script = ExtResource("1_pad")
+SiteSize = 0
+CornerLightsPath = NodePath("PadLights")
 
 [node name="Pad" type="StaticBody3D" parent="." unique_id=609995223]
 transform = Transform3D(3, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0)
@@ -86,3 +99,27 @@ collision_layer = 16
 
 [node name="Shape" type="CollisionShape3D" parent="LandingZone" unique_id=164240041]
 shape = SubResource("BoxShape3D_zone")
+
+[node name="PadLights" type="Node3D" parent="."]
+visible = false
+
+[node name="LightNW" type="MeshInstance3D" parent="PadLights"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.0, 1.0, -2.0)
+material_override = SubResource("StandardMaterial3D_cornerlight")
+mesh = SubResource("SphereMesh_cornerlight")
+
+[node name="LightNE" type="MeshInstance3D" parent="PadLights"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.0, 1.0, -2.0)
+material_override = SubResource("StandardMaterial3D_cornerlight")
+mesh = SubResource("SphereMesh_cornerlight")
+
+[node name="LightSW" type="MeshInstance3D" parent="PadLights"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.0, 1.0, 2.0)
+material_override = SubResource("StandardMaterial3D_cornerlight")
+mesh = SubResource("SphereMesh_cornerlight")
+
+[node name="LightSE" type="MeshInstance3D" parent="PadLights"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.0, 1.0, 2.0)
+material_override = SubResource("StandardMaterial3D_cornerlight")
+mesh = SubResource("SphereMesh_cornerlight")
+

@@ -72,7 +72,12 @@ public partial class Ship : RigidBody3D
     private FlightState StepDockSpring(FlightState s, float dt)
     {
         var station = NetworkManager.Instance?.FindStationNode(Net!.DockStationNetId);
-        Vector3 dockPos = station != null ? station.DockPointGlobal
+        // Механика посадки, П7: цель пружины — та же поза, что проверяет
+        // TickDockPhases (над палубой площадки на высоте корпуса; без
+        // площадки — прежняя точка стыка станции). Иначе пружина «тянет» в
+        // одну точку, а латч/док проверяют другую — корабль виснет в 5 м
+        // над палубой и Docked никогда не наступит.
+        Vector3 dockPos = station != null ? DockPoseTarget(NetworkManager.Instance!, station)
                                           : station?.GlobalPosition ?? s.Position;
         Vector3 dx = dockPos - s.Position;
 
@@ -87,15 +92,31 @@ public partial class Ship : RigidBody3D
         // --- линейная доводка: ускорение пружины добавляем к существующей v ---
         f.LinearVelocity += Docking.CaptureAccel(dx, f.LinearVelocity) * dt;
 
-        // --- угловая доводка: доворот -Basis.Z к оси стыка (корабль к позиции,
-        // не к центру станции) по образцу экспоненциального сглаживания углов
-        // Stage2Test.PredictWithLook: q' = normalize(q * exp(w*dt/2)) ---
+        // --- угловая доводка ---
+        // ФИКС бага «при посадке корабль разворачивает вбок»: для ПОСАДКИ НА
+        // ПЛОЩАДКУ (есть pad) пружина доводит НЕ «нос к точке стыка», а
+        // «брюхо к нормали палубы» (верх корпуса к pad.GlobalBasis.Y), сохраняя
+        // азимут носа. Старый критерий «нос ↦ точка на палубе» вблизи площадки
+        // давал вектор вниз — нос задирался/корпус заваливался на бок вместо
+        // посадки «дна вниз». Без площадки (стыковка к внешнему узлу станции)
+        // — прежний доворот носа к оси стыка по образцу экспоненциального
+        // сглаживания углов Stage2Test.PredictWithLook: q' = norm(q*exp(w*dt/2)).
+        var pad = station?.LandingPad;
         Vector3 toDock = dockPos - s.Position;
-        if (toDock.LengthSquared() > 1e-6f)
+        if (toDock.LengthSquared() > 1e-6f || pad != null)
         {
-            toDock = toDock.Normalized();
-            Vector3 nose = f.Rotation * Vector3.Back; // конвенция: нос = -Z
-            Vector3 corr = nose.Cross(toDock);        // ось и величина доворота
+            Vector3 corr; // ось и величина доворота (axis * sin(angle))
+            if (pad != null)
+            {
+                Vector3 shipUp = f.Rotation * Vector3.Up; // низ корпуса = -Y
+                corr = shipUp.Cross(pad.GlobalBasis.Y);
+            }
+            else
+            {
+                toDock = toDock.Normalized();
+                Vector3 nose = f.Rotation * Vector3.Forward; // конвенция: нос = -Z = Godot Forward
+                corr = nose.Cross(toDock);
+            }
             Vector3 w = corr * Docking.AlignK - f.AngularVelocity * Docking.AlignDamp;
             // Потолок угловой скорости корпуса — и для доводки пружины: корабль
             // не обязан крутиться быстрее своей предельной скорости даже когда
@@ -108,14 +129,62 @@ public partial class Ship : RigidBody3D
             float wLen = f.AngularVelocity.Length();
             if (wLen > 1e-6f)
             {
+                // Угловая скорость — мировая (как в FlightModel.Step): прирост
+                // ДО умножением (dq * Rotation). Постумножение трактовало бы
+                // мировую ось в локальной системе — при перевёрнутом верху
+                // пружина тянула бы крен в обратную сторону.
                 var qd = new Quaternion(f.AngularVelocity.Normalized(), wLen * dt);
-                f.Rotation = (f.Rotation * qd).Normalized();
+                f.Rotation = (qd * f.Rotation).Normalized();
             }
         }
 
         // --- обычный полётный шаг (инерция + интеграция позиции/ориенти),
         // пустой кадр: тяги и ручного момента пилота нет ---
         return FlightModel.Step(f, Flight, default, dt);
+    }
+
+    /// <summary>
+    /// Поза для контакта с палубой: низ корпуса на середине палубы, центр —
+    /// над ней на половине высоты корпуса.
+    /// </summary>
+    private Vector3 DeckContactPose(Station station)
+    {
+        var pad = station.LandingPad;
+        return pad.DeckSurfaceGlobal + pad.GlobalBasis.Y * (_shipTypeSpec.HullSize.Y * 0.5f);
+    }
+
+    /// <summary>
+    /// Механика посадки, П7 (docs/landing-mechanic-plan.md): поза, куда пружина
+    /// доводит корабль. Если у станции есть посадочная площадка — это точка
+    /// контакта: низ корпуса на середине палубы («площадка опускает корабль
+    /// вниз до контакта с поверхностью»); ось доворота носа — вектор к этой
+    /// точке (уходит вниз по мере приближения, ориентация не ломается: вблизи
+    /// цели dx мал и латч проходит по тому же критерию, что и раньше). Без
+    /// площадки — прежняя точка стыка станции (стенды 5-го блока).
+    /// </summary>
+    private Vector3 DockPoseTarget(NetworkManager nm, Station station)
+    {
+        var pad = station.LandingPad;
+        return pad != null ? DeckContactPose(station) : station.DockPointGlobal;
+    }
+
+    /// <summary>Точка «дока» для корабля в текущей сделке (тесты п.21-23):
+    /// то же, что видит пружина. 0-станция/нет сделки → Vector3.Zero.</summary>
+    public Vector3 DockTargetForTest()
+    {
+        if (Net == null || NetworkManager.Instance is not { IsAuthoritySide: true } nm)
+            return Vector3.Zero;
+        var station = nm.FindStationNode(Net.DockStationNetId);
+        return station == null ? Vector3.Zero : DockPoseTarget(nm, station);
+    }
+
+    /// <summary>То же для явной станции (тесты ставят корабль у «дока» ДО
+    /// заключения сделки — DockStationNetId ещё пуст).</summary>
+    public Vector3 DockPoseTargetForTest(Station station)
+    {
+        if (NetworkManager.Instance is not { IsAuthoritySide: true } nm)
+            return Vector3.Zero;
+        return DockPoseTarget(nm, station);
     }
 
     /// <summary>Шаг 5.8: продвижение фаз сделки (Capturing → Latched → Docked).
@@ -126,7 +195,7 @@ public partial class Ship : RigidBody3D
     /// шаг 5.10).</summary>
     private void TickDockPhases()
     {
-        if (Net == null || NetworkManager.Instance is not { IsServer: true } nm)
+        if (Net == null || NetworkManager.Instance is not { IsAuthoritySide: true } nm)
             return;
         var entry = nm.FindDockRequest(Net.ShipNetId);
         if (entry == null)
@@ -140,12 +209,28 @@ public partial class Ship : RigidBody3D
             nm.AbortDock(Net.ShipNetId, "станция исчезла");
             return;
         }
-        Vector3 dockPos = station.DockPointGlobal;
+        Vector3 dockPos = DockPoseTarget(nm, station);
         Vector3 dx = dockPos - GlobalPosition;
-        float alignErr = Docking.AlignError(GlobalTransform.Basis.GetRotationQuaternion(),
-                                            dx.LengthSquared() > 1e-6f ? dx.Normalized()
-                                                                       : -GlobalTransform.Basis.Z);
-        if (st == DockState.Capturing && Docking.IsLatched(GlobalPosition, dockPos, alignErr))
+        var pad = station.LandingPad;
+        var rot = GlobalTransform.Basis.GetRotationQuaternion();
+        // ФИКС бага «разворачивает вбок»: у ПОСАДКИ НА ПЛОЩАДКУ угловой критерий
+        // — «брюхо к палубе» (UprightCos), а не «нос к точке стыка» (у точки на
+        // палубе под кораблём старый критерий заваливал корпус на бок). Без
+        // площадки (стыковка к внешнему узлу) — прежний AlignError (стенды 5-го
+        // блока проверяют именно его).
+        bool latchOk;
+        if (pad != null)
+        {
+            float upright = Docking.UprightCos(rot, pad.GlobalBasis.Y);
+            latchOk = Docking.IsLatchedUpright(GlobalPosition, dockPos, upright);
+        }
+        else
+        {
+            float alignErr = Docking.AlignError(rot,
+                dx.LengthSquared() > 1e-6f ? dx.Normalized() : -GlobalTransform.Basis.Z);
+            latchOk = Docking.IsLatched(GlobalPosition, dockPos, alignErr);
+        }
+        if (st == DockState.Capturing && latchOk)
         {
             nm.SetDockPhase(Net.ShipNetId, DockState.Latched);
             DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} latched (d = {dx.Length():F1} м)");
@@ -153,9 +238,19 @@ public partial class Ship : RigidBody3D
         else if (st == DockState.Latched && Docking.IsDocked(dx, LinearVelocity))
         {
             // Шаг 5.10: финальный замок — скорости в нуль, поза точно в точке.
+            // ФИКС бага «разворачивает вбок»: при посадке на площадку вместе с
+            // позицией снапсим и ориентацию «брюхом к палубе» (рыскание
+            // сохраняем) — иначе корабль остаёт боком, доведи пружина или нет.
             LinearVelocity = Vector3.Zero;
             AngularVelocity = Vector3.Zero;
             GlobalPosition = dockPos;
+            if (pad != null)
+            {
+                var uprightRot = Docking.UprightPose(rot, pad.GlobalBasis.Y);
+                GlobalTransform = new Transform3D(new Basis(uprightRot), dockPos);
+                if (IsLocalPilot)
+                    _predicted.Rotation = uprightRot; // предсказание пилота не рассинхронится
+            }
             nm.SetDockPhase(Net.ShipNetId, DockState.Docked);
             ApplyAuthority(); // Freeze = true у авторитета (единственная точка записи)
             DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} DOCKED at station#{Net.DockStationNetId}");
@@ -292,10 +387,16 @@ public partial class Ship : RigidBody3D
 
     /// <summary>Запрос стыковки локального пилота (клавиша F, действие
     /// `request_docking`). Тот же `FireGatesNonAim`-принцип: пилот и не
-    /// Interaction. Публично — шов теста зовёт путь кода без эмуляции клавиш.</summary>
-    public void RequestDocking(int stationNetId)
+    /// Interaction. Публично — шов теста зовёт путь кода без эмуляции клавиш.
+    /// fromCommlink=true — запрос из меню радиосвязи (радиальное/комм-меню
+    /// открывается в режиме взаимодействия, гейт клавиши F там глушил запрос —
+    /// баг «запрос стыковки не работает из режима взаимодействия»).
+    /// Гейта по режиму там нет намеренно: выбор опции в UI = явное действие,
+    /// а все остальные проверки (пилот/авторитет/геометрия/тип площадки) —
+    /// на серверном AcceptDockFrom.</summary>
+    public void RequestDocking(int stationNetId, bool fromCommlink = false)
     {
-        if (!IsLocalPilot || IsInteractionMode)
+        if (!IsLocalPilot || (IsInteractionMode && !fromCommlink))
             return;
         SubmitDockToServer(stationNetId);
     }
@@ -306,16 +407,72 @@ public partial class Ship : RigidBody3D
     {
         if (Net == null || Net.ShipNetId == 0)
             return; // нет адреса — запрос адресовать нечем
-        if (NetworkManager.Instance is not { IsServer: false })
+        if (NetworkManager.Instance is not { IsClient: true })
         {
             // Сервер (и offline — локальный авторитет) сам себе RPC не шлёт:
             // приём делается напрямую тем же серверным гейтом (В14=B: авторитет
-            // — источник истины, RPC — транспорт чужих намерений).
+            // — источник истины, RPC — транспорт чужих намерений). Гейт — по
+            // РОЛИ (IsClient), а не по !IsServer: в offline IsServer == false,
+            // и прежняя проверка «not { IsServer: false }» роняла офлайн-пилота
+            // в RpcId(1, …) — «RPC on yourself is not allowed».
             AcceptDockFrom(NetworkManager.Instance?.SelfId ?? 1,
                            Net.ShipNetId, stationNetId);
             return;
         }
         RpcId(1, nameof(RpcRequestDocking), Net.ShipNetId, stationNetId);
+    }
+
+    /// <summary>Отмена запроса посадки пилотом (радиоменю, П3-правки). Тот же
+    /// путь, что SubmitDockToServer: авторитет/офлайн — прямой вызов, клиент —
+    /// RPC на сервер. fromCommlink=true — снимает гейт клавиши F по режиму
+    /// взаимодействия (радиоменю живёт именно в нём; см. RequestDocking).</summary>
+    public void RequestDockCancel(bool fromCommlink = false)
+    {
+        if (!IsLocalPilot || (IsInteractionMode && !fromCommlink)
+            || Net == null || Net.ShipNetId == 0)
+            return;
+        var nm = NetworkManager.Instance;
+        if (nm is not { IsClient: true })
+        {
+            AcceptDockCancelFrom(nm?.SelfId ?? 1, Net.ShipNetId);
+            return;
+        }
+        RpcId(1, nameof(RpcCancelDocking), Net.ShipNetId);
+    }
+
+    /// <summary>Серверный приём отмены (гейты как у RpcRequestDocking).</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcCancelDocking(int shipNetId)
+        => AcceptDockCancelFrom(Multiplayer.GetRemoteSenderId(), shipNetId);
+
+    /// <summary>Серверная отмена сделки: только пилот корабля, только живое
+    /// разрешение (Approved/Requested) — захват (Capturing+) отмене уже не
+    /// подлежит. Отзыв = AbortDock: гасит огни, реестр и фазы обеих сторон.</summary>
+    private void AcceptDockCancelFrom(int senderPeer, int shipNetId)
+    {
+        var nm = NetworkManager.Instance;
+        if (nm is not { IsAuthoritySide: true } || Net == null || Net.ShipNetId != shipNetId)
+            return;
+        if (senderPeer != PilotPeerId)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: отмену посадки прислал не пилот " +
+                        $"(peer={senderPeer}) — отказ (В17)");
+            return;
+        }
+        var entry = nm.FindDockRequest(shipNetId);
+        if (entry == null)
+            return; // уже снято — идемпотентно
+        if (entry.Value.State is not (DockState.Requested or DockState.Approved))
+        {
+            if (senderPeer == nm.SelfId)
+                HudEventBus.Report("Посадка уже началась — отмена невозможна");
+            return;
+        }
+        nm.AbortDock(shipNetId, $"отмена по радио (peer {senderPeer})");
+        _hasDockApprovedUptime = false;
+        if (senderPeer == nm.SelfId)
+            HudEventBus.Report("Посадка отменена");
     }
 
     /// <summary>Серверный приём запроса стыковки от пилота (гейты В17). Атрибут
@@ -359,7 +516,7 @@ public partial class Ship : RigidBody3D
     private bool AcceptDockFrom(int senderPeer, int shipNetId, int stationNetId)
     {
         var nm = NetworkManager.Instance;
-        if (nm is not { IsServer: true })
+        if (nm is not { IsAuthoritySide: true })
         {
             GD.PrintErr($"ship#{shipNetId}: AcceptDockFrom вызван не на сервере " +
                         "— отказ (В14=B: клиент не может сам себя одобрить)");
@@ -397,6 +554,22 @@ public partial class Ship : RigidBody3D
             GD.PrintErr($"ship#{Net.ShipNetId}: станция #{stationNetId} не найдена — отказ");
             RejectedDockCount++;
             nm.NoteDockRejection();
+            return false;
+        }
+
+        // Механика посадки (П3, docs/landing-mechanic-plan.md): у цели обязана
+        // быть посадочная площадка типоразмера >= типоразмеру корабля. Курьер —
+        // S, поэтому существующие стенды (площадка LandingSiteS) проходят гейт.
+        var pad = station.LandingPad;
+        var sizeClass = ShipStatCatalog.FindByByte(Net.ShipTypeValue).SizeClass;
+        if (pad == null || !pad.AcceptsShip(sizeClass))
+        {
+            GD.Print($"ship#{Net.ShipNetId}: стыковка отклонена: у станции " +
+                     $"#{stationNetId} нет подходящей посадочной площадки " +
+                     $"(site={pad?.SiteSize.ToString() ?? "нет"}, ship={sizeClass})");
+            RejectedDockCount++; nm.NoteDockRejection();
+            if (senderPeer == nm.SelfId)
+                HudEventBus.Report("Посадка невозможна — нет подходящей площадки");
             return false;
         }
 
@@ -451,6 +624,10 @@ public partial class Ship : RigidBody3D
         AcceptedDockCount++;
         _dockApprovedUptimeSec = Time.GetTicksMsec() / 1000.0;
         _hasDockApprovedUptime = true;
+        // Механика посадки (П3): игроку — «посадка разрешена» в комм-лог HUD
+        // (запрос авторизуется синхронно, значит исход известен прямо здесь).
+        if (senderPeer == nm.SelfId)
+            HudEventBus.Report("Посадка разрешена — следуйте к посадочной площадке");
         DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} -> station#{stationNetId} approved " +
                             $"(peer {senderPeer})");
         return true;
@@ -476,8 +653,71 @@ public partial class Ship : RigidBody3D
             nm!.AbortDock(Net.ShipNetId, "окно истекло");
             DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} window expired ({ageSec:F1}s)");
             _hasDockApprovedUptime = false;
+            return;
+        }
+        // Механика посадки (П3-правки): разрешение живёт, пока игрок не отменит
+        // его через радиоменю, не улетит дальше DockCancelRangeM от станции,
+        // или не пройдёт DockWindowSec. Дистанция — от точки стыковки станции
+        // (то же начало координат, что у гейта «в зоне»).
+        var stationNode = nm.FindStationNode(entry.Value.StationNetId);
+        if (stationNode != null
+            && GlobalPosition.DistanceTo(stationNode.DockPointGlobal) > Docking.DockCancelRangeM)
+        {
+            nm.AbortDock(Net.ShipNetId, $"корабль отошёл на " +
+                        $"{GlobalPosition.DistanceTo(stationNode.DockPointGlobal):F0} м"
+                        + $" (> {Docking.DockCancelRangeM})");
+            if (PilotPeerId == nm.SelfId)
+                HudEventBus.Report("Посадка отменена: вы слишком далеко от станции");
+            _hasDockApprovedUptime = false;
         }
     }
+
+    /// <summary>
+    /// Механика посадки, П6 (docs/landing-mechanic-plan.md): авто-захват по
+    /// выравниванию. На авторитете, в фазе Approved: если корабль в зоне
+    /// захвата площадки (CaptureRadius от точки зависания) — окно одобрения
+    /// «продлевается» каждый кадр (пилот не гаснет посреди захода; стенд
+    /// п.16 стоит в 20 м — вне радиуса, его окно честно истекает). Когда
+    /// три угла и смещение в допуске (Docking.ComputeAlignError, допуск
+    /// AlignTolDeg) — «фиксация»: Approved → Capturing, серверная пружина
+    /// включается, управление пилота уже игнорируется пустым кадром шага.
+    /// Ручной путь (повторное F в AcceptDockFrom) остаётся запасным.
+    /// </summary>
+    private void TickAlignCapture()
+    {
+        if (Net == null || NetworkManager.Instance is not { IsAuthoritySide: true } nm)
+            return;
+        var entry = nm.FindDockRequest(Net.ShipNetId);
+        if (entry == null || entry.Value.State != DockState.Approved)
+            return;
+        var station = nm.FindStationNode(Net.DockStationNetId);
+        var pad = station?.LandingPad;
+        if (pad == null)
+            return; // без площадки авто-захвата нет — только окно и ручной путь
+
+        Vector3 padPos = pad.LandingPointGlobal;
+        float dist = GlobalPosition.DistanceTo(padPos);
+        if (dist > Docking.CaptureRadius)
+            return;
+
+        // Корабль у площадки: окно одобрения живёт, пока пилот заходит.
+        if (_hasDockApprovedUptime)
+            _dockApprovedUptimeSec = Time.GetTicksMsec() / 1000.0;
+
+        var e = Docking.ComputeAlignError(GlobalPosition, GlobalBasis.GetRotationQuaternion(),
+                                          padPos, pad.GlobalBasis.Y, -pad.GlobalBasis.Z);
+        if (!e.Within)
+            return;
+
+        nm.SetDockPhase(Net.ShipNetId, DockState.Capturing);
+        _hasDockApprovedUptime = false;
+        if (PilotPeerId == nm.SelfId)
+            HudEventBus.Report("Выравнивание зафиксировано — площадка захватила корабль");
+        DebugInfoBus.Report($"dock: ship#{Net.ShipNetId} align fixated " +
+                            $"(yaw={e.YawDeg:F1}° pitch={e.PitchDeg:F1}° roll={e.RollDeg:F1}° " +
+                            $"off={e.OffsetM:F1} м, d={dist:F1} м) -> Capturing");
+    }
+
     /// <summary>Шаг 5.12: телепорт в зону стыковки ближайшей станции — только
     /// сервер/локальный авторитет (кнопка регистрируется только ему, а метод
     /// гейтован дополнительно: прямые вызовы с клиента обязаны отбиваться).

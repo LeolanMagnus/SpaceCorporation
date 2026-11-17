@@ -30,13 +30,35 @@ public partial class LandingPad : Node3D
     /// <summary>Группа всех посадочных площадок в сцене.</summary>
     public const string GroupName = "landing_pad";
 
+    /// <summary>Типоразмер площадки (П1, docs/landing-mechanic-plan.md):
+    /// площадка принимает корабль, только если SiteSize >= SizeClass корабля.
+    /// Площадка меньше корабля — отказ: «посадка невозможна - нет подходящей
+    /// площадки». Пока в проекте одна площадка (LandingSiteS) — типоразмера S.</summary>
+    [Export] public ShipSizeClass SiteSize { get; set; } = ShipSizeClass.S;
+
+    /// <summary>Примет ли эта площадка корабль типоразмера cls.</summary>
+    public bool AcceptsShip(ShipSizeClass cls) => SiteSize >= cls;
+
+    /// <summary>Высота поверхности палубы над корнем площадки (Deck mesh:
+    /// центр 0.1, полувысота 0.1 → верх 0.2). Правится в инспекторе вместе
+    /// с геометрией платформы, код посадки её не хардкодит.</summary>
+    [Export] public float DeckTopOffset { get; set; } = 0.2f;
+
+    /// <summary>Точка на середине поверхности палубы (мировая) — «пол», на
+    /// который площадка опускает корабль при захвате (П7).</summary>
+    public Vector3 DeckSurfaceGlobal => GlobalPosition + GlobalBasis.Y * DeckTopOffset;
+
     [Export] public NodePath LandingPointPath { get; set; } = new("DockingPoint");
     [Export] public NodePath DetectorPath { get; set; } = new("LandingZone");
     [Export] public NodePath BeaconPath { get; set; } = new("DockingPoint/DockBeacon");
+    /// <summary>Узел-группа из 4 угновых посадочных огней (П4): горят все
+    /// вместе с маяком, когда стыковка одобрена (тот же DockApproved).</summary>
+    [Export] public NodePath CornerLightsPath { get; set; } = new("PadLights");
 
     private Node3D? _landingPoint;
     private Area3D? _detector;
     private MeshInstance3D? _beacon;
+    private Node3D? _cornerLights;
     private Station? _ownerStation;
 
     /// <summary>Точка зависания в мировых координатах: к ней ведёт пружина
@@ -50,6 +72,7 @@ public partial class LandingPad : Node3D
 
         _landingPoint = GetNodeOrNull<Node3D>(LandingPointPath);
         _beacon = GetNodeOrNull<MeshInstance3D>(BeaconPath);
+        _cornerLights = GetNodeOrNull<Node3D>(CornerLightsPath);
         _detector = GetNodeOrNull<Area3D>(DetectorPath);
         if (_detector != null)
         {
@@ -102,11 +125,24 @@ public partial class LandingPad : Node3D
     /// у клиентов маяк загорается из реплики). Без станции-владельца погашен.</summary>
     public override void _Process(double delta)
     {
-        if (_beacon != null)
-        {
-            bool on = _ownerStation?.DockApproved ?? false;
-            if (_beacon.Visible != on)
-                _beacon.Visible = on;
-        }
+        bool on = _ownerStation?.DockApproved ?? false;
+        if (_beacon != null && _beacon.Visible != on)
+            _beacon.Visible = on;
+        // Посадочные огни (П4): 4 зелёных огонька в углах платформы — те же
+        // условия горения, что у маяка.
+        if (_cornerLights != null && _cornerLights.Visible != on)
+            _cornerLights.Visible = on;
     }
+
+    /// <summary>Есть ли у станции-владельца корабль в финальной фазе стыковки
+    /// Docked (П9/П10: условие статуса «пристыкован» для игроков в зоне).</summary>
+    public bool HasDockedShip() => _ownerStation != null
+        && GodotObject.IsInstanceValid(_ownerStation)
+        && _ownerStation.DockingState == DockState.Docked;
+
+    /// <summary>Станция-владелец площадки (null, если площадка вне станции) —
+    /// у неё живёт обитаемая палуба и зона обитаемости (П8: геометрия и логика
+    /// перенесены в Station.tscn / Station.cs).</summary>
+    public Station? OwnerStation =>
+        _ownerStation != null && GodotObject.IsInstanceValid(_ownerStation) ? _ownerStation : null;
 }

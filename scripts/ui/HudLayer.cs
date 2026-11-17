@@ -44,6 +44,7 @@ public partial class HudLayer : CanvasLayer
     // режимными аббревиатурами, горит только пока локальный игрок в `Boots`
     // (в скафандровом джетпаке и кресле её нет).
     private Label _lblBootsInd = null!;
+    private Label _lblDockedInd = null!;
 
     // frame-plan шаг 7: локальная скорость в кадре родителя (LOC) + метка
     // захвата. Рисуются только при активной фазе захвата.
@@ -61,6 +62,12 @@ public partial class HudLayer : CanvasLayer
     // Круговое меню контекстных действий (Tab): кольцо из 8 секторов вокруг
     // центра экрана; вызов/закрытие — в _UnhandledInput.
     private RadialMenu _radialMenu = null!;
+    // Меню радиосвязи (П2): панель в нише статус-панели после успешного радиовызова.
+    private CommlinkMenu _commlinkMenu = null!;
+    // Стрелка к посадочной платформе (П5): направление после «посадка разрешена».
+    private DockArrow _dockArrow = null!;
+    // Голографическая схема выравнивания (П6): центр экрана в зоне площадки.
+    private AlignOverlay _alignOverlay = null!;
 
     // Марка пилотирования 2.0 (AimReticle): слой прицела (курсор-перекрестие,
     // пунктир, галочки) горит только когда локальный пир реально ведёт корабль
@@ -115,6 +122,19 @@ public partial class HudLayer : CanvasLayer
         _lblBootsInd.AddThemeFontOverride("font", bootsBold);
         GetNode<Control>("HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox").AddChild(_lblBootsInd);
 
+        // Механика посадки, шаг П4 бага-фикса: статус ИГРОКА «DOCKED» (пристыкован)
+        // отдельной строкой под индикатором ботинок. Раньше «DOCKED» появлялся
+        // только у пилота в кресле (строка режимов); игрок, вышедший из шлюза на
+        // палубу станции, не понимал, получил ли он статус «пристыкован».
+        _lblDockedInd = new Label
+        {
+            Visible = false,
+            Text = "⚓ DOCKED — ВЫ ПРИСТЫКОВАНЫ",
+        };
+        _lblDockedInd.AddThemeColorOverride("font_color", new Color(0.35f, 0.9f, 0.5f));
+        _lblDockedInd.AddThemeFontOverride("font", bootsBold);
+        GetNode<Control>("HudRoot/BottomLeft/StatusPanel/StatusBox/ModeBox").AddChild(_lblDockedInd);
+
         // frame-plan шаг 7: LOC-строка и метка захвата — создаём кодом и
         // кладём в SpeedBox под обычную скорость; стиль — синий жирный (§8.7).
         _lblLocSpeed = new Label { Visible = false };
@@ -144,6 +164,16 @@ public partial class HudLayer : CanvasLayer
         _radialMenu = GetNode<RadialMenu>("HudRoot/RadialMenu");
         _radialMenu.Targeting = _targeting;
 
+        // Меню радиосвязи (П2, docs/landing-mechanic-plan.md): строится кодом в
+        // нише статус-панели BottomLeft; открывается по успешному ответу на
+        // радиовызов из кругового меню («Связь с целью»).
+        _commlinkMenu = new CommlinkMenu { Name = "CommlinkMenu" };
+        GetNode<Control>("HudRoot/BottomLeft").AddChild(_commlinkMenu);
+        _commlinkMenu.OnDockRequested = RequestDockFromCommlink;
+        _commlinkMenu.OnDockCancelRequested = CancelDockFromCommlink;
+        _commlinkMenu.OnCloseRequested = CloseCommlinkMenu;
+        _radialMenu.OnCommlinkCalled = OnCommlinkCalled;
+
         // Подсказка посадки над перекрестием (создаётся кодом — она не несут
         // ни текстуру, ни макет, только текст у прицела): не перехватывает мышь,
         // рисуется поверх всех панелей (добавлена последней в HudRoot).
@@ -160,6 +190,16 @@ public partial class HudLayer : CanvasLayer
         _lblSeatHint.AddThemeColorOverride("font_outline_color", HudTheme.TextDim);
         _lblSeatHint.AddThemeConstantOverride("outline_size", 4);
         _hudRoot.AddChild(_lblSeatHint);
+
+        // Стрелка направления на посадочную платформу (П5): видна, пока у
+        // локального корабля одобрена посадка (Approved) и цель жива.
+        _dockArrow = new DockArrow { Name = "DockArrow", Visible = false };
+        _hudRoot.AddChild(_dockArrow);
+
+        // Голографическая схема выравнивания (П6): появляется в фазе Approved,
+        // когда свой корабль входит в зону посадочной площадки цели.
+        _alignOverlay = new AlignOverlay { Name = "AlignOverlay", Visible = false };
+        _hudRoot.AddChild(_alignOverlay);
 
         // Комм-лог (H6): слоты + подписка на шину событий.
         for (int i = 0; i < _commLabels.Length; i++)
@@ -212,8 +252,23 @@ public partial class HudLayer : CanvasLayer
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (_radialMenu.IsOpen && @event is InputEventKey esc
+        if (_commlinkMenu.IsCommlinkOpen && @event is InputEventKey esc
             && esc.Pressed && esc.Keycode == Key.Escape)
+        {
+            CloseCommlinkMenu();
+            return;
+        }
+        // П2: выбор строки радиоменю клавишами 1..5 (верхний/нижний ряд).
+        if (_commlinkMenu.IsCommlinkOpen && @event is InputEventKey dk && dk.Pressed
+            && !dk.Echo && dk.PhysicalKeycode >= Key.Key1
+            && dk.PhysicalKeycode <= Key.Key5)
+        {
+            _commlinkMenu.ChooseByKey((int)(dk.PhysicalKeycode - Key.Key1));
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+        if (_radialMenu.IsOpen && @event is InputEventKey esc2
+            && esc2.Pressed && esc2.Keycode == Key.Escape)
         {
             _radialMenu.Close();
             GetViewport().SetInputAsHandled();
@@ -287,6 +342,149 @@ public partial class HudLayer : CanvasLayer
         _hudRoot.Visible = HudVisible;
     }
 
+    /// <summary>Радиовызов из кругового меню («Связь с целью», П2). Исход связи
+    /// сейчас симулируется всегда успешным ответом (заглушка): открывается меню
+    /// радиосвязи в нише статус-панели. Ветка отказа заложена: цель не станция с
+    /// посадочной площадкой — connection «не установлена» для посадки, меню всё
+    /// равно открывается (3 заглушечные опции без «посадки»).
+    /// TODO(П2.1): сетка отказов (нет ответа / отказ) — по ТЗ.
+    /// </summary>
+    private void OnCommlinkCalled(string targetName)
+    {
+        bool dockOption = CommlinkDockTarget() != null;
+        // П3-правки: «Отменить посадку» — когда у нашего корабля живое
+        // разрешение (фаза Approved: огни горят, захват ещё не начался).
+        bool cancelOption = DockApprovedActive();
+        _commlinkMenu.Open(targetName, dockOption, cancelOption);
+        GetNode<Control>("HudRoot/BottomLeft/StatusPanel").Visible = false;
+    }
+
+    /// <summary>Есть ли у локального корабля живое разрешение на посадку
+    /// (фаза Approved — стрелка/огни горят, отмена ещё возможна).</summary>
+    private bool DockApprovedActive()
+    {
+        var ship = GetMyShip();
+        if (ship?.Net == null || !ship.IsLocalPilot)
+            return false;
+        var phase = (DockState)ship.Net.DockStateValue;
+        return phase == DockState.Approved && ship.Net.DockStationNetId != 0;
+    }
+
+    /// <summary>Закрыть меню радиосвязи и вернуть статус-панель (общий путь для
+    /// Esc/ПКМ/выбора опции).</summary>
+    private void CloseCommlinkMenu()
+    {
+        if (!_commlinkMenu.IsCommlinkOpen)
+            return;
+        _commlinkMenu.Close();
+        GetNode<Control>("HudRoot/BottomLeft/StatusPanel").Visible = true;
+    }
+
+    /// <summary>Цель радиосвязи, у которой есть посадочная площадка (станция с
+    /// LandingPad), или null (ТЗ П2: опция «Запросить посадку» видна только
+    /// если у цели есть площадка; проверка типоразмера — в П3).</summary>
+    private Station? CommlinkDockTarget()
+    {
+        var nm = NetworkManager.Instance;
+        if (nm == null || _targeting.TargetNode == null
+            || !GodotObject.IsInstanceValid(_targeting.TargetNode))
+            return null;
+        // Цель — StationState из реестра станций (targeting-plan).
+        if (_targeting.TargetNode is StationState st)
+        {
+            var station = nm.FindStationNode(st.StationNetId);
+            return station != null && station.LandingPad != null ? station : null;
+        }
+        return null;
+    }
+
+    /// <summary>Выбор «Запросить посадку» в меню радиосвязи. П2 — переход к
+    /// процедуре через RequestDocking (гейты В17/зоны уже в пути кода); П3
+    /// добавит проверку типоразмера площадки и сообщения об исходе.</summary>
+    private void RequestDockFromCommlink()
+    {
+        CloseCommlinkMenu();
+        var station = CommlinkDockTarget();
+        var ship = GetMyShip();
+        if (station == null || ship == null || !ship.IsLocalPilot)
+        {
+            HudEventBus.Report("Посадка: запрос невозможен (нужен свой корабль и цель-станция)");
+            return;
+        }
+        ship.RequestDocking(station.State?.StationNetId ?? 0, fromCommlink: true);
+    }
+
+    /// <summary>Выбор «Отменить посадку» в меню радиосвязи (П3-правки):
+    /// отзыв живого разрешения — гасит огни и стрелку. Путь через сервер
+    /// (или прямой вызов на авторитете), как и запрос.</summary>
+    private void CancelDockFromCommlink()
+    {
+        CloseCommlinkMenu();
+        var ship = GetMyShip();
+        if (ship == null || !ship.IsLocalPilot)
+        {
+            HudEventBus.Report("Отмена посадки: нужен свой корабль под управлением");
+            return;
+        }
+        ship.RequestDockCancel(fromCommlink: true);
+    }
+
+    /// <summary>Стрелка к платформе (П5): показываем, только когда у локального
+    /// корабля одобрена посадка (фаза Approved/Capturing) и станция цели жива;
+    /// иначе скрываем. Цель — мировая точка DockPointGlobal станции.</summary>
+    private void UpdateDockArrow()
+    {
+        var nm = NetworkManager.Instance;
+        var ship = GetMyShip();
+        bool show = false;
+        if (nm != null && ship?.Net != null && _dockArrow != null)
+        {
+            var phase = (DockState)ship.Net.DockStateValue;
+            if (phase >= DockState.Approved && phase < DockState.Latched
+                && ship.Net.DockStationNetId != 0)
+            {
+                var station = nm.FindStationNode(ship.Net.DockStationNetId);
+                if (station != null)
+                {
+                    _dockArrow.ShowAt(station.DockPointGlobal);
+                    show = true;
+                }
+            }
+        }
+        if (!show && _dockArrow != null && _dockArrow.IsActive)
+            _dockArrow.HideArrow();
+    }
+
+    /// <summary>Голографическая схема выравнивания (П6): показываем, когда
+    /// локальный пилот ведёт корабль с одобренной посадкой (фаза Approved) и
+    /// этот корабль находится в зоне детектора посадочной площадки цели.
+    /// Ошибки считаем чистой функцией Docking.ComputeAlignError — той же, что
+    /// на авторитете запускает «фиксацию» и захват (TickAlignCapture).</summary>
+    private void UpdateAlignOverlay()
+    {
+        var nm = NetworkManager.Instance;
+        var ship = GetMyShip();
+        bool show = false;
+        if (nm != null && ship?.Net != null && _alignOverlay != null
+            && ship.IsLocalPilot && ship.IsInLandingZone
+            && (DockState)ship.Net.DockStateValue == DockState.Approved
+            && ship.Net.DockStationNetId != 0)
+        {
+            var station = nm.FindStationNode(ship.Net.DockStationNetId);
+            var pad = station?.LandingPad;
+            if (pad != null)
+            {
+                Vector3 padPos = pad.LandingPointGlobal;
+                var e = Docking.ComputeAlignError(ship.GlobalPosition, ship.GlobalBasis.GetRotationQuaternion(),
+                                                  padPos, pad.GlobalBasis.Y, -pad.GlobalBasis.Z);
+                _alignOverlay.ShowWith(in e);
+                show = true;
+            }
+        }
+        if (!show && _alignOverlay != null && _alignOverlay.IsActive)
+            _alignOverlay.HideOverlay();
+    }
+
     public override void _Process(double delta)
     {
         if (!HudVisible)
@@ -297,6 +495,8 @@ public partial class HudLayer : CanvasLayer
         UpdateWorldTag();
         UpdateObjective();
         UpdateCommlink(delta);
+        UpdateDockArrow();
+        UpdateAlignOverlay();
 
         // Марка пилотирования 2.0: слой прицела (курсор-перекрестие, пунктир,
         // галочки) включаем только когда локальный пир реально ведёт свой корабль
@@ -400,6 +600,7 @@ public partial class HudLayer : CanvasLayer
         // локальный игрок не пристёгнут к креслу, `GetMyShip()` вернёт null и
         // статус-панель уйдёт в ранний выход, а индикатор гореть обязан.
         UpdateBootsIndicator();
+        UpdateDockedIndicator();
         UpdateSeatHint();
 
         var ship = GetMyShip();
@@ -476,17 +677,39 @@ public partial class HudLayer : CanvasLayer
         string boost = Input.IsActionPressed("boost") ? "BOOST" : "boost";
         string assist = (net?.PilotAssist ?? 1) == 1 ? "ASSIST" : "assist-off";
         string camera = ship.PilotChaseView ? "CHASE" : "COCKPIT";
-        _lblModes.Text = $"{boost}\n{assist}\n{camera}";
+        // Механика посадки, П7: статус корабля «DOCKED» (пристыкован) — третья
+        // строкаModes; пилот в кресле получает тот же статус (Player.IsDockedToShip).
+        bool dockedSt = (DockState)(ship.Net?.DockStateValue ?? 0) == DockState.Docked;
+        _lblModes.Text = dockedSt
+            ? $"{boost}\n{assist}\n{camera}\nDOCKED"
+            : $"{boost}\n{assist}\n{camera}";
     }
 
     /// <summary>Индикатор «МАГНИТНЫЕ БОТИНКИ» (правка 7-й части): горит, пока
     /// локальный игрок в режиме EVA-ботинок (`EvaMode.Boots`). Вне ботинок
-    /// (кресло/джетпак/внутри корабля) — скрыт.</summary>
+    /// (кресло/джетпак/внутри корабля) — скрыт. Правка ТЗ посадки: в статусе
+    /// «пристыкован» ботинки — внутренний механизм ходьбы, отдельного статуса
+    /// ботинок в обитаемой зоне нет ⇒ индикатор ботинок при статусе скрыт
+    /// (горит только «⚓ DOCKED»).</summary>
     private void UpdateBootsIndicator()
     {
         var p = FindLocalPlayer();
-        bool boots = p != null && p.Mode == EvaMode.Boots;
+        bool boots = p != null && p.Mode == EvaMode.Boots
+                     && !(p.IsDockedStatus || p.IsDockedToShip);
         _lblBootsInd.Visible = boots;
+    }
+
+    /// <summary>Механика посадки, шаг П4 бага-фикса: индикатор «DOCKED» для
+    /// ЛОКАЛЬНОГО ИГРОКА. Горит в двух случаях: (1) игрок получил статус
+    /// «пристыкован» на станции (`Player.IsDockedStatus` — вышел на палубу
+    /// пристыкованного корабля/жилую палубу станции); (2) игрок сидит в кресле
+    /// корабля в фазе Docked (`IsDockedToShip`). Раньше статус был виден только
+    /// как строка режимов у пилота — игрок вне кресла не понимал, пристыкован ли.</summary>
+    private void UpdateDockedIndicator()
+    {
+        var p = FindLocalPlayer();
+        bool docked = p != null && (p.IsDockedStatus || p.IsDockedToShip);
+        _lblDockedInd.Visible = docked;
     }
 
     // ───────── Подсказка посадки над перекрестием (гейт панели) ─────────

@@ -87,6 +87,11 @@ public static class SuitModel
     public const float BootsWalkSpeed = 3f;      // м/с (дефолт MoveInAttachedPlane)
     public const float BootsStepProbeLen = 1.2f; // м — луч «следующей ступеньки»
     public const float BootsStickOffset = 0.05f; // м зазор капсулы от поверхности
+    /// <summary>MAX высота ступени (перепад опор), м: разницу опор не выше
+    /// игрок шагает как обычно; выше — это обрыв, сходим с него как с
+    /// прыжка вниз (багфикс «иду по воздуху над площадкой под пристыко
+    /// ванным кораблём»).</summary>
+    public const float BootsStepDropTolerance = 0.6f;
 
     // ── Гистерезис HUD-предупреждений (порог ТЗ-подобный 10 %; полоса — подбор)
     public const float WarnOnPct = 10f;

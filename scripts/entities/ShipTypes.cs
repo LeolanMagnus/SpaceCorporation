@@ -19,6 +19,21 @@ public enum ShipType : byte
 }
 
 /// <summary>
+/// Классоразмер корабля (механика посадки, docs/landing-mechanic-plan.md П1):
+/// посадочная площадка принимает корабль, только если её типоразмер >=
+/// типоразмеру корабля. байт не реплицируется (размерKnown из каталога по типу),
+/// порядок фиксирован по возрастанию.
+/// </summary>
+public enum ShipSizeClass : byte
+{
+    S = 0,
+    M = 1,
+    L = 2,
+    XL = 3,
+    XXL = 4,
+}
+
+/// <summary>
 /// Характеристики ОДНОГО типа корабля: база полётной модели + габариты и цвет
 /// примитивного корпуса. Чистые данные, узлов не держат.
 ///
@@ -62,10 +77,23 @@ public sealed class ShipTypeSpec
     /// По умолчанию — лазерная турель (единственный тип на сегодня).</summary>
     public readonly WeaponType Weapon;
 
+    /// <summary>Типоразмер корабля для механики посадки (П1): площадка
+    /// принимает корабль, только если её SiteSize >= SizeClass.</summary>
+    public readonly ShipSizeClass SizeClass;
+
+    /// <summary>Высота посадочного шасси под брюхом, м: расстояние от нижней
+    /// грани корпуса до «опорной плоскости» шасси. Станция при посадке
+    /// опускает корабль так, чтобы шасси коснулись палубы (брюхо висит над
+    /// палубой на GearDrop) — опоры шасси входят в число аксессуаров силуэта.
+    /// Посадочные шасси (запрос: ориентир стыковки) есть у всех типов.</summary>
+    public readonly float GearDrop;
+
     public ShipTypeSpec(ShipType type, string displayName, float mass,
                         FlightParams @base, Vector3 hullSize, Color hullColor,
                         (Vector3 Offset, Vector3 Size, Color Color)[]? accessories = null,
-                        WeaponType weapon = WeaponCatalog.DefaultWeapon)
+                        WeaponType weapon = WeaponCatalog.DefaultWeapon,
+                        ShipSizeClass sizeClass = ShipSizeClass.S,
+                        float gearDrop = 0.35f)
     {
         Type = type;
         DisplayName = displayName;
@@ -75,6 +103,8 @@ public sealed class ShipTypeSpec
         HullColor = hullColor;
         Accessories = accessories ?? System.Array.Empty<(Vector3, Vector3, Color)>();
         Weapon = weapon;
+        SizeClass = sizeClass;
+        GearDrop = gearDrop;
     }
 }
 
@@ -146,10 +176,23 @@ public static class ShipStatCatalog
                  new Color(0.75f, 0.62f, 0.08f)),
                 (new Vector3(0.8f, 0f, 1.5f), new Vector3(0.2f, 0.8f, 0.9f),
                  new Color(0.75f, 0.62f, 0.08f)),
+                // Посадочное шасси (ориентир стыковки): три стойки под брюхом —
+                // носовая и две основные. Опорная плоскость шасси = нижняя грань
+                // этих боксов, станция опускает корабль шасси на палубу.
+                (new Vector3(0f, -0.675f, -1.5f), new Vector3(0.15f, 0.35f, 0.15f),
+                 new Color(0.35f, 0.35f, 0.4f)),
+                (new Vector3(-0.8f, -0.675f, 1.4f), new Vector3(0.15f, 0.35f, 0.15f),
+                 new Color(0.35f, 0.35f, 0.4f)),
+                (new Vector3(0.8f, -0.675f, 1.4f), new Vector3(0.15f, 0.35f, 0.15f),
+                 new Color(0.35f, 0.35f, 0.4f)),
             },
             // Стартовый корабль игрока — вооружён лазерной турелью (этап 6,
             // фикс стрельбы): все расчёты огня идут по WeaponCatalog.
-            weapon: WeaponType.LaserTurret),
+            weapon: WeaponType.LaserTurret,
+            // Типоразмер для посадки (П1): курьер — S, садится на любую площадку.
+            sizeClass: ShipSizeClass.S,
+            // Шасси 0.35 м: при стыковке брюхо висит над палубой на 0.35 м.
+            gearDrop: 0.35f),
 
         new ShipTypeSpec(
             ShipType.Hauler, "Hauler (грузовик)",
@@ -179,7 +222,18 @@ public static class ShipStatCatalog
                  new Color(0.8f, 0.4f, 0.07f)),
                 (new Vector3(0f, 1.7f, -2.8f), new Vector3(2.4f, 1.4f, 1.4f),
                  new Color(0.95f, 0.5f, 0.1f)),
-            }),
+                // Посадочное шасси грузовика: носовая стойка + две основные
+                // (стойки крупнее курьерских, шасси 0.5 м).
+                (new Vector3(0f, -1.5f, -2.8f), new Vector3(0.25f, 0.5f, 0.25f),
+                 new Color(0.35f, 0.35f, 0.4f)),
+                (new Vector3(-1.4f, -1.5f, 2.5f), new Vector3(0.25f, 0.5f, 0.25f),
+                 new Color(0.35f, 0.35f, 0.4f)),
+                (new Vector3(1.4f, -1.5f, 2.5f), new Vector3(0.25f, 0.5f, 0.25f),
+                 new Color(0.35f, 0.35f, 0.4f)),
+            },
+            // Типоразмер для посадки (П1): средний — M.
+            sizeClass: ShipSizeClass.M,
+            gearDrop: 0.5f),
 
         new ShipTypeSpec(
             ShipType.ContainerFreighter, "Container Freighter (контейнеровоз)",
@@ -214,7 +268,18 @@ public static class ShipStatCatalog
                  new Color(0.7f, 0.3f, 0.25f)),
                 (new Vector3(0f, 2.7f, 5.5f), new Vector3(3.2f, 2.2f, 1.8f),
                  new Color(0.85f, 0.15f, 0.12f)),
-            }),
+                // Посадочное шасси контейнеровоза: носовая стойка + две основные
+                // (самые крупные стойки, шасси 0.7 м).
+                (new Vector3(0f, -2.1f, -5.5f), new Vector3(0.3f, 0.7f, 0.3f),
+                 new Color(0.35f, 0.35f, 0.4f)),
+                (new Vector3(-2f, -2.1f, 4.0f), new Vector3(0.3f, 0.7f, 0.3f),
+                 new Color(0.35f, 0.35f, 0.4f)),
+                (new Vector3(2f, -2.1f, 4.0f), new Vector3(0.3f, 0.7f, 0.3f),
+                 new Color(0.35f, 0.35f, 0.4f)),
+            },
+            // Типоразмер для посадки (П1): «чуть больше среднего» — L.
+            sizeClass: ShipSizeClass.L,
+            gearDrop: 0.7f),
     };
 
     /// <summary>Запись каталога по типу. Неизвестный байт (чужой билд) → молча

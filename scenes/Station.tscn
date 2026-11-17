@@ -20,6 +20,41 @@ top_radius = 60.0
 bottom_radius = 60.0
 height = 40.0
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_habdeck"]
+size = Vector3(9.6, 0.2, 9.6)
+
+[sub_resource type="BoxMesh" id="BoxMesh_habdeck"]
+size = Vector3(9.6, 0.2, 9.6)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_rail"]
+albedo_color = Color(0.3, 0.35, 0.4, 1)
+metallic = 0.6
+roughness = 0.4
+
+[sub_resource type="BoxMesh" id="BoxMesh_rail_ns"]
+size = Vector3(9.6, 1.0, 0.15)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_rail_ns"]
+size = Vector3(9.6, 1.0, 0.15)
+
+[sub_resource type="BoxMesh" id="BoxMesh_rail_ew"]
+size = Vector3(0.15, 1.0, 9.6)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_rail_ew"]
+size = Vector3(0.15, 1.0, 9.6)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_habzone"]
+size = Vector3(9.6, 8.0, 9.6)
+
+[sub_resource type="BoxMesh" id="BoxMesh_habzone"]
+size = Vector3(9.6, 8.0, 9.6)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_habviz"]
+shading_mode = 0
+transparency = 1
+albedo_color = Color(0.35, 0.65, 1, 0.2)
+cull_mode = 2
+
 [node name="Station" type="StaticBody3D" unique_id=1665308744]
 collision_layer = 2
 script = ExtResource("1_station")
@@ -44,6 +79,80 @@ script = ExtResource("2_stationstate")
 
 [node name="LandingPad" parent="." instance=ExtResource("5_landingpad")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 20, 0)
+
+[node name="HabDeck" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 20, 0)
+collision_layer = 2
+collision_mask = 0
+
+[node name="DeckShape" type="CollisionShape3D" parent="HabDeck"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 0)
+shape = SubResource("BoxShape3D_habdeck")
+
+[node name="DeckMesh" type="MeshInstance3D" parent="HabDeck"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 0)
+mesh = SubResource("BoxMesh_habdeck")
+
+[node name="RailN" type="StaticBody3D" parent="HabDeck"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, -4.725)
+collision_layer = 2
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape3D" parent="HabDeck/RailN"]
+shape = SubResource("BoxShape3D_rail_ns")
+
+[node name="Mesh" type="MeshInstance3D" parent="HabDeck/RailN"]
+material_override = SubResource("StandardMaterial3D_rail")
+mesh = SubResource("BoxMesh_rail_ns")
+
+[node name="RailS" type="StaticBody3D" parent="HabDeck"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 4.725)
+collision_layer = 2
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape3D" parent="HabDeck/RailS"]
+shape = SubResource("BoxShape3D_rail_ns")
+
+[node name="Mesh" type="MeshInstance3D" parent="HabDeck/RailS"]
+material_override = SubResource("StandardMaterial3D_rail")
+mesh = SubResource("BoxMesh_rail_ns")
+
+[node name="RailE" type="StaticBody3D" parent="HabDeck"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.725, 0.7, 0)
+collision_layer = 2
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape3D" parent="HabDeck/RailE"]
+shape = SubResource("BoxShape3D_rail_ew")
+
+[node name="Mesh" type="MeshInstance3D" parent="HabDeck/RailE"]
+material_override = SubResource("StandardMaterial3D_rail")
+mesh = SubResource("BoxMesh_rail_ew")
+
+[node name="RailW" type="StaticBody3D" parent="HabDeck"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.725, 0.7, 0)
+collision_layer = 2
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape3D" parent="HabDeck/RailW"]
+shape = SubResource("BoxShape3D_rail_ew")
+
+[node name="Mesh" type="MeshInstance3D" parent="HabDeck/RailW"]
+material_override = SubResource("StandardMaterial3D_rail")
+mesh = SubResource("BoxMesh_rail_ew")
+
+[node name="HabitatZone" type="Area3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24.2, 0)
+collision_layer = 0
+collision_mask = 4
+
+[node name="Shape" type="CollisionShape3D" parent="HabitatZone"]
+shape = SubResource("BoxShape3D_habzone")
+
+[node name="HabZoneViz" type="MeshInstance3D" parent="HabitatZone"]
+visible = false
+material_override = SubResource("StandardMaterial3D_habviz")
+mesh = SubResource("BoxMesh_habzone")
 
 [node name="Synchronizer" type="MultiplayerSynchronizer" parent="." unique_id=163452265]
 replication_config = ExtResource("4_replcfg")

@@ -44,6 +44,7 @@ public partial class Stage5Test
 
     private int _lastDockDamageCount;
     private float _dockDistStart;
+    private float _badGrowthSpeed = -1f; private int _badGrowthAt = -1; private float _badGrowthDist;
 
     /// <summary>п.21: после Capturing пружина тянет корабль к точке: расстояние
     /// не растёт, скорость не раскачивается (демпфированная система, не
@@ -55,7 +56,9 @@ public partial class Stage5Test
         var nm = NetworkManager.Instance!;
         if (_shipA == null) return;
         int shipA = _shipA.Net!.ShipNetId, stationId = _station!.State!.StationNetId;
-        Vector3 dp = _station.DockPointGlobal;
+        // П7: пружина теперь ведёт к позе «над палубой на высоте корпуса» —
+        // тест смотрит на ту же точку, что и код (DockTargetForTest).
+        Vector3 dp = _shipA.DockPoseTargetForTest(_station);
 
         // Ввод-«тяга» есть, но на capture-фазе он игнорируется пружиной (п.25
         // для клиента — отдельно; здесь серверный путь).
@@ -104,9 +107,18 @@ public partial class Stage5Test
                 if (badStep < 0) { badStep = steps; badPrev = prevDist; badAt = d; }
                 monotonous = false;
             }
-            // «Не раскачивается»: |v| не больше большего из начальной и терминальной
-            // скорости пружины (терминальная при клампе a=25: a/c ≈ 6.25 м/с + запас).
-            if (s > Mathf.Max(prevSpeed, 8f) + 0.5f && prevDist > 5f) noGrowth = false;
+            // «Не раскачивается»: скорость прирастает НЕ быстрее клампа
+            // ускорения пружины за шаг (Δv ≤ MaxSpringAccel·dt + запас) —
+            // т.е. нет самоускорения/осцилляции после входа в док-окно.
+            // (Раньше сравнивали с терминальной a/c, но при клампе a и
+            // большой дистанции скорость законно разгоняется выше неё;
+            // после удвоения k и клампа Δv/шаг=0.83 ломал прежний 0.5-запас.)
+            float maxStepGain = Docking.MaxSpringAccel * FlightModel.FixedDt * 1.1f;
+            if (s > prevSpeed + maxStepGain && prevDist > 5f)
+            {
+                noGrowth = false;
+                if (_badGrowthSpeed < 0f) { _badGrowthSpeed = s; _badGrowthAt = steps; _badGrowthDist = prevDist; }
+            }
             prevDist = d; prevSpeed = s;
             if ((DockState)_shipA.Net!.DockStateValue == DockState.Docked) break;
         }
@@ -115,7 +127,7 @@ public partial class Stage5Test
         Check(monotonous, badPosNaN != 0
               ? $"п.21: NaN в шаге {badStep} (расстояние {badAt})"
               : $"п.21: расстояние до точки не растёт все {steps+1} шагов (рост на шаге {badStep}: {badPrev:F2}->{badAt:F2})");
-        Check(noGrowth, "п.21: |v| не раскачивается после входа в док-окно (демпфирование)");
+        Check(noGrowth, _badGrowthSpeed < 0f ? "п.21: |v| не раскачивается после входа в док-окно (демпфирование)" : $"п.21: |v| раскачивается: прирост v > {Docking.MaxSpringAccel * FlightModel.FixedDt * 1.1f:F2} за шаг: v={_badGrowthSpeed:F2} шаг {_badGrowthAt} (dist {_badGrowthDist:F1})");
         Check((DockState)_shipA.Net!.DockStateValue == DockState.Docked,
               $"п.22: захват доведён до Docked за {steps+1} шагов (получено {(DockState)_shipA.Net!.DockStateValue})");
         Check(_shipA.GlobalPosition.DistanceTo(dp) <= Docking.DockDistance + 1e-3f,

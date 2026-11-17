@@ -50,6 +50,9 @@ public partial class Ship : RigidBody3D
             // (п.16) — здесь, на авторитете, потому что клиентский AbortDock
             // был бы подделкой (гейт SetDockStateServerOnly его всё равно отверг бы).
             TickDockWindow();
+            // Механика посадки, П6: авто-захват по выравниванию в фазе Approved
+            // (чистая математика ошибок — Docking.ComputeAlignError, тесты п.1).
+            TickAlignCapture();
             // Шаг 5.8/5.10: машина фаз захвата (Capturing→Latched→Docked) —
             // тоже только на авторитете, ПОСЛЕ шага физики (видит актуальные
             // позы, как ProcessPendingFires в шаге 3.5).

@@ -110,6 +110,11 @@ public partial class Player
     private Vector3 _bootsContactNormalLocal = Vector3.Up;
     private bool _hasBootsContact;
     private Vector3 _bootsContactWorldLast;
+    /// <summary>Тело/точка последнего попадания замерного луча SurfaceGap —
+    /// нужны, чтобы при приземлении из прыжка с обрыва переприлипнуть к
+    /// найденной НОВОЙ опоре (нижней палубе), а не висеть на старой.</summary>
+    private Node3D? _gapHitBody;
+    private Vector3 _gapHitPoint;
     // Поза прилипшего тела на ПРОШЛОМ шаге — для жёсткого переноса игрока
     // (ΔXform = X_now·X⁻¹_prev; корректен и при сдвиге, и при повороте).
     private Transform3D _bootsBodyLastXform = Transform3D.Identity;
@@ -131,7 +136,7 @@ public partial class Player
     private const float BootsJumpGravity = 14f;
     /// <summary>Длина пробного луча «есть ли опора подо мной» в прыжке:
     /// потолок прыжка (v²/2g ≈ 0.5 м) с запасом.</summary>
-    private const float BootsJumpProbeDepth = 2.5f;
+    private const float BootsJumpProbeDepth = 3.5f;
     private bool _bootsJumping;
     private float _bootsNormalVel;          // компонента Velocity вдоль нормали в прыжке
     private Vector3 _bootsJumpTanVel;       // замершая касательная скорость на время прыжка
@@ -266,6 +271,12 @@ public partial class Player
     /// ничего добавлять (ни пыли, ни auto-attach, ни обычной ходьбы).</summary>
     private bool StepEva(float dt)
     {
+        // П9/П10 (docs/landing-mechanic-plan.md): статус «пристыкован» —
+        // пересчёт КАЖДЫЙ шаг (зона/фазы корабля меняются асинхронно; дешёвый
+        // перебор группы landing_pad). ДО раннего return по Seat: игрок сел в
+        // кресло — статус обязан погаснуть (П10 п.1 «пилот статуса не имеет»).
+        if (_isLocal)
+            RefreshDockedStatus();
         if (_mode == EvaMode.Seat || !_isLocal)
             return false;
 
@@ -414,9 +425,18 @@ public partial class Player
     /// <summary>G: boots ⇄ jetpack (В28). В Boots — всегда выход в Jetpack
     /// (В13=B: скафандр остаётся единственным «реактивным» режимом, ботинки
     /// летать не умеют). В Jetpack — попытка прилипнуть; неудача НЕ меняет
-    /// режим, только подсказку.</summary>
+    /// режим, только подсказку.
+    /// Правка ТЗ посадки: статус «магнитные ботинки» существует ТОЛЬКО за
+    /// пределами обитаемой палубы. Внутри зоны (статус «пристыкован») G не
+    /// переключает режим: ходьба ботинками там — внутренний механизм
+    /// шутерного управления, а не отдельный статус.</summary>
     private void ToggleBoots()
     {
+        if (_dockStatus && InsideDockedHabitatZone())
+        {
+            MissHint("В обитаемой зоне — статус «пристыкован», ботинки включены всегда");
+            return;
+        }
         if (_mode == EvaMode.Boots)
         {
             _mode = EvaMode.Jetpack;
@@ -972,6 +992,56 @@ public partial class Player
         // ошибки зазора), а касательной — ходьба + перенос носителя.
         Vector3 carryTan = carry - _floorNormal * carry.Dot(_floorNormal);
         float gap = SurfaceGap();
+
+        // BUGFIX «иду по воздуху над площадкой» (игрок отстегнулся от
+        // пристыкованного корабля и дошёл до края его палубы): край корабля
+        // нависает над площадкой станции (перепад ≈ высота корпуса 1.4–2 м),
+        // а проба «есть ли ЛЮБАЯ опора в пределах магнита (2.8 м)» видит пол
+        // СТАНЦИИ ПОД кораблём и не гасит шаг. Игрок сходил за борт и «шёл по
+        // воздуху»: серво липкости вело к дальнему полу на скорости ≤2.5 м/с
+        // (медленнее ходьбы) вместо нормального схода с уступа. Новый критерий:
+        // если опора ПОД САМИМ игроком провалилась глубже высоты ступени
+        // (BootsStepDropTolerance) — это обрыв: сходим с него как из прыжка
+        // вниз (баллистика вдоль нормали, приземление — обычным подхватом
+        // серво на нижней поверхности).
+        if (!_bootsJumping && float.IsFinite(gap)
+            && gap > SuitModel.BootsStepDropTolerance)
+        {
+            _bootsJumping = true;
+            _bootsNormalVel = 0f; // сход с уступа без «отскока»
+            _bootsJumpTanVel = Velocity - _floorNormal * Velocity.Dot(_floorNormal);
+        }
+        else if (!_bootsJumping && !float.IsFinite(gap)
+                 && _hasBootsContact)
+        {
+            // Зазор НЕ ИЗМЕРИМ (луч SurfaceGap короче перепада): край
+            // пристыкованного корпуса нависает над палубой станции на
+            // 1.4–3 м, и короткий замерный луч падает в пустоту над
+            // нижней палубой. Раньше это читалось как «опоры нет» ⇒ серво
+            // молчало, и игрок шагал по воздуху над площадкой (баг
+            // отстёжки от пристыкованного корабля). Новый разбор: если
+            // длинный прыжковый луч (BootsJumpProbeDepth) опору ПОД СОБОЙ
+            // видит — это обрыв глубже замерного луча ⇒ сходим с него
+            // как из прыжка (баллистика до нижней палубы, приземление —
+            // обычным подхватом серво). Если опоры нет и там — ботинки
+            // гаснут, игрок уходит в джетпак (тот же критерий, что в
+            // фазе прыжка).
+            if (BootsSupportBelow(BootsJumpProbeDepth))
+            {
+                _bootsJumping = true;
+                _bootsNormalVel = 0f;
+                _bootsJumpTanVel = Velocity - _floorNormal * Velocity.Dot(_floorNormal);
+            }
+            else if (!InsideDockedHabitatZone())
+            {
+                DeactivateBoots(keepPosition: true);
+                _mode = EvaMode.Jetpack;
+                SyncFlightFromBody();
+                MissThrottled("Ботинки: опора пропала — джетпак");
+                return;
+            }
+        }
+
         if (_bootsJumping)
         {
             // ── фаза прыжка: баллистика вдоль нормали опоры ────────────────
@@ -985,17 +1055,33 @@ public partial class Player
 
             // Приземление: магнит поймал палубу (зазор вернулся к держимому)
             // ⇒ фаза прыжка кончается, игрок снова «стоит» (обычная липкость).
+            // Зазор мерим ПОСЛЕ MoveAndSlide: на быстро падающем теле
+            // прошлокадровый замер (окно 7 см при ~7 м/с = 12 см/кадр)
+            // проскакивается целиком и приземление не ловилось.
+            gap = SurfaceGap();
             if (_bootsNormalVel <= 0f && float.IsFinite(gap)
                 && gap <= SuitModel.BootsStickOffset + 0.02f)
             {
                 _bootsJumping = false;
                 _bootsNormalVel = 0f;
+                if (_gapHitBody != null)
+                {
+                    _bootsBody = _gapHitBody;
+                    _bootsContactPoint = _bootsBody.ToLocal(_gapHitPoint);
+                    _bootsContactWorldLast = _gapHitPoint;
+                    _bootsBodyLastXform = _bootsBody.GlobalTransform;
+                }
             }
 
             // Земля кончилась: в прыжке магнитный луч вниз под собой не нашёл
             // опору ⇒ ботинки гаснут, игрок уходит в джетпак (правка 7-й
-            // части — «вылетел за край палубы в прыжке»).
-            if (!BootsSupportBelow(BootsJumpProbeDepth))
+            // части — «вылетел за край палубы в прыжке»). ИСКЛЮЧЕНИЕ П9
+            // (механика посадки): пока я в статусе «пристыкован» и внутри
+            // зоны обитаемости, спрыгивание с плоскости корабля/палубы НЕ
+            // переключает в «управление скафандром» — прыжок продолжается
+            // в баллистике опоры (перехват на джетпак — в RefreshDockedStatus,
+            // если я окажусь за краем зоны).
+            if (!BootsSupportBelow(BootsJumpProbeDepth) && !InsideDockedHabitatZone())
             {
                 DeactivateBoots(keepPosition: true);
                 _mode = EvaMode.Jetpack;
@@ -1016,19 +1102,21 @@ public partial class Player
                 -SuitModel.BootsMaxStickDist, SuitModel.BootsMaxStickDist);
         }
 
-        // Правка 7-й части: игрок ПРИКРЕПЛЁН к палубе и не должен сходить за её
-        // край. Перед шагом проверяем магнитным лучом «будет ли опора под
-        // следующей позицией по касательной». Нет опоры (за краем) ⇒ гасим
-        // касательную wish-тягу: игрок упирается в край, но остаётся висеть на
-        // магните (перенос carry по движущейся палубе при этом сохраняется).
         Vector3 wishTan = wish - _floorNormal * wish.Dot(_floorNormal);
         if (wishTan.LengthSquared() > 1e-6f)
         {
             // Проба на половину шага вперёд (радиус капсулы 0.3 ⇒ берём ~0.4 м):
             // если там уже нет опоры, тягу гасим заранее, чтобы центр капсулы
-            // не уехал над пустотой.
+            // не уехал над пустотой. ГЛУБИНА пробы = глубина прыжкового луча
+            // (BootsJumpProbeDepth): край пристыкованного корпуса нависает над
+            // палубой станции на 2.8–3.2 м (высота корабля 1.4 + осадка), и
+            // более мелкая проба (2.8) на таком уступе не срабатывала: игрок
+            // упирался в край и не сходил с него («иду по воздуху» / «упираться
+            // в край» — баг отстёжки от пристыкованного корабля). С этой
+            // глубиной обрыв под краем виден, тяга гасится, а шаг в пустоту
+            // ловит фаза прыжка (обрыв-критерий по gap выше BootsStepDropTolerance).
             Vector3 probe = GlobalPosition + wishTan.Normalized() * 0.4f;
-            if (!BootsSupportBelowAt(probe, SuitModel.BootsMaxStickDist + 0.3f))
+            if (!BootsSupportBelowAt(probe, BootsJumpProbeDepth))
                 wish = Vector3.Zero;
         }
 
@@ -1061,6 +1149,12 @@ public partial class Player
         if (hit.Count == 0)
             return float.PositiveInfinity;
         Vector3 p = hit["position"].AsVector3();
+        // Заодно запоминаем ТУЛУ и точку попадания этого замера — фазе
+        // прыжка нужно при приземлении переприлипнуть к найденной нижней
+        // палубе (носителем прилипшего контакта становится она, а не старая).
+        _gapHitPoint = p;
+        _gapHitBody = hit.ContainsKey("collider")
+            ? hit["collider"].AsGodotObject() as Node3D : null;
         // Зазор мерим от ПОВЕРХНОСТИ капсулы, а не от центра: сравнение с
         // BootsStickOffset (равновесие = капсула в 5 см над палубой) иначе
         // всегда завышено на половину высоты и липкость не держит.
@@ -1089,6 +1183,7 @@ public partial class Player
             new Godot.Collections.Array<Rid> { GetRid() });
         return space.IntersectRay(q).Count > 0;
     }
+
 
     /// <summary>Поставить тело так, чтобы его −Y совпал с нормалью палубы,
     /// а нос сохранился по возможности (вход в ботинки).</summary>
