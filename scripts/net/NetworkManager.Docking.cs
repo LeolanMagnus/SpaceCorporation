@@ -102,19 +102,49 @@ public partial class NetworkManager : Node
     }
 
     /// <summary>Отменить сделку (п.8; вызывается и при OnPeerLeft — шаг 5.11):
-    /// обнуляет ОБЕ стороны и снимает реестр. Повторный AbortDock безопасен (no-op).</summary>
+    /// обнуляет ОБЕ стороны и снимает реестр. Повторный AbortDock безопасен (no-op).
+    /// ВАЖНО: AbortDock работает только по записи реестра — для «сиротского Docked»
+    /// (пир ушёл, запись уже снята OnPeerLeft) он no-op; для этого — UndockNow.</summary>
     public void AbortDock(int shipNetId, string why)
     {
         if (!_dockRequests.TryGetValue(shipNetId, out var e))
             return; // уже снято (AbortDock идемпотентен — повтор после OnPeerLeft)
         _dockRequests.Remove(shipNetId);
+        ResetDockSide(shipNetId, e.StationNetId);
+        DebugInfoBus.Report($"dock: abort ship#{shipNetId} ({why})");
+    }
+
+    /// <summary>Отстыковка из Docked (docs/undock-plan.md §2.2): одна идемпотентная
+    /// точка сброса док-полей обеих сторон, переживает «сиротский Docked» — когда
+    /// записи в реестре нет (OnPeerLeft снял её, сохранив состояние), станция
+    /// берётся из Net-поля корабля. Возвращает false, если корабль не в Docked —
+    /// отзывать нечего (AbortDock для промежуточных фаз остаётся отдельным путём).</summary>
+    public bool UndockNow(int shipNetId, string why)
+    {
+        var ship = FindShip(shipNetId);
+        if (ship?.Net == null || (DockState)ship.Net.DockStateValue != DockState.Docked)
+            return false;
+        // Станция — из реестра; при «сиротском Docked» — из Net-поля корабля.
+        var entry = FindDockRequest(shipNetId);
+        int stationNetId = entry?.StationNetId ?? ship.Net.DockStationNetId;
+        _dockRequests.Remove(shipNetId);
+        ResetDockSide(shipNetId, stationNetId);
+        ship.ApplyAuthority(); // dockLocked=false → Freeze снимается (единств. точка записи)
+        DebugInfoBus.Report($"dock: undock ship#{shipNetId} ({why})");
+        return true;
+    }
+
+    /// <summary>Сброс док-полей ОБЕИХ сторон (общее тело AbortDock/UndockNow,
+    /// В20 §3.4 — один писатель): фазы в None, адреса друг друга в 0.</summary>
+    private void ResetDockSide(int shipNetId, int stationNetId)
+    {
         var ship = FindShip(shipNetId);
         if (ship?.Net != null)
         {
             ship.Net.DockStateValue = (byte)DockState.None;
             ship.Net.DockStationNetId = 0;
         }
-        var st = FindStation(e.StationNetId);
+        var st = FindStation(stationNetId);
         if (st?.GetParent() is Station stationNode)
             stationNode.SetDockStateServerOnly(DockState.None, 0);
         else if (st != null)
@@ -123,7 +153,6 @@ public partial class NetworkManager : Node
             st.DockShipNetId = 0;
             st.DockApproved = false;
         }
-        DebugInfoBus.Report($"dock: abort ship#{shipNetId} ({why})");
     }
 
     // ------------------------------------------- пилот кораблей (§4 В3 п.3, В14=B)

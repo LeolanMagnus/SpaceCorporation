@@ -171,6 +171,7 @@ public partial class HudLayer : CanvasLayer
         GetNode<Control>("HudRoot/BottomLeft").AddChild(_commlinkMenu);
         _commlinkMenu.OnDockRequested = RequestDockFromCommlink;
         _commlinkMenu.OnDockCancelRequested = CancelDockFromCommlink;
+        _commlinkMenu.OnUndockRequested = UndockFromCommlink;
         _commlinkMenu.OnCloseRequested = CloseCommlinkMenu;
         _radialMenu.OnCommlinkCalled = OnCommlinkCalled;
 
@@ -360,7 +361,10 @@ public partial class HudLayer : CanvasLayer
         // П3-правки: «Отменить посадку» — когда у нашего корабля живое
         // разрешение (фаза Approved: огни горят, захват ещё не начался).
         bool cancelOption = DockApprovedActive();
-        _commlinkMenu.Open(targetName, dockOption, cancelOption);
+        // undock-plan: «Отстыковаться» — когда наш корабль стоит Docked
+        // (гейты пилота/фазы — на сервере, здесь лишь видимость строки).
+        bool undockOption = MyShipDockedActive();
+        _commlinkMenu.Open(targetName, dockOption, cancelOption, undockOption);
         GetNode<Control>("HudRoot/BottomLeft/StatusPanel").Visible = false;
     }
 
@@ -373,6 +377,15 @@ public partial class HudLayer : CanvasLayer
             return false;
         var phase = (DockState)ship.Net.DockStateValue;
         return phase == DockState.Approved && ship.Net.DockStationNetId != 0;
+    }
+
+    /// <summary>Стоит ли локальный корабль Docked (строка «Отстыковаться»,
+    /// undock-plan; «сиротский Docked» нового пилота тоже даёт строку).</summary>
+    private bool MyShipDockedActive()
+    {
+        var ship = GetMyShip();
+        return ship?.Net != null && ship.IsLocalPilot
+               && (DockState)ship.Net.DockStateValue == DockState.Docked;
     }
 
     /// <summary>Закрыть меню радиосвязи и вернуть статус-панель (общий путь для
@@ -432,6 +445,21 @@ public partial class HudLayer : CanvasLayer
             return;
         }
         ship.RequestDockCancel(fromCommlink: true);
+    }
+
+    /// <summary>Выбор «Отстыковаться» в меню радиосвязи (undock-plan): намерение
+    /// пилота расстаться со станцией; путь через сервер (или прямой вызов на
+    /// авторитете), гейты пилота/фазы — в AcceptUndockFrom.</summary>
+    private void UndockFromCommlink()
+    {
+        CloseCommlinkMenu();
+        var ship = GetMyShip();
+        if (ship == null || !ship.IsLocalPilot)
+        {
+            HudEventBus.Report("Отстыковка: нужен свой корабль под управлением");
+            return;
+        }
+        ship.RequestUndock();
     }
 
     /// <summary>Стрелка к платформе (П5): показываем, только когда у локального

@@ -198,6 +198,11 @@ public partial class Ship : RigidBody3D
     /// пира X» без UDP. Зовёт боевой серверный гейт, а не копию.</summary>
     public void TestSetPilotForTest(int peerId) => PilotPeerId = peerId;
 
+    /// <summary>Шов теста (undock-plan U-стенд): половина высоты корпуса —
+    /// чтобы поставить корабль «на палубу» ровно как его оставила фаза Docked
+    /// (центр корпуса = палуба + HullSize.Y/2, см. DeckContactPose).</summary>
+    public float HullHeightForTest() => _shipTypeSpec.HullSize.Y;
+
     // ─── Этап «наводки»: швы автотеста WeaponAimTest ──────────────────────────
 
     /// <summary>Шов теста: мировое начало луча (срез ствола турели) — проверка,

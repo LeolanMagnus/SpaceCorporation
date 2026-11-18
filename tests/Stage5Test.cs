@@ -35,6 +35,7 @@ public partial class Stage5Test : Node
         P9, P10, P11, P12, P13,
         P14, P15, P16, P17, P18, P19,
         P20, P21, P22,
+        U1, U2,
         Done
     }
     private Phase _phase = Phase.WaitSpawn;
@@ -114,7 +115,10 @@ public partial class Stage5Test : Node
             case Phase.P19: CheckPeerLeftDockAbort();    _phase = Phase.P20; break;
             case Phase.P20: CheckTeleportButtonServerOnly(); _phase = Phase.P21; break;
             case Phase.P21: CheckServerTeleportThenDock();   _phase = Phase.P22; break;
-            case Phase.P22: CheckDockDebugInfo();           _phase = Phase.Done; break;
+            case Phase.P22: CheckDockDebugInfo();           _phase = Phase.U1; break;
+            // Блок D (undock-plan): отстыковка Docked -> None (U1-U6).
+            case Phase.U1: CheckUndockHappyPath();         _phase = Phase.U2; break;
+            case Phase.U2: CheckUndockGates();             _phase = Phase.Done; break;
 
             case Phase.Done: Finish(); break;
         }

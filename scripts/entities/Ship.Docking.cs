@@ -475,6 +475,105 @@ public partial class Ship : RigidBody3D
             HudEventBus.Report("Посадка отменена");
     }
 
+    // ==================================================================
+    // Отстыковка (docs/undock-plan.md): Docked → None по намерению пилота.
+    // Путь — копия RequestDockCancel: авторитет/офлайн прямой вызов гейта,
+    // клиент — RPC на сервер (адрес по ShipNetId). Гейт фазы — только Docked
+    // (промежуточные отменяет RequestDockCancel/AbortDock). Перед снятием
+    // Docked корабль выталкивается вдоль нормали палубы за collision-цилиндр
+    // станции — иначе контакт-гейт 5.10 после None даст урон «изнутри» (§2.3).
+    // «Сиротский Docked» (пир ушёл, реестр пуст) переживает путь: UndockNow
+    // читает станцию из Net-поля корабля, а новый пилот проходит гейт по
+    // PilotPeerId.
+    // ==================================================================
+
+    /// <summary>Запрос отстыковки локального пилота (радиоменю «Отстыковаться»).
+    /// Гейта по режиму нет намеренно (выбор опции UI = явное действие, как у
+    /// fromCommlink-запроса посадки); пилот/фаза — на серверном гейте.</summary>
+    public void RequestUndock()
+    {
+        if (!IsLocalPilot || Net == null || Net.ShipNetId == 0)
+            return;
+        var nm = NetworkManager.Instance;
+        if (nm is not { IsClient: true })
+        {
+            AcceptUndockFrom(nm?.SelfId ?? 1, Net.ShipNetId);
+            return;
+        }
+        RpcId(1, nameof(RpcUndock), Net.ShipNetId);
+    }
+
+    /// <summary>Серверный приём запроса отстыковки. Транспорт как у
+    /// RpcCancelDocking: редкое событие, надёжный канал 1.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable, TransferChannel = 1)]
+    public void RpcUndock(int shipNetId)
+        => AcceptUndockFrom(Multiplayer.GetRemoteSenderId(), shipNetId);
+
+    /// <summary>Серверная отстыковка: только авторитетная сторона (В14=B),
+    /// только пилот (В17), только фаза Docked. Выталкивание (§2.3) ДО сброса —
+    /// потом UndockNow снимает док-поля обеих сторон и через ApplyAuthority
+    /// размораживает тело (единственная точка записи Freeze). Возвращает true,
+    /// только если отстыковка реально выполнена (повторный вызов — false).</summary>
+    private bool AcceptUndockFrom(int senderPeer, int shipNetId)
+    {
+        var nm = NetworkManager.Instance;
+        if (nm is not { IsAuthoritySide: true } || Net == null || Net.ShipNetId != shipNetId)
+            return false;
+        if (senderPeer != PilotPeerId)
+        {
+            GD.PrintErr($"ship#{Net.ShipNetId}: отстыковку прислал не пилот " +
+                        $"(peer={senderPeer}) — отказ (В17)");
+            return false;
+        }
+        if ((DockState)Net.DockStateValue != DockState.Docked)
+        {
+            if (senderPeer == nm.SelfId)
+                HudEventBus.Report("Отстыковка невозможна: корабль не пристыкован");
+            return false;
+        }
+        PushOffFromStation();
+        nm.UndockNow(shipNetId, $"отстыковка по радио (peer {senderPeer})");
+        _hasDockApprovedUptime = false;
+        if (senderPeer == nm.SelfId)
+            HudEventBus.Report("Отстыковка выполнена — свободный полёт");
+        return true;
+    }
+
+    /// <summary>Выталкивание с палубы перед снятием Docked (undock-plan §2.3):
+    /// позиция — точка контактной позы + зазор UndockPushOffM вдоль нормали
+    /// палубы, скорость — UndockPushSpeed вдоль той же нормали (ниже порога
+    /// урона 12 и ниже DockSpeedLimit 8 — выход никогда не «таранит»). Без
+    /// площадки (внешний узел) — от центра станции. Снап позиции — за авторитетом
+    /// (он автор и докового снапа), реплика доедет батчем; предсказание локального
+    /// пилота синхронизируется по образцу снапа в TickDockPhases.</summary>
+    private void PushOffFromStation()
+    {
+        var nm = NetworkManager.Instance;
+        var station = nm?.FindStationNode(Net?.DockStationNetId ?? 0);
+        var pad = station?.LandingPad;
+        Vector3 up = pad != null ? pad.GlobalBasis.Y
+                                 : (GlobalPosition - (station ?? (Node3D)this).GlobalPosition).Normalized();
+        if (up.LengthSquared() < 1e-6f)
+            up = Vector3.Up;
+        Vector3 deckPos = pad != null ? DeckContactPose(station!) : station?.DockPointGlobal ?? GlobalPosition;
+        GlobalPosition = deckPos + up * Docking.UndockPushOffM;
+        GlobalTransform = new Transform3D(GlobalTransform.Basis, GlobalPosition);
+        LinearVelocity = up * Docking.UndockPushSpeed;
+        AngularVelocity = Vector3.Zero;
+        if (IsLocalPilot)
+        {
+            _predicted.Position = GlobalPosition; // предсказание пилота не рассинхронится
+            _predicted.LinearVelocity = LinearVelocity;
+        }
+    }
+
+    /// <summary>Шов теста (undock-plan U1–U3, U6): тот же серверный гейт, что и
+    /// RPC — «боевой код, а не копия». Возвращает «отстыковка выполнена»
+    /// (повторный вызов из None — false, идемпотентность U5).</summary>
+    public bool TestUndockForTest(int senderPeer)
+        => AcceptUndockFrom(senderPeer, Net?.ShipNetId ?? 0);
+
     /// <summary>Серверный приём запроса стыковки от пилота (гейты В17). Атрибут
     /// как у `RpcRequestFire`: AnyPeer, CallLocal=false, надёжный, канал 1 —
     /// запросы редки и терять их нельзя (в отличие от кадров ввода на канале 0).</summary>

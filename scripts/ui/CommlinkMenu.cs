@@ -28,14 +28,19 @@ public partial class CommlinkMenu : Control
     /// серверу отзыв живого разрешения на посадку).</summary>
     public Action? OnDockCancelRequested;
 
+    /// <summary>Выбрана строка «Отстыковаться» (undock-plan: пилот пристыкованного
+    /// корабля шлёт серверу намерение расстаться со станцией).</summary>
+    public Action? OnUndockRequested;
+
     private const string OptionStub1 = "Опция 1";
     private const string OptionStub2 = "Опция 2";
     private const string OptionStub3 = "Опция 3";
     private const string OptionDock = "Запросить посадку";
     private const string OptionDockCancel = "Отменить посадку";
+    private const string OptionUndock = "Отстыковаться";
     private PanelContainer _panel = null!;
     private Label _lblTarget = null!;
-    private readonly Label[] _options = new Label[5];
+    private readonly Label[] _options = new Label[6];
     private int _hovered = -1;
 
     /// <summary>Открыто ли меню (гейт для HudLayer: Esc/ПКМ, скрытие статуса).</summary>
@@ -67,7 +72,7 @@ public partial class CommlinkMenu : Control
         _lblTarget.AddThemeColorOverride("font_color", HudTheme.TextAccent);
         box.AddChild(_lblTarget);
 
-        string[] captions = { OptionStub1, OptionStub2, OptionStub3, OptionDock, OptionDockCancel };
+        string[] captions = { OptionStub1, OptionStub2, OptionStub3, OptionDock, OptionDockCancel, OptionUndock };
         for (int i = 0; i < captions.Length; i++)
         {
             var lbl = new Label { Name = $"Option{i + 1}", Text = captions[i] };
@@ -79,8 +84,11 @@ public partial class CommlinkMenu : Control
 
     /// <summary>Открыть меню связи с целью (после успешного ответа).
     /// showDockCancelOption (П3-правки) — строка отзыва живого разрешения
-    /// на посадку (клавиша 5).</summary>
-    public void Open(string targetName, bool showDockOption, bool showDockCancelOption = false)
+    /// на посадку (клавиша 5); showUndockOption (undock-plan) — «Отстыковаться»
+    /// для своего корабля в фазе Docked (строки Approved/Docked взаимоисключающи
+    /// по фазе, конфликта нет).</summary>
+    public void Open(string targetName, bool showDockOption, bool showDockCancelOption = false,
+                     bool showUndockOption = false)
     {
         _lblTarget.Text = $"Радиосвязь: {targetName}";
         _options[0].Visible = true;
@@ -90,6 +98,8 @@ public partial class CommlinkMenu : Control
         _options[3].Visible = showDockOption;
         // «Отменить посадку» — только когда у нашего корабля живое Approved.
         _options[4].Visible = showDockCancelOption;
+        // «Отстыковаться» — только когда наш корабль стоит Docked.
+        _options[5].Visible = showUndockOption;
         _hovered = -1;
         Visible = true;
         IsCommlinkOpen = true;
@@ -125,6 +135,9 @@ public partial class CommlinkMenu : Control
                 break;
             case 4:
                 OnDockCancelRequested?.Invoke();
+                break;
+            case 5:
+                OnUndockRequested?.Invoke();
                 break;
         }
         OnCloseRequested?.Invoke();

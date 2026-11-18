@@ -732,7 +732,7 @@ public partial class Ship : RigidBody3D
     /// `_Ready()` и (шаг 3b) из обработчика смены авторитета — роль нельзя читать
     /// один раз, при В3=B авторитет меняется в рантайме.
     /// </summary>
-    protected void ApplyAuthority()
+    protected internal void ApplyAuthority()
     {
         // `IsMultiplayerAuthority()` при снятом peer (после Disconnect:
         // MultiplayerPeer = null) печатает ERROR «No multiplayer peer». Авторитет
