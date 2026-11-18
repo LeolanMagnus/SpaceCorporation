@@ -212,7 +212,7 @@ public partial class Stage5Test
               "п.28: контакт без сделки не запустил dock-машину");
 
         // Убираем корабль из станции, чистим состояние перед следующим блоком.
-        _shipA.GlobalPosition = dp + new Vector3(0, 0, 400);
+        _shipA.GlobalPosition = dp + new Vector3(0, 0, Docking.DockRange + 100f);
         _shipA.TestSetVelocity(Vector3.Zero);
         _shipA.TestClearInput();
     }
@@ -379,7 +379,7 @@ public partial class Stage5Test
         // Доводим стенд до «нельзя пристыковаться»: далеко и быстро.
         _shipA.TestClearInput();
         nm.AbortDock(_shipA.Net!.ShipNetId, "test-p34-pre");
-        _shipA.GlobalPosition = _station.DockPointGlobal + new Vector3(0, 0, 400);
+        _shipA.GlobalPosition = _station.DockPointGlobal + new Vector3(0, 0, Docking.DockRange + 100f);
         _shipA.TestSetVelocity(new Vector3(0, 0, -120));
         Check(!Docking.InZone(_shipA.GlobalPosition, _station.DockPointGlobal),
               "п.34: стенд собран — корабль вне зоны стыковки");
@@ -400,7 +400,7 @@ public partial class Stage5Test
         Check(nm.HasDockRequest(_shipA.Net.ShipNetId) && nm.ActiveDockCount == 1,
               $"п.34: сделка в реестре (активных {nm.ActiveDockCount})");
         nm.AbortDock(_shipA.Net.ShipNetId, "test-cleanup-p34");
-        _shipA.GlobalPosition = _station.DockPointGlobal + new Vector3(0, 0, 400);
+        _shipA.GlobalPosition = _station.DockPointGlobal + new Vector3(0, 0, Docking.DockRange + 100f);
         _shipA.TestSetVelocity(Vector3.Zero);
     }
 

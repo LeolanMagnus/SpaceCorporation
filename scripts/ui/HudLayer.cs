@@ -196,9 +196,14 @@ public partial class HudLayer : CanvasLayer
         _dockArrow = new DockArrow { Name = "DockArrow", Visible = false };
         _hudRoot.AddChild(_dockArrow);
 
-        // Голографическая схема выравнивания (П6): появляется в фазе Approved,
-        // когда свой корабль входит в зону посадочной площадки цели.
-        _alignOverlay = new AlignOverlay { Name = "AlignOverlay", Visible = false };
+        // Голографическая схема выравнивания (П6 + П12): появляется в фазе
+        // Approved, когда свой корабль входит в зону посадочной площадки цели.
+        // П12: отдельная сцена scenes/AlignOverlay.tscn — каждая ось (Offset,
+        // Roll, AimDot) своим узлом со своим спрайтом дизайнера.
+        _alignOverlay = GD.Load<PackedScene>("res://scenes/AlignOverlay.tscn")
+            .Instantiate<AlignOverlay>();
+        _alignOverlay.Name = "AlignOverlay";
+        _alignOverlay.Visible = false;
         _hudRoot.AddChild(_alignOverlay);
 
         // Комм-лог (H6): слоты + подписка на шину событий.

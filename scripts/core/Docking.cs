@@ -36,8 +36,9 @@ public enum DockState : byte
 public static class Docking
 {
     /// <summary>«Корабль в зоне»: расстояние от DockingPoint до корабля, м.
-    /// Станция r = 60 → 30 м запаса снаружи корпуса.</summary>
-    public const float DockRange = 90f;
+    /// П14: 90→1000 м — разрешение получают издалека, затем летят к площадке;
+    /// вне зоны запрос отклоняется с причиной в комм-лог HUD.</summary>
+    public const float DockRange = 1000f;
 
     /// <summary>«Скорость ниже порога», м/с (|vn| к станции — та же величина,
     /// что <c>CollisionDamage.ApproachSpeed</c>). Заведомо НИЖЕ порога урона
@@ -53,7 +54,7 @@ public static class Docking
 
     /// <summary>Предел «улета» с живым разрешением (механика посадки, П3-правки):
     /// Approved с кораблем дальше этой дистанции от станции → авто-отзыв.</summary>
-    public const float DockCancelRangeM = 900f;
+    public const float DockCancelRangeM = 1200f;
 
     /// <summary>Жёсткость позиционной пружины: a += k·Δx, 1/с².
     /// Правка ТЗ: скорость захвата увеличена вдвое (K 6→12; кламп и
@@ -115,6 +116,11 @@ public static class Docking
     /// <summary>Допуск горизонтального смещения корабля от оси площадки, м.</summary>
     public const float AlignOffsetTol = 2.5f;
 
+    /// <summary>П13: допуск вертикального выравнивания — отстояние корабля
+    /// вдоль нормали палубы от точки стыка, м. Без него «фиксация»
+    /// происходила на любой высоте в сфере CaptureRadius.</summary>
+    public const float AlignAltTol = 3f;
+
     /// <summary>Радиус «зоны захвата» площадки вокруг точки зависания, м:
     /// вне его выравнивание не проверяется и захват не запускается
     /// (внутри LandingZone 12×10×12 — площадка физически рядом).</summary>
@@ -130,6 +136,7 @@ public static class Docking
         public float RollDeg;   // крен: вокруг оси носа
         public float OffsetM;   // горизонтальное смещение от оси точки зависания, м
         public Vector2 OffsetXY; // то же в осях плоскости площадки (X=fwd, Y=right), м
+        public float AltM;      // П13: отстояние вдоль нормали палубы от точки стыка, м (знак: выше +)
         public bool Within;     // всё в допуске → «фиксация», запуск захвата
     }
 
@@ -170,6 +177,7 @@ public static class Docking
         Vector3 d = shipPos - padPos;
         Vector3 dFlat = d - up * d.Dot(up);
         float offsetM = dFlat.Length();
+        float altM = d.Dot(up); // П13: вертикальное выравнивание по нормали палубы
 
         var e = new AlignErrorSet
         {
@@ -178,11 +186,13 @@ public static class Docking
             RollDeg = Mathf.RadToDeg(rollRad),
             OffsetM = offsetM,
             OffsetXY = new Vector2(dFlat.Dot(fwd), dFlat.Dot(right)),
+            AltM = altM,
         };
         e.Within = Mathf.Abs(e.YawDeg) <= AlignTolDeg
                    && Mathf.Abs(e.PitchDeg) <= AlignTolDeg
                    && Mathf.Abs(e.RollDeg) <= AlignTolDeg
-                   && offsetM <= AlignOffsetTol;
+                   && offsetM <= AlignOffsetTol
+                   && Mathf.Abs(altM) <= AlignAltTol;
         return e;
     }
 

@@ -17,11 +17,12 @@ public partial class Stage5Test
     /// только явные границы.</summary>
     private void CheckPureDockingFn()
     {
-        // InZone: границы из DockRange (90): 80 — внутри, 120 — снаружи.
+        // InZone: границы из DockRange (П14: 1000): 80 — внутри,
+        // DockRange+20 — снаружи.
         Check(Docking.InZone(new Vector3(0, 0, 80), Vector3.Zero),
-              "п.1: InZone((0,0,80)) == true (внутри DockRange=90)");
-        Check(!Docking.InZone(new Vector3(0, 0, 120), Vector3.Zero),
-              "п.1: InZone((0,0,120)) == false (снаружи DockRange=90)");
+              "п.1: InZone((0,0,80)) == true (внутри DockRange)");
+        Check(!Docking.InZone(new Vector3(0, 0, Docking.DockRange + 20f), Vector3.Zero),
+              $"п.1: InZone(DockRange+20) == false (снаружи DockRange={Docking.DockRange})");
         Check(Docking.InZone(new Vector3(0, 0, Docking.DockRange), Vector3.Zero),
               "п.1: InZone ровно на DockRange == true (<=)");
         Check(!Docking.InZone(new Vector3(0, 0, Docking.DockRange + 0.01f), Vector3.Zero),
@@ -35,7 +36,10 @@ public partial class Stage5Test
 
         // П6: ComputeAlignError — чистая схема выравнивания.
         // Конвенция: nose = −Z, «над площадкой» = вдоль up (+Y).
-        var id = Docking.ComputeAlignError(new Vector3(0, 20, 0), Quaternion.Identity,
+        // П13: высота над точкой стыка в допуске AlignAltTol, чтобы Within
+        // зависел только от проверяемой оси.
+        float altY = Docking.AlignAltTol * 0.8f; // 2.4 м — внутри допуска
+        var id = Docking.ComputeAlignError(new Vector3(0, altY, 0), Quaternion.Identity,
                                            Vector3.Zero, Vector3.Up, Vector3.Forward);
         Check(Mathf.Abs(id.YawDeg) < 1e-3f && Mathf.Abs(id.PitchDeg) < 1e-3f
               && Mathf.Abs(id.RollDeg) < 1e-3f && id.OffsetM < 1e-3f && id.Within,
@@ -47,19 +51,19 @@ public partial class Stage5Test
         Check(Mathf.Abs(yawE.YawDeg - -10f) < 0.1f && !yawE.Within,
               $"п.1: AlignError(yaw -10°): YawDeg≈-10 && !Within (получено {yawE.YawDeg})");
         // Допуск: тангаж 4.99° — Within, 5.01° — нет (нос вверх = доворот +X).
-        var p5 = Docking.ComputeAlignError(new Vector3(0, 20, 0),
+        var p5 = Docking.ComputeAlignError(new Vector3(0, altY, 0),
                                            new Quaternion(Vector3.Right, Mathf.DegToRad(4.99f)),
                                            Vector3.Zero, Vector3.Up, Vector3.Forward);
-        var p51 = Docking.ComputeAlignError(new Vector3(0, 20, 0),
+        var p51 = Docking.ComputeAlignError(new Vector3(0, altY, 0),
                                             new Quaternion(Vector3.Right, Mathf.DegToRad(5.01f)),
                                             Vector3.Zero, Vector3.Up, Vector3.Forward);
         Check(p5.Within && !p51.Within && Mathf.Abs(Mathf.Abs(p5.PitchDeg) - 4.99f) < 0.1f
               && Mathf.Abs(Mathf.Abs(p51.PitchDeg) - 5.01f) < 0.1f,
               $"п.1: AlignError |тангаж| 4.99° Within, 5.01° нет (pitch={p5.PitchDeg:F3}/{p51.PitchDeg:F3}, in={p5.Within}/{p51.Within})");
         // Смещение: 2.4 м — Within, 2.6 м — нет (по правой оси площадки +X).
-        var oA = Docking.ComputeAlignError(new Vector3(2.4f, 20, 0),
+        var oA = Docking.ComputeAlignError(new Vector3(2.4f, altY, 0),
                                            Quaternion.Identity, Vector3.Zero, Vector3.Up, Vector3.Forward);
-        var oB = Docking.ComputeAlignError(new Vector3(2.6f, 20, 0),
+        var oB = Docking.ComputeAlignError(new Vector3(2.6f, altY, 0),
                                            Quaternion.Identity, Vector3.Zero, Vector3.Up, Vector3.Forward);
         Check(oA.Within && !oB.Within,
               $"п.1: AlignError смещение 2.4 м Within, 2.6 м нет (off={oA.OffsetM:F2}/{oB.OffsetM:F2}, in={oA.Within}/{oB.Within})");
@@ -69,6 +73,11 @@ public partial class Stage5Test
                                               Vector3.Zero, Vector3.Up, Vector3.Forward);
         Check(Mathf.Abs(Mathf.Abs(rollE.RollDeg) - 10f) < 0.1f && !rollE.Within,
               $"п.1: AlignError крен |10°| && !Within (получено {rollE.RollDeg})");
+        // П13: высота вне допуска AlignAltTol — Within == false при прочих нулях.
+        var altHi = Docking.ComputeAlignError(new Vector3(0, Docking.AlignAltTol + 1f, 0),
+                                              Quaternion.Identity, Vector3.Zero, Vector3.Up, Vector3.Forward);
+        Check(Mathf.Abs(altHi.AltM - (Docking.AlignAltTol + 1f)) < 0.01f && !altHi.Within,
+              $"п.1: AlignError высота за AlignAltTol -> !Within (alt={altHi.AltM:F2})");
 
         // BUG «стыкуется вверх ногами» (два корня): (1) `up.Cross(fwd)` давал
         // ЗЕРКАЛЬНЫЙ базис (det=-1) — кватернион переворачивал корабль килем
@@ -410,12 +419,12 @@ public partial class Stage5Test
         int shipA = _shipA.Net!.ShipNetId, stationId = _station!.State!.StationNetId;
         Vector3 dp = _station.DockPointGlobal;
 
-        // п.14: 120 м от точки стыка -> отказ «вне зоны», состояние None.
-        _shipA.GlobalPosition = dp + new Vector3(120, 0, 0);
+        // п.14: за док-зоной (П14: DockRange=1000) -> отказ «вне зоны», None.
+        _shipA.GlobalPosition = dp + new Vector3(Docking.DockRange + 120f, 0, 0);
         _shipA.TestSetVelocity(Vector3.Zero);
         int rej = nm.RejectedDockCount;
         Check(!_shipA.TestRequestDock(1, stationId),
-              "п.14: вне зоны (120 м) — отказ сервера");
+              $"п.14: вне зоны ({Docking.DockRange + 120f:F0} м) — отказ сервера");
         Check(nm.RejectedDockCount == rej + 1 && !nm.HasDockRequest(shipA)
               && _shipA.Net!.DockStateValue == 0,
               "п.14: DockState остаётся None; счётчик отказа вырос");

@@ -554,6 +554,8 @@ public partial class Ship : RigidBody3D
             GD.PrintErr($"ship#{Net.ShipNetId}: станция #{stationNetId} не найдена — отказ");
             RejectedDockCount++;
             nm.NoteDockRejection();
+            if (senderPeer == nm.SelfId)
+                HudEventBus.Report("Стыковка отклонена: станция не найдена");
             return false;
         }
 
@@ -583,6 +585,10 @@ public partial class Ship : RigidBody3D
             GD.Print($"ship#{Net.ShipNetId}: стыковка отклонена: вне зоны " +
                      $"({GlobalPosition.DistanceTo(dockPoint):F1} м > {Docking.DockRange})");
             RejectedDockCount++; nm.NoteDockRejection();
+            if (senderPeer == nm.SelfId)
+                HudEventBus.Report($"Стыковка отклонена: слишком далеко " +
+                                   $"({GlobalPosition.DistanceTo(dockPoint):F0} м, " +
+                                   $"нужно ≤ {Docking.DockRange:F0} м)");
             return false;
         }
         if (!Docking.AllowDock(Mathf.Abs(vn)))
@@ -590,6 +596,9 @@ public partial class Ship : RigidBody3D
             GD.Print($"ship#{Net.ShipNetId}: стыковка отклонена: скорость {Mathf.Abs(vn):F1} " +
                      $"> {Docking.DockSpeedLimit}");
             RejectedDockCount++; nm.NoteDockRejection();
+            if (senderPeer == nm.SelfId)
+                HudEventBus.Report($"Стыковка отклонена: скорость слишком велика " +
+                                   $"({Mathf.Abs(vn):F0} м/с, нужно ≤ {Docking.DockSpeedLimit:F0} м/с)");
             return false;
         }
 
@@ -618,6 +627,8 @@ public partial class Ship : RigidBody3D
         {
             GD.Print($"ship#{Net.ShipNetId}: стыковка отклонена: {reason}");
             RejectedDockCount++;
+            if (senderPeer == nm.SelfId)
+                HudEventBus.Report($"Стыковка отклонена: {reason}");
             return false; // счётчик уже поднят в реестре (station-busy/already)
         }
         nm.SetDockPhase(Net.ShipNetId, DockState.Approved);
@@ -754,7 +765,7 @@ public partial class Ship : RigidBody3D
             return false;
 
         Vector3 dp = station.DockPointGlobal;
-        // Вглубь зоны (DockRange=90): 20 м — гарантированно внутри и сферы, и
+        // Вглубь зоны (DockRange=1000): 20 м — гарантированно внутри и сферы, и
         // цилиндра collision (r=60), тело не застревает в станции.
         GlobalPosition = dp + new Vector3(20, 0, 0);
         LinearVelocity = Vector3.Zero;

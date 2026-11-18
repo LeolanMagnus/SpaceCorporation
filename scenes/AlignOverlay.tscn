@@ -1,0 +1,52 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" uid="uid://bulb3qduega8h" path="res://scripts/ui/AlignOverlay.cs" id="1_root"]
+[ext_resource type="Script" path="res://scripts/ui/OffsetIndicator.cs" id="2_offset"]
+[ext_resource type="Script" path="res://scripts/ui/RollHorizon.cs" id="3_roll"]
+[ext_resource type="Script" path="res://scripts/ui/AimDot.cs" id="4_dot"]
+[ext_resource type="Script" path="res://scripts/ui/AltitudeIndicator.cs" id="5_alt"]
+
+[node name="AlignOverlay" type="Control"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_root")
+
+[node name="OffsetIndicator" type="Control" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("2_offset")
+
+[node name="RollHorizon" type="Control" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("3_roll")
+
+[node name="AimDot" type="Control" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("4_dot")
+
+[node name="AltitudeIndicator" type="Control" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("5_alt")
