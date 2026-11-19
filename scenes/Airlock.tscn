@@ -1,0 +1,109 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/entities/Airlock.cs" id="1_airlock"]
+[ext_resource type="Script" path="res://scripts/entities/Door.cs" id="2_door"]
+[ext_resource type="Script" path="res://scripts/entities/AttachPoint.cs" id="3_attach"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_floor"]
+size = Vector3(1.2, 0.1, 1.2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_floor"]
+size = Vector3(1.2, 0.1, 1.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_side"]
+size = Vector3(0.1, 2.2, 1.2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_side"]
+size = Vector3(0.1, 2.2, 1.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_door"]
+size = Vector3(1.2, 2.2, 0.1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_door"]
+size = Vector3(1.2, 2.2, 0.1)
+
+[node name="Airlock" type="Node3D"]
+script = ExtResource("1_airlock")
+
+[node name="Floor" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.05, 0)
+collision_layer = 256
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape3D" parent="Floor"]
+shape = SubResource("BoxShape3D_floor")
+
+[node name="Mesh" type="MeshInstance3D" parent="Floor"]
+mesh = SubResource("BoxMesh_floor")
+
+[node name="Ceiling" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.05, 0)
+collision_layer = 256
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape3D" parent="Ceiling"]
+shape = SubResource("BoxShape3D_floor")
+
+[node name="Mesh" type="MeshInstance3D" parent="Ceiling"]
+mesh = SubResource("BoxMesh_floor")
+
+[node name="WallPort" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 1.0, 0)
+collision_layer = 256
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape3D" parent="WallPort"]
+shape = SubResource("BoxShape3D_side")
+
+[node name="Mesh" type="MeshInstance3D" parent="WallPort"]
+mesh = SubResource("BoxMesh_side")
+
+[node name="WallStarboard" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.55, 1.0, 0)
+collision_layer = 256
+collision_mask = 0
+
+[node name="Shape" type="CollisionShape3D" parent="WallStarboard"]
+shape = SubResource("BoxShape3D_side")
+
+[node name="Mesh" type="MeshInstance3D" parent="WallStarboard"]
+mesh = SubResource("BoxMesh_side")
+
+[node name="DoorExternal" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.0, 0.55)
+collision_layer = 256
+collision_mask = 0
+script = ExtResource("2_door")
+SlideDir = Vector3(1, 0, 0)
+SlideDistance = 1.3
+
+[node name="Shape" type="CollisionShape3D" parent="DoorExternal"]
+shape = SubResource("BoxShape3D_door")
+
+[node name="Mesh" type="MeshInstance3D" parent="DoorExternal"]
+mesh = SubResource("BoxMesh_door")
+
+[node name="DoorInternal" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.0, -0.55)
+collision_layer = 256
+collision_mask = 0
+script = ExtResource("2_door")
+SlideDir = Vector3(-1, 0, 0)
+SlideDistance = 1.3
+
+[node name="Shape" type="CollisionShape3D" parent="DoorInternal"]
+shape = SubResource("BoxShape3D_door")
+
+[node name="Mesh" type="MeshInstance3D" parent="DoorInternal"]
+mesh = SubResource("BoxMesh_door")
+
+# Точка крепления Kind.Hatch (NetId=1, docs/habitable-deck-plan.md §3.4):
+# центр бокса шлюза — сервер может «поставить» игрока внутрь шлюза одним
+# RequestAttach(ownerShipNetId, 1), минуя физику перелёта (телепорт через
+# шлюз уместен при реконнекте/спавне; обычный игровой вход — F-цикл).
+[node name="HatchPoint" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.0, 0)
+script = ExtResource("3_attach")
+Kind = 2
+NetId = 1
+PlayerOffset = Vector3(0, 0.4, 0)

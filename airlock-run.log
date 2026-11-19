@@ -1,0 +1,204 @@
+### dotnet build
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\scripts\entities\ShipHealthState.cs(153,18): warning CS0108: "ShipHealthState.Owner" скрывает наследуемый член "Node.Owner". Если скрытие было намеренным, используйте ключевое слово new. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\ShipLoadout.cs(34,72): warning CS8600: Преобразование литерала, допускающего значение NULL или возможного значения NULL в тип, не допускающий значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\ShipLoadout.cs(42,36): warning CS8604: Возможно, аргумент-ссылка, допускающий значение NULL, для параметра "id" в "bool ModuleCatalog.TryFind(string id, out ModuleSpec spec)". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\SuitLoadout.cs(27,76): warning CS8600: Преобразование литерала, допускающего значение NULL или возможного значения NULL в тип, не допускающий значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Airlock.cs(29,25): warning CS8618: свойство "ExternalDoor", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить свойство как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Airlock.cs(30,25): warning CS8618: свойство "InternalDoor", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить свойство как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\SuitLoadout.cs(42,29): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Capture.cs(270,21): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Capture.cs(271,21): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Player.cs(84,22): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Player.cs(209,49): warning CS8604: Возможно, аргумент-ссылка, допускающий значение NULL, для параметра "owner" в "void DebugInfoBus.RemoveInfoSource(string key, Func<string> owner)". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Player.cs(214,58): warning CS8604: Возможно, аргумент-ссылка, допускающий значение NULL, для параметра "owner" в "void DebugInfoBus.RemoveInfoSource(string key, Func<string> owner)". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(803,36): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(822,27): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(824,26): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\net\ShipRecordCodec.cs(98,79): warning CS9191: Модификатор "ref" для аргумента 2, соответствующего параметру "in", эквивалентен "in". Попробуйте вместо этого использовать "in". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(856,30): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(881,17): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(882,26): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(919,27): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(920,26): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeRadialMenu.cs(65,15): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Docking.cs(153,16): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Docking.cs(772,27): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbePilotAtSpawn.cs(204,66): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs(629,23): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs(657,26): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs(550,37): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs(630,20): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTop.cs(73,9): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\WeaponAimTest.cs(123,25): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\WeaponAimTest.cs(123,68): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\WeaponAimTest.cs(127,15): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\WeaponAimTest.cs(175,47): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(79,9): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(89,14): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(90,14): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(91,14): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(99,20): warning CS8604: Возможно, аргумент-ссылка, допускающий значение NULL, для параметра "item" в "void List<Node>.Add(Node item)". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(119,19): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudReticle.cs(91,35): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\CaptureLiveTest.cs(110,23): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\CaptureLiveTest.cs(110,52): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\LiquidSpaceTest.cs(162,20): warning CS0219: Переменной "idle" присвоено значение, но оно ни разу не использовано. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\ProbeBody.cs(24,45): warning CS8618: поле "StepHandler", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeInputHeadless.cs(39,23): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\CaptureCarryTest.cs(150,17): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\CaptureCarryTest.cs(240,17): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\NetTest.cs(400,44): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\NetTest.cs(401,83): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\LiquidSpaceTest.cs(33,19): warning CS8618: поле "_label", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage5Test.Helpers.cs(179,20): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage5Test.Undock.cs(54,22): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage5Test.Undock.cs(99,22): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage5Test.Helpers.cs(174,21): warning CS8618: поле "_station", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(28,19): warning CS8618: поле "_label", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(29,22): warning CS8618: поле "_camera", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(30,20): warning CS8618: поле "_root", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(357,23): warning CS8618: поле "_body", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(510,18): warning CS8618: поле "_ship", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage7Test.cs(61,23): warning CS0169: Поле "Stage7Test._suitBefore" никогда не используется. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+
+Сборка успешно завершена.
+
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\scripts\entities\ShipHealthState.cs(153,18): warning CS0108: "ShipHealthState.Owner" скрывает наследуемый член "Node.Owner". Если скрытие было намеренным, используйте ключевое слово new. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\ShipLoadout.cs(34,72): warning CS8600: Преобразование литерала, допускающего значение NULL или возможного значения NULL в тип, не допускающий значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\ShipLoadout.cs(42,36): warning CS8604: Возможно, аргумент-ссылка, допускающий значение NULL, для параметра "id" в "bool ModuleCatalog.TryFind(string id, out ModuleSpec spec)". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\SuitLoadout.cs(27,76): warning CS8600: Преобразование литерала, допускающего значение NULL или возможного значения NULL в тип, не допускающий значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Airlock.cs(29,25): warning CS8618: свойство "ExternalDoor", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить свойство как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Airlock.cs(30,25): warning CS8618: свойство "InternalDoor", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить свойство как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\SuitLoadout.cs(42,29): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Capture.cs(270,21): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Capture.cs(271,21): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Player.cs(84,22): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Player.cs(209,49): warning CS8604: Возможно, аргумент-ссылка, допускающий значение NULL, для параметра "owner" в "void DebugInfoBus.RemoveInfoSource(string key, Func<string> owner)". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Player.cs(214,58): warning CS8604: Возможно, аргумент-ссылка, допускающий значение NULL, для параметра "owner" в "void DebugInfoBus.RemoveInfoSource(string key, Func<string> owner)". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(803,36): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(822,27): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(824,26): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\net\ShipRecordCodec.cs(98,79): warning CS9191: Модификатор "ref" для аргумента 2, соответствующего параметру "in", эквивалентен "in". Попробуйте вместо этого использовать "in". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(856,30): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(881,17): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(882,26): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(919,27): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Combat.cs(920,26): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeRadialMenu.cs(65,15): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Docking.cs(153,16): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Docking.cs(772,27): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbePilotAtSpawn.cs(204,66): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs(629,23): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs(657,26): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs(550,37): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs(630,20): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTop.cs(73,9): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\WeaponAimTest.cs(123,25): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\WeaponAimTest.cs(123,68): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\WeaponAimTest.cs(127,15): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\WeaponAimTest.cs(175,47): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(79,9): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(89,14): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(90,14): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(91,14): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(99,20): warning CS8604: Возможно, аргумент-ссылка, допускающий значение NULL, для параметра "item" в "void List<Node>.Add(Node item)". [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudTarget.cs(119,19): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeHudReticle.cs(91,35): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\CaptureLiveTest.cs(110,23): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\CaptureLiveTest.cs(110,52): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\LiquidSpaceTest.cs(162,20): warning CS0219: Переменной "idle" присвоено значение, но оно ни разу не использовано. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\ProbeBody.cs(24,45): warning CS8618: поле "StepHandler", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\probes\ProbeInputHeadless.cs(39,23): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\CaptureCarryTest.cs(150,17): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\CaptureCarryTest.cs(240,17): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\NetTest.cs(400,44): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\NetTest.cs(401,83): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\LiquidSpaceTest.cs(33,19): warning CS8618: поле "_label", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage5Test.Helpers.cs(179,20): warning CS8601: Возможно, назначение-ссылка, допускающее значение NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage5Test.Undock.cs(54,22): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage5Test.Undock.cs(99,22): warning CS8602: Разыменование вероятной пустой ссылки. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage5Test.Helpers.cs(174,21): warning CS8618: поле "_station", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(28,19): warning CS8618: поле "_label", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(29,22): warning CS8618: поле "_camera", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(30,20): warning CS8618: поле "_root", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(357,23): warning CS8618: поле "_body", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage2Test.cs(510,18): warning CS8618: поле "_ship", не допускающий значения NULL, должен содержать значение, отличное от NULL, при выходе из конструктора. Возможно, стоит объявить поле как допускающий значения NULL. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+F:\petprojects\SpaceCorporation\tests\Stage7Test.cs(61,23): warning CS0169: Поле "Stage7Test._suitBefore" никогда не используется. [F:\petprojects\SpaceCorporation\SpaceCorporation.csproj]
+    Предупреждений: 63
+    Ошибок: 0
+
+Прошло времени 00:00:01.75
+### godot --headless res://tests/AirlockTest.tscn
+Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+
+ship#1: pilot -> 0, local pilot = False, auth = 1, frozen = False
+ship#2: pilot -> 0, local pilot = False, auth = 1, frozen = False
+WorldSpawner: мир заспавнен (корабли раньше игроков, §2.4)
+[net] spawn = offline @ peer 1
+[AIRLOCKTEST] start
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+PASS StartServer: NetworkManager.Instance доступен
+ship#2: pilot -> 1, local pilot = False, auth = 1, frozen = False
+[net] role: offline -> host, self = 1
+[net] save LastSeen[a46ad931] @ (-8,00,2,30,0,20) attached = True
+[net] spawn = a46ad931 @ peer 1
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+NetworkManager: host-сервер, self = 1, порт = 24567, макс. игроков = 8, каналов = 3
+NetworkManager: мир сервера готов (спавн объектов мира — шаг 4 плана)
+PASS StartServer: StartServer() в headless -> Ok (получено Ok)
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+PASS FindPlayer: в Ship.tscn есть инстанс Airlock
+PASS FindPlayer: пол шлюза и палуба курьера найдены
+ship#1: pilot -> 1, local pilot = False, auth = 1, frozen = False
+PASS FindPlayer: п.8.0: живой игрок отстёгнут от стартового кресла
+PASS P1Check: п.8.1: старт — снаружи шлюза
+PASS P1Check: п.8.1: старт — обе двери закрыты, шлюз герметичен
+PASS P1Check: п.8.1: hover-подсказка у наружной двери
+[HATCH] try inside=False ext=False int=False mode=Jetpack
+[net] EVA: Шлюзование: наружная дверь открыта — влетай внутрь
+PASS P2OpenExt: п.8.2: F снаружи открыла наружную дверь
+PASS P2OpenExt: п.8.2: внутренняя по-прежнему закрыта
+net: role = host, self = 1, key = a46ad931, peers = [], players = 1, repl/player/s = 0 (всего снимков 0 по 0 кораблям), batch/s = 0, rec/s = 0, input/s = 0/0, wire pkts/s = 0 (tx 0/rx 0), KB/s = 0,0, eva/s = 1,35 KB, rtt = -, err = Ok
+[srv-metrics ship#1] dequeue=0 sticky=1 q=0 accepted=0 appliedTick=0
+[srv-metrics ship#2] dequeue=0 sticky=60 q=0 accepted=0 appliedTick=0
+PASS P3FlyIn: п.8.3: джетпак-перелёт: игрок ВНУТРИ шлюза (не телепорт)
+PASS P3FlyIn: п.8.3: внутри шлюза ещё джетпак (не ботинки)
+PASS P3Check: п.8.3b: внутри шлюза всё ещё джетпак (условие цикла)
+PASS P4Cycle: п.8.4a: hover внутри шлюза на джетпаке — шлюзование (на палубу)
+[HATCH] try inside=True ext=True int=False mode=Jetpack
+[net] EVA: ботинки включены (наклон 0°)
+[net] EVA: Шлюзование завершено: давление выровнено, внутренняя дверь открыта
+PASS P4Cycle: п.8.4: цикл: наружная закрыта
+PASS P4Cycle: п.8.4: цикл: внутренняя открыта
+PASS P4Cycle: п.8.4: цикл: игрок развёрнут ботинками на пол шлюза
+PASS P4Cycle: п.8.4: цикл: нормаль +Y — ноги к палубе
+[PROBE p5 tr t=0] pl=(0, 1.4161111, 2.5969923) mode=Boots body=Floor n=(0, 1, 0) gap=∞ vel=(0, -0.23333335, 0)
+[PROBE p5 tr t=40] pl=(0, 0.88015497, 1.5969925) mode=Boots body=Floor n=(0, 1, 0) gap=-0,520 vel=(0, 2.5, -4.999998)
+PASS P5WalkIn: п.8.5: шаг по полу шлюза вывел на палубу курьера
+[PROBE p8.5] rel=(0, 0.9218216, 1.5469925) gap=-0,478
+PASS P5WalkIn: п.8.5: offset от палубы не растёт (carry-перенос)
+PASS P5WalkIn: п.8.5: игрок ВНУТРИ корпуса, не в шлюзе
+[HATCH] try inside=False ext=False int=True mode=Boots
+PASS P6NoEat: п.8.6: F на палубе (не в шлюзе) — не действует, состояние цело
+PASS P6FlyBack: п.8.7: автовозврат джетпаком через открытый внутренний проём
+[PROBE p7in] pl=(0, 1.42, 2.45) inside=True mode=Jetpack ext=False int=True
+[net] EVA: ботинки включены (наклон 0°)
+[PROBE p7g] body=DeckHull mode=Boots
+PASS P7Inside: п.8.7: G внутри шлюза — ботинки цепляются за пол шлюза
+PASS P7Inside: п.8.7: hover внутри шлюза (ботинки) — шлюзование наружу доступно
+[HATCH] try inside=True ext=False int=True mode=Boots
+[net] EVA: Шлюзование (наружу): наружная дверь открыта
+PASS P7Reverse: п.8.7: обратный цикл: внутренняя закрыта
+PASS P7Reverse: п.8.7: обратный цикл: наружная открыта
+PASS P7Reverse: п.8.7: обратный цикл: игрок снова на джетпаке
+net: role = host, self = 1, key = a46ad931, peers = [], players = 1, repl/player/s = 0 (всего снимков 0 по 0 кораблям), batch/s = 0, rec/s = 0, input/s = 0/0, wire pkts/s = 0 (tx 0/rx 0), KB/s = 0,0, eva/s = 1,82 KB, rtt = -, err = Ok
+[srv-metrics ship#1] dequeue=0 sticky=1 q=0 accepted=0 appliedTick=0
+[srv-metrics ship#2] dequeue=0 sticky=121 q=0 accepted=0 appliedTick=0
+PASS P8FlyOut: п.8.8: игрок вылетел НАРУЖУ через открытую наружную дверь
+[PROBE p8.8] d0=3,14 d1=4,06 shipV=(0, 0, -1)
+PASS P8Check: п.8.8: корабль улетает, игрок отстаёт (разрыв растёт)
+RESULT checks=30 failures=0

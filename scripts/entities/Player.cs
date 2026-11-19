@@ -61,9 +61,15 @@ public partial class Player : CharacterBody3D
     public override void _Ready()
     {
         CollisionLayer = CollisionLayers.Character;
-        // Пока игрок сидит в корабле, он не должен сталкиваться с его корпусом:
-        // маска намеренно без слоя Ship. Столкновения со станцией и мишенями — есть.
-        CollisionMask = CollisionLayers.Station | CollisionLayers.Target;
+        // HABDECK Шаг 0: капсула сталкивается с обшивкой кораблей (слой Ship) —
+        // иначе «мягкие стены» кабины невозможны, игрок проваливается сквозь
+        // корпус. Контексты «я ВНУТРИ этого корабля» (кресло, палуба своего
+        // корабля) снимаются НЕ вычёркиванием слоя из маски, а пер-контекстными
+        // исключениями коллизий: Player.Clip.cs (SetClipContext/RefreshClipContext).
+        // Столкновения со станцией и мишенями — как раньше.
+        _baseCollisionMask = CollisionLayers.Station | CollisionLayers.Target
+                             | CollisionLayers.Ship;
+        CollisionMask = _baseCollisionMask;
         MotionMode = MotionModeEnum.Grounded;
         UpDirection = Vector3.Up;
         FloorMaxAngle = Mathf.DegToRad(50f);

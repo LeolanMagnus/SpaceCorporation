@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://tests/AirlockTest.cs" id="1_test"]
+[ext_resource type="PackedScene" path="res://scenes/Main.tscn" id="2_main"]
+
+; Стенд docs/habitable-deck-plan.md, Шаг 8: полный цикл шлюзования на ЛЕТЯЩЕМ
+; курьере. Корень — Node, Main инстансится как в CapRideTest: миру нужен реальный
+; 3D-поддерево и спавнер; курьер идёт ручным шагом TestStepForTest, EVA-игрок
+; шагает реальной физикой (без паузы — иначе carry-перенос ботинок не живёт).
+[node name="AirlockTest" type="Node"]
+process_mode = 3
+script = ExtResource("1_test")
+
+[node name="Main" parent="." instance=ExtResource("2_main")]

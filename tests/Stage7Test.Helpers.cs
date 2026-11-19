@@ -40,6 +40,10 @@ public partial class Stage7Test : Node
 
         _ship = ((PackedScene)GD.Load("res://scenes/Ship.tscn")).Instantiate();
         _ship.Name = "TestShip";
+        // Стенд старше механики шлюза (docs/habitable-deck-plan.md): шлюз в
+        // Ship.tscn перехватывал бы F стенда (игрок п.6 стоит у кормы в
+        // радиусе действия). Вырезаем — стенд проверяет кресло/панель, не шлюз.
+        _ship.GetNodeOrNull("Decks/Airlock")?.Free();
         // Корабль-донор заморожен, НО остаётся в физическом пространстве:
         // `ProcessMode = Disabled` (PAUSE_MODE_STOP) у `RigidBody3D` вычёркивает
         // тело (и вложенную в него `Area3D`-панель) из `PhysicsDirectSpaceState` —

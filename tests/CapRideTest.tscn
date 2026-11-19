@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://tests/CapRideTest.cs" id="1_test"]
+[ext_resource type="PackedScene" path="res://scenes/Main.tscn" id="2_main"]
+
+; Стенд docs/habitable-deck-plan.md, Шаг 7: захват и игрок (Cap1–Cap3).
+; Корень — Node, Main инстансится как в CaptureLiveTest: миру нужен реальный
+; 3D-поддерево и спавнер; корабли идут ручным шагом TestStepForTest,
+; EVA-игрок шагает реальной физикой.
+[node name="CapRideTest" type="Node"]
+process_mode = 3
+script = ExtResource("1_test")
+
+[node name="Main" parent="." instance=ExtResource("2_main")]

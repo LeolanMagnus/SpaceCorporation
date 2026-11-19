@@ -145,24 +145,18 @@ public partial class Ship : RigidBody3D
         float izz = spec.Mass * (hx * hx + hy * hy) / 12f;
         Inertia = new Vector3(ixx, iyy, izz);
 
-        // Примитивный корпус: габариты — и у коллизии, и у картинки (провалить
-        // меш сквозь коллизию нельзя), цвет — из каталога. Узлы переиспользуют
-        // созданные в сцене (Ship.tscn), если они уже есть.
+        // Примитивный корпус-заглушка (ShipHull/Hull) удалён: габариты задаются
+        // только у коллизии, картинка — модель типа (пока есть лишь Courier)
+        // плюс навесы силуэта (HullAccessories).
         var collision = GetNodeOrNull<CollisionShape3D>("CollisionShape3D");
         if (collision?.Shape is BoxShape3D box)
             box.Size = spec.HullSize;
-        var hull = GetNodeOrNull<MeshInstance3D>("ShipHull/Hull");
-        if (hull?.Mesh is BoxMesh bm)
-            bm.Size = spec.HullSize;
-        if (hull != null)
-        {
-            if (hull.MaterialOverride is not StandardMaterial3D mat)
-            {
-                mat = new StandardMaterial3D();
-                hull.MaterialOverride = mat;
-            }
-            mat.AlbedoColor = spec.HullColor;
-        }
+        // HABDECK шаг 10 (план «обитаемые каюты и палубы»): для Courier —
+        // готовая Blender-модель assets/models/courier.glb (габариты 1:1 с
+        // коллизией, нос −Z). Коллизия/физика — по-прежнему бокс.
+        var courier = GetNodeOrNull<Node3D>("ShipHull/CourierModel");
+        if (courier != null)
+            courier.Visible = spec.Type == ShipType.Courier;
         // Ствол — срез носа: при смене корпуса смещаем крепление турели (Weapon)
         // на новый нос. Этап «наводки»: Muzzle больше не голый узел — турель
         // вынесена в отдельную сцену WeaponTurret.tscn (инстанс "Weapon").
@@ -216,8 +210,12 @@ public partial class Ship : RigidBody3D
             wrap = new Node3D { Name = "HullAccessories" };
             hull.AddChild(wrap);
         }
+        // Освобождаем сразу (Free, не QueueFree): QueueFree оставляет старые дети
+        // в дереве до конца кадра, и новые `Accessory{i}` при коллизии имён
+        // Godot переименовывает в `Accessory0@2` — путь перестаёт быть
+        // предсказуемым. Узлы — чистая картинка, обработчиков у них нет.
         foreach (Node child in wrap.GetChildren())
-            child.QueueFree();
+            child.Free();
         for (int i = 0; i < spec.Accessories.Length; i++)
         {
             var (offset, size, color) = spec.Accessories[i];

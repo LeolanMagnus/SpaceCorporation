@@ -909,15 +909,19 @@ public partial class Stage7Test : Node
         return _player;
     }
 
-    /// <summary>Внешняя точка-«глаз» перед панелью (сторона −z): панель свисает
-    /// с носа корабля, поэтому луч с −z на +z попадает в переднюю грань панели,
-    /// НЕ протыкая собственный корпус/палубу корабля (layer 1/256 — они тоже в
-    /// маске EVA-луча и перекрыли бы прицел «из тела игрока»).</summary>
+    /// <summary>Точка-«глаз» для hover-луча. HABDECK шаг 1: у курьера появилась
+    /// каюта с носовой переборкой (WallFore, слой палуб) — СНАРУЖИ панель теперь
+    /// legitimately перекрыта стеной, глаз переезжает ВНУТРЬ каюты (новая
+    /// механика: пилот входит через шлюз и садится за штурвал из каюты).
+    /// Локальная точка каюты переводится в мировые координаты телом корабля,
+    /// поэтому поворот/дрейф корабля не ломают геометрию луча.</summary>
     private Vector3 HoverEye()
     {
         var panel = PanelOn(_ship);
-        return panel != null ? panel.GlobalPosition + new Vector3(0f, 0.15f, -1.5f)
-                             : new Vector3(0f, 0.65f, -3.95f);
+        if (panel == null) return new Vector3(0f, 0.65f, -3.95f);
+        var body = panel.GetParent() as Node3D; // ControlPanel — прямой ребёнок Ship
+        return body != null ? body.ToGlobal(new Vector3(0f, 1.0f, 0.6f))
+                            : panel.GlobalPosition + new Vector3(0f, 0.15f, 1.0f);
     }
 
     /// <summary>Направление от внешней точки-глаза к центру панели.</summary>

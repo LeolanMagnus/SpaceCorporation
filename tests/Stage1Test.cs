@@ -112,8 +112,10 @@ public partial class Stage1Test : Node
                   "камера — потомок капсулы игрока (привязана к игроку)");
             Check(_player.CollisionLayer == CollisionLayers.Character,
                   $"Player: слой Character (получено {_player.CollisionLayer})");
-            Check(_player.CollisionMask == (CollisionLayers.Station | CollisionLayers.Target),
-                  $"Player: маска Station|Target без Ship (получено {_player.CollisionMask})");
+            Check(_player.CollisionMask == (CollisionLayers.Station | CollisionLayers.Target
+                                           | CollisionLayers.Ship),
+                  $"Player: маска Station|Target|Ship (HABDECK шаг 0: мягкие стены; " +
+                  $"получено {_player.CollisionMask})");
         }
 
         // --- шаг 1.5 + шаг 4: корабль спавнится через GameRoot (не инстан в Main.tscn)
@@ -542,18 +544,22 @@ public partial class Stage1Test : Node
                               is BoxShape3D haulerBox &&
                           haulerBox.Size == new Vector3(3.5f, 2.5f, 8f),
                           "грузовик: коллайдер перестроен под габариты корпуса");
-                    Check(_ship.GetNode<MeshInstance3D>("ShipHull/Hull").Mesh
-                              is BoxMesh haulerMesh &&
-                          haulerMesh.Size == new Vector3(3.5f, 2.5f, 8f),
-                          "грузовик: картинка корпуса = те же габариты, что коллайдер");
+                    Check(_ship.GetNodeOrNull<MeshInstance3D>("ShipHull/Hull") == null,
+                          "заглушка Hull удалена из сцены (картинка — модель + навесы)");
                     var acc31 = _ship.GetNodeOrNull<Node3D>("ShipHull/HullAccessories");
-                    Check(acc31 != null && acc31.GetChildCount() == 2,
+                    // число навесов = каталогу (груз + кабина + 3 стойки шасси),
+                    // старые при смене типа освобождаются сразу (Free)
+                    Check(acc31 != null &&
+                          acc31.GetChildCount() ==
+                          (ShipStatCatalog.Find(ShipType.Hauler) ?? ShipStatCatalog.DefaultShip)
+                              .Accessories.Length,
                           $"грузовик: навесы силуэта пересобраны (получено {acc31?.GetChildCount() ?? -1})");
-                    Check(_ship.GetNode<MeshInstance3D>("ShipHull/Hull").MaterialOverride
+                    Check(_ship.GetNode<MeshInstance3D>("ShipHull/HullAccessories/Accessory0")
+                              .MaterialOverride
                               is StandardMaterial3D haulerMat &&
                           haulerMat.AlbedoColor.B < 0.4f,
-                          "грузовик: корпус перекрашен (оранжевый: B = " +
-                          $"{(_ship.GetNode<MeshInstance3D>("ShipHull/Hull").MaterialOverride as StandardMaterial3D)?.AlbedoColor.B:F2})");
+                          "грузовик: навесы перекрашены из каталога (оранжевый: B = " +
+                          $"{(_ship.GetNode<MeshInstance3D>("ShipHull/HullAccessories/Accessory0").MaterialOverride as StandardMaterial3D)?.AlbedoColor.B:F2})");
                     FindButton(_layer.GetNode<VBoxContainer>(
                             "DebugRoot/DebugPanel/VBox/Scroll/Buttons"),
                         "ShipType: Container Freighter (контейнеровоз)")

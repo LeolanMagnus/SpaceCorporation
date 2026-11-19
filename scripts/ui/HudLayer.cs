@@ -768,6 +768,8 @@ public partial class HudLayer : CanvasLayer
             else
             {
                 text = p.EvaTestPanelHintText();
+                if (text == "")
+                    text = p.HatchHoverHint(); // шлюз рядом: подсказка двери/цикла
                 aim = p.EvaAimPx;
             }
         }

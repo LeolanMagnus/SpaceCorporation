@@ -1,0 +1,229 @@
+### dotnet build
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+
+Сборка успешно завершена.
+
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+    Предупреждений: 2
+    Ошибок: 0
+
+Прошло времени 00:00:00.68
+### godot --headless res://tests/Stage4Test.tscn
+Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+
+ship#1: pilot -> 0, local pilot = False, auth = 1, frozen = False
+ship#2: pilot -> 0, local pilot = False, auth = 1, frozen = False
+WorldSpawner: мир заспавнен (корабли раньше игроков, §2.4)
+[net] spawn = offline @ peer 1
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+PASS: NetworkManager.Instance доступен
+ship#2: pilot -> 1, local pilot = True, auth = 1, frozen = False
+[net] role: offline -> dedicated, self = 1
+NetworkManager: dedicated-сервер, self = 1, порт = 24567, макс. игроков = 8, каналов = 3
+NetworkManager: мир сервера готов (спавн объектов мира — шаг 4 плана)
+PASS: StartServer() в headless -> Ok (получено Ok)
+PASS: после StartServer роль = Dedicated (IsServer)
+PASS: п.1: res://scenes/Station.tscn загружается
+PASS: п.1: корень сцены — Station (получено Station)
+PASS: п.1: станция — StaticBody3D (статика, без интегратора)
+PASS: п.1: дочерний StationState есть
+PASS: п.2: WorldSpawner.Current доступен
+PASS: п.2: в GameRoot есть станция (найдено 1)
+PASS: п.2: StationNetId != 0 (получено 3)
+PASS: п.3: FindStation(3) != null (RPC идут по id, не по пути)
+PASS: п.3: реестр Stations содержит id станции
+PASS: п.5: в offline ровно одна станция в GameRoot (получено 1)
+PASS: п.5: в реестре ровно одна станция (получено 1)
+PASS: п.4: SpawnStation(вторая) вернула узел
+PASS: п.4: id второй станции уникален (первая 3, вторая 4)
+PASS: п.6: вторая станция в реестре (коллизии id нет)
+PASS: п.6: StationReplication.tres загружается (ловушка пустого ресурса)
+PASS: п.6: конфиг содержит StationState:StationNetId
+PASS: п.6: конфиг содержит StationState:NetPosition
+PASS: п.6: spawn == true для StationNetId (холодный пир видит id)
+PASS: п.6: spawn == true для NetPosition станции
+PASS: п.7: SnapshotBroadcaster.Instance доступен
+PASS: п.7: станций в мире уже >= 2 (после п.4)
+PASS: п.7: в реестре Ships нет станций (батч = только корабли)
+PASS: п.7: счётчик батчей доступен (packets=0, records=0)
+PASS: п.8: в гриде только корабли (слотов 2, кораблей 2)
+PASS: п.8: все тиры вместе = только корабли (станции в гриде нет)
+PASS: п.9: ShipHealthReplication.tres загружается
+PASS: п.9: в конфиге >= 5 свойств (получено 9)
+PASS: п.9: replication_mode == OnChange для ShipHealthState:Hp
+PASS: п.9: spawn == true для ShipHealthState:Hp (поздно зашедший пир видит HP)
+PASS: п.9: replication_mode == OnChange для ShipHealthState:MaxHp
+PASS: п.9: spawn == true для ShipHealthState:MaxHp (поздно зашедший пир видит HP)
+PASS: п.9: replication_mode == OnChange для ShipHealthState:GodMode
+PASS: п.9: spawn == true для ShipHealthState:GodMode (поздно зашедший пир видит HP)
+PASS: п.9: replication_mode == OnChange для ShipHealthState:DamageTakenCount
+PASS: п.9: spawn == true для ShipHealthState:DamageTakenCount (поздно зашедший пир видит HP)
+PASS: п.9: replication_mode == OnChange для ShipHealthState:LastDamage
+PASS: п.9: spawn == true для ShipHealthState:LastDamage (поздно зашедший пир видит HP)
+PASS: п.10: ShipHealthState на Ship.tscn есть
+PASS: п.10: offline Hp == 100 (получено 100)
+PASS: п.10: MaxHp == 100 (получено 100)
+PASS: п.11: на авторитете запись своя (предикат false)
+ship#1: авторитет корабля = 999, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+PASS: п.11: на не-авторитете запись будет помечена чужой
+ShipHealthState: запись Hp = 42 на НЕ-авторитете (корабль 1) — это «правда сервера», клиент её не пишет (Этап 4, шаг 4.5).
+PASS: п.11: роль не-авторитета стоит после записи
+PASS: п.11: авторитет восстановлен, Hp = 100
+PASS: п.12: |vn|=11 < порог 12 -> урон 0
+PASS: п.13: |vn|=30 -> 36 (получено 36)
+PASS: п.14: |vn|=500 -> кламп в MaxHp=100 (получено 100)
+PASS: п.15: god mode -> 0 при любой скорости
+PASS: п.16: знак vn не влияет на урон (vn=+40 -> 56, vn=-40 -> 56)
+PASS: п.16: ApproachSpeed при сближении = +40 (получено 40)
+PASS: п.16: ApplyBounce при vn<0 скорость НЕ меняет (получено (40, 0, 0))
+PASS: п.16: ApplyBounce при сближении разворачивает (получено (-12, 0, 0))
+PASS: п.17: арена-станция получила адрес (5)
+ship#6: урон 56 от станции #5 (|vn| = 40,0 м/с), Hp = 44/100, ударов = 1
+PASS: п.17: ShipHealthState на арена-корабле есть
+PASS: п.17: 40 м/с в станцию -> Hp = 100-56 = 44 (получено 44)
+PASS: п.17: DamageTakenCount == 1 (получено 1)
+PASS: п.17: LinearVelocity развёрнуто по нормали (отскок), X<0 (получено X=-12)
+PASS: п.18: медленное касание 2 м/с -> урона нет, Hp==100 (получено 100)
+PASS: п.18: DamageTakenCount == 0 при 2 м/с (получено 0)
+ship#8: урон 56 от станции #5 (|vn| = 40,0 м/с), Hp = 44/100, ударов = 1
+PASS: п.19: 2-й кадр в кулдауне — счётчик не вырос (DamageTakenCount==1, получено 1)
+PASS: п.20: God Mode — урона нет, Hp==100 (получено 100)
+PASS: п.20: отскок при God Mode сохраняется (vel.X<0)
+ship#10: урон 56 от станции #5 (|vn| = 40,0 м/с), Hp = 0/100, ударов = 1
+ship#10: уничтожен (Hp<=0) — сервер удаляет узел
+PASS: п.21: серверная смерть (Hp<=0) — корабль удалён (IsQueuedForDeletion/освобождён)
+PASS: п.21: PilotPeerId == 0 после смерти (получено 0)
+ship#11: авторитет корабля = 999, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+ShipHealthState: запись Hp = 0 на НЕ-авторитете (корабль 11) — это «правда сервера», клиент её не пишет (Этап 4, шаг 4.5).
+PASS: п.22: не-авторитет НЕ сам себя удаляет (смерть приходит спавнер-репликой)
+PASS: п.22: Hp == 0 доехал до не-авторитета (spawn/OnChange-флаги п.9)
+PASS: п.23: Ship.tscn загружается
+ship#12: авторитет корабля = 999, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+ship#12: авторитет корабля = 999, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+PASS: п.23: у не-авторитета кнопка God Mode НЕ добавлена (число не выросло)
+PASS: п.23: у не-авторитета есть кнопка интерполяции (роль сменилась корректно)
+PASS: п.24: ShipHealthState у god-корабля есть
+PASS: п.24: серверный SetGodModeServerOnly(true) поставил GodMode
+ship#13: авторитет корабля = 999, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+PASS: п.24: GodMode реплицируется (OnChange+spawn) — пир увидит god=on
+ShipHealthState: SetGodModeServerOnly вызван на не-авторитете — метод серверный, вызывается только из серверного процесса (шаг 4.9).
+PASS: п.24: запрос god с не-авторитета отклонён (GodMode не снят); RPC god mode нет вовсе
+ERROR: RPC 'RpcSubmitInput' on yourself is not allowed by selected mode.
+   at: rpcp (modules/multiplayer/scene_rpc_interface.cpp:489)
+   C# backtrace (most recent call first):
+       [0] int Godot.NativeCalls.godot_icall_3_922(nint, nint, long, Godot.NativeInterop.godot_string_name, System.ReadOnlySpan`1[Godot.Variant], Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:8194)
+       [1] Godot.Error Godot.Node.RpcId(long, Godot.StringName, Godot.Variant[]) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2176)
+       [2] void SpaceCorporation.Ship.SubmitInputToServer(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:592)
+       [3] void SpaceCorporation.Ship.EnqueueInputForSend(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:608)
+       [4] void SpaceCorporation.Ship._PhysicsProcess(double) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs:208)
+       [5] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2648)
+       [6] bool Godot.Node3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node3D.cs:1127)
+       [7] bool Godot.CollisionObject3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/CollisionObject3D.cs:607)
+       [8] bool Godot.PhysicsBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/PhysicsBody3D.cs:239)
+       [9] bool Godot.RigidBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/RigidBody3D.cs:1207)
+       [10] bool SpaceCorporation.Ship.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Ship_ScriptMethods.generated.cs:1486)
+       [11] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+ERROR: RPC 'RpcSubmitInput' on yourself is not allowed by selected mode.
+   at: rpcp (modules/multiplayer/scene_rpc_interface.cpp:489)
+   C# backtrace (most recent call first):
+       [0] int Godot.NativeCalls.godot_icall_3_922(nint, nint, long, Godot.NativeInterop.godot_string_name, System.ReadOnlySpan`1[Godot.Variant], Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:8194)
+       [1] Godot.Error Godot.Node.RpcId(long, Godot.StringName, Godot.Variant[]) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2176)
+       [2] void SpaceCorporation.Ship.SubmitInputToServer(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:592)
+       [3] void SpaceCorporation.Ship.EnqueueInputForSend(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:608)
+       [4] void SpaceCorporation.Ship._PhysicsProcess(double) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs:208)
+       [5] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2648)
+       [6] bool Godot.Node3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node3D.cs:1127)
+       [7] bool Godot.CollisionObject3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/CollisionObject3D.cs:607)
+       [8] bool Godot.PhysicsBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/PhysicsBody3D.cs:239)
+       [9] bool Godot.RigidBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/RigidBody3D.cs:1207)
+       [10] bool SpaceCorporation.Ship.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Ship_ScriptMethods.generated.cs:1486)
+       [11] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+ERROR: RPC 'RpcSubmitInput' on yourself is not allowed by selected mode.
+   at: rpcp (modules/multiplayer/scene_rpc_interface.cpp:489)
+   C# backtrace (most recent call first):
+       [0] int Godot.NativeCalls.godot_icall_3_922(nint, nint, long, Godot.NativeInterop.godot_string_name, System.ReadOnlySpan`1[Godot.Variant], Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:8194)
+       [1] Godot.Error Godot.Node.RpcId(long, Godot.StringName, Godot.Variant[]) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2176)
+       [2] void SpaceCorporation.Ship.SubmitInputToServer(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:592)
+       [3] void SpaceCorporation.Ship.EnqueueInputForSend(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:608)
+       [4] void SpaceCorporation.Ship._PhysicsProcess(double) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs:208)
+       [5] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2648)
+       [6] bool Godot.Node3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node3D.cs:1127)
+       [7] bool Godot.CollisionObject3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/CollisionObject3D.cs:607)
+       [8] bool Godot.PhysicsBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/PhysicsBody3D.cs:239)
+       [9] bool Godot.RigidBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/RigidBody3D.cs:1207)
+       [10] bool SpaceCorporation.Ship.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Ship_ScriptMethods.generated.cs:1486)
+       [11] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+PASS: п.25: God Mode + 60 м/с в станцию -> Hp==100 (получено 100)
+ERROR: RPC 'RpcSubmitInput' on yourself is not allowed by selected mode.
+   at: rpcp (modules/multiplayer/scene_rpc_interface.cpp:489)
+   C# backtrace (most recent call first):
+       [0] int Godot.NativeCalls.godot_icall_3_922(nint, nint, long, Godot.NativeInterop.godot_string_name, System.ReadOnlySpan`1[Godot.Variant], Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:8194)
+       [1] Godot.Error Godot.Node.RpcId(long, Godot.StringName, Godot.Variant[]) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2176)
+       [2] void SpaceCorporation.Ship.SubmitInputToServer(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:592)
+       [3] void SpaceCorporation.Ship.EnqueueInputForSend(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:608)
+       [4] void SpaceCorporation.Ship._PhysicsProcess(double) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs:208)
+       [5] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2648)
+       [6] bool Godot.Node3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node3D.cs:1127)
+       [7] bool Godot.CollisionObject3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/CollisionObject3D.cs:607)
+       [8] bool Godot.PhysicsBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/PhysicsBody3D.cs:239)
+       [9] bool Godot.RigidBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/RigidBody3D.cs:1207)
+       [10] bool SpaceCorporation.Ship.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Ship_ScriptMethods.generated.cs:1486)
+       [11] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+PASS: п.26: god-таран 60 м/с -> Hp остался 100 (получено 100)
+PASS: п.26: BuildInfoText содержит «HP: 100/100» (god=on, dmg#=0)
+PASS: п.26: BuildInfoText содержит god=on при включённом god mode
+ERROR: RPC 'RpcSubmitInput' on yourself is not allowed by selected mode.
+   at: rpcp (modules/multiplayer/scene_rpc_interface.cpp:489)
+   C# backtrace (most recent call first):
+       [0] int Godot.NativeCalls.godot_icall_3_922(nint, nint, long, Godot.NativeInterop.godot_string_name, System.ReadOnlySpan`1[Godot.Variant], Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:8194)
+       [1] Godot.Error Godot.Node.RpcId(long, Godot.StringName, Godot.Variant[]) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2176)
+       [2] void SpaceCorporation.Ship.SubmitInputToServer(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:592)
+       [3] void SpaceCorporation.Ship.EnqueueInputForSend(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:608)
+       [4] void SpaceCorporation.Ship._PhysicsProcess(double) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs:208)
+       [5] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2648)
+       [6] bool Godot.Node3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node3D.cs:1127)
+       [7] bool Godot.CollisionObject3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/CollisionObject3D.cs:607)
+       [8] bool Godot.PhysicsBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/PhysicsBody3D.cs:239)
+       [9] bool Godot.RigidBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/RigidBody3D.cs:1207)
+       [10] bool SpaceCorporation.Ship.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Ship_ScriptMethods.generated.cs:1486)
+       [11] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+PASS: п.27: старт — Hp=100 после god-тарана 60 м/с
+PASS: п.27: сервер записал Hp = 44
+ship#14: авторитет корабля = 999, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+PASS: п.27: локальная запись клиента помечена чужой (GuardWrite)
+ShipHealthState: запись Hp = 100 на НЕ-авторитете (корабль 14) — это «правда сервера», клиент её не пишет (Этап 4, шаг 4.5).
+PASS: п.27: Hp снова 44 — отмена клиента перезаписана репликой (критерий (в))
+ERROR: RPC 'RpcSubmitInput' on yourself is not allowed by selected mode.
+   at: rpcp (modules/multiplayer/scene_rpc_interface.cpp:489)
+   C# backtrace (most recent call first):
+       [0] int Godot.NativeCalls.godot_icall_3_922(nint, nint, long, Godot.NativeInterop.godot_string_name, System.ReadOnlySpan`1[Godot.Variant], Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:8194)
+       [1] Godot.Error Godot.Node.RpcId(long, Godot.StringName, Godot.Variant[]) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2176)
+       [2] void SpaceCorporation.Ship.SubmitInputToServer(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:592)
+       [3] void SpaceCorporation.Ship.EnqueueInputForSend(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:608)
+       [4] void SpaceCorporation.Ship._PhysicsProcess(double) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs:208)
+       [5] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2648)
+       [6] bool Godot.Node3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node3D.cs:1127)
+       [7] bool Godot.CollisionObject3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/CollisionObject3D.cs:607)
+       [8] bool Godot.PhysicsBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/PhysicsBody3D.cs:239)
+       [9] bool Godot.RigidBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/RigidBody3D.cs:1207)
+       [10] bool SpaceCorporation.Ship.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Ship_ScriptMethods.generated.cs:1486)
+       [11] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+==== Stage4Test: проверок=84, провалов=0 ====
+==== STAGE4TEST OK ====
+ERROR: RPC 'RpcSubmitInput' on yourself is not allowed by selected mode.
+   at: rpcp (modules/multiplayer/scene_rpc_interface.cpp:489)
+   C# backtrace (most recent call first):
+       [0] int Godot.NativeCalls.godot_icall_3_922(nint, nint, long, Godot.NativeInterop.godot_string_name, System.ReadOnlySpan`1[Godot.Variant], Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:8194)
+       [1] Godot.Error Godot.Node.RpcId(long, Godot.StringName, Godot.Variant[]) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2176)
+       [2] void SpaceCorporation.Ship.SubmitInputToServer(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:592)
+       [3] void SpaceCorporation.Ship.EnqueueInputForSend(SpaceCorporation.InputFrame) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Net.cs:608)
+       [4] void SpaceCorporation.Ship._PhysicsProcess(double) (F:\petprojects\SpaceCorporation\scripts\entities\Ship.Sync.cs:208)
+       [5] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2648)
+       [6] bool Godot.Node3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node3D.cs:1127)
+       [7] bool Godot.CollisionObject3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/CollisionObject3D.cs:607)
+       [8] bool Godot.PhysicsBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/PhysicsBody3D.cs:239)
+       [9] bool Godot.RigidBody3D.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/RigidBody3D.cs:1207)
+       [10] bool SpaceCorporation.Ship.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Ship_ScriptMethods.generated.cs:1486)
+       [11] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)

@@ -219,6 +219,10 @@ public partial class Player
     private void OnAttachedEvaMode()
     {
         _mode = EvaMode.Seat;
+        // HABDECK Шаг 0: кресло = Reparent под hull ⇒ исключаем коллизии со
+        // всем деревом своего корабля (до `_isLocal`-гейта: на сервере чужие
+        // тела тоже симулируются физикой).
+        RefreshClipContext();
         if (!_isLocal)
             return;
         ReleaseEvaInput();
@@ -249,6 +253,9 @@ public partial class Player
     /// без поверхности).</summary>
     private void OnDetachedEvaMode()
     {
+        // HABDECK Шаг 0: Detach — вне зависимости от `_isLocal`: у чужих
+        // игроков (сервер) клипы-исключения тоже обязаны сниматься.
+        SetClipContext(null);
         if (!_isLocal)
             return;
         _mode = EvaMode.Jetpack;
@@ -392,7 +399,13 @@ public partial class Player
         if (EvaTestPanelHoverNow() is not { } hover)
         {
             // Пустой клик НЕ должен глотаться молча: игрок не понимает, почему
-            // «F не работает» (UX-замечание C4).
+            // «F не работает» (UX-замечание C4). Но сначала — шлюзование:
+            // рядом с шлюзом F принадлежит ему (docs/habitable-deck-plan.md).
+            if (HatchTryInteract())
+            {
+                _panelHover = null;
+                return;
+            }
             MissHint($"F: под курсором нет панели управления ({_panelHoverWhy})");
             return;
         }
@@ -682,6 +695,11 @@ public partial class Player
         _bootsPrevMask = 0u;
         _bootsCamPitch = 0f;
         SetBootsCamPitch(0f);
+        // HABDECK Шаг 0: контекст столкновений — по новой опоре (Boots):
+        // палуба своего корабля ⇒ исключаем его дерево (и corps, и палубы:
+        // иначе липкость-снап при вращении hull проваливает капсулу в пол),
+        // чистая палуба ⇒ исключений нет, чужой hull блокирует.
+        RefreshClipContext();
 
         // Ориентация: −Y тела вдоль нормали контакта, нос — к ближайшему
         // «горизонтальному» направлению моего прежнего взгляда (игрок не должен
@@ -825,6 +843,9 @@ public partial class Player
         SetBootsCamPitch(0f);
         // Мышь отпускаем: в джетпаке взгляд — позиционный (курсор-прицел виден).
         ApplyBootsMouseCapture();
+        // HABDECK Шаг 0: опора снята ⇒ контекст клипа (носитель палубы) больше
+        // не действителен — снимаем исключения (чужая обшивка снова блокирует).
+        RefreshClipContext();
         if (!keepPosition)
             return;
         SyncFlightFromBody();
@@ -1070,6 +1091,9 @@ public partial class Player
                     _bootsContactPoint = _bootsBody.ToLocal(_gapHitPoint);
                     _bootsContactWorldLast = _gapHitPoint;
                     _bootsBodyLastXform = _bootsBody.GlobalTransform;
+                    // HABDECK Шаг 0: опора сменилась (прыжок с палубы одного
+                    // корабля на палубу другого) — контекст клипа за опорой.
+                    RefreshClipContext();
                 }
             }
 
@@ -1379,6 +1403,8 @@ public partial class Player
         _bootsTurnAnim = -1f;
         _bootsLookAccumPx = Vector2.Zero;
         SetBootsCamPitch(0f);
+        // (RefreshClipContext — ниже, уже после `_mode = Boots`: контекст
+        // зависит от режима и опоры, порядок обязано совпадать с TryActivateBoots.)
         // Шов обязан поступать как реальный `ActivateBoots`: луч к ПОВЕРХНОСТИ
         // тела. Точка теста может быть внутри корпуса (грубый стендовый «прямоугольник»
         // под игроком) — ищем честную точку попадания луча сверху вниз и ставим
@@ -1405,6 +1431,8 @@ public partial class Player
         _lastBootsTurnRad = 0f;
         _suit.BootsOn = true;
         _mode = EvaMode.Boots;
+        RefreshClipContext(); // контекст клипа — как в TryActivateBoots, уже после
+                              // `_mode = Boots`: контекст зависит от режима и опоры.
         AlignBodyToFloor();
         SyncFlightFromBody();
         Velocity = Vector3.Zero;
