@@ -77,6 +77,10 @@ public partial class Ship
                     if (c.HasMeta("GeneratedDeck"))
                         c.Free();
                 _generatedDecks = false;
+                // Габарит код-каюты — только пока она есть (иначе HUD-F2.4
+                // мерил бы каютой пустой трюм курьера).
+                decks.RemoveMeta("GenCabinCenter");
+                decks.RemoveMeta("GenCabinHalf");
                 SetSceneDeckCut(decks, false);
                 if (hatch != null && decks.HasMeta("HatchScenePos"))
                     hatch.Position = (Vector3)decks.GetMeta("HatchScenePos");
@@ -109,6 +113,12 @@ public partial class Ship
         float floorY = -hy + 0.15f, ceilY = floorY + h;
         float midZ = (cabinFore + cabinAft) * 0.5f;
         const float t = 0.1f; // толщина плит/стен — как у курьера
+
+        // Габарит каюты (плиты стен включены в половину толшиной 0.1/2) —
+        // meta для HUD-контекста F2.4: каюту сценой не описывали, она известна
+        // только генератору.
+        decks.SetMeta("GenCabinCenter", new Vector3(0f, (floorY + t * 0.5f + ceilY) * 0.5f, midZ));
+        decks.SetMeta("GenCabinHalf", new Vector3(halfW, (ceilY - floorY) * 0.5f, len * 0.5f));
 
         AddDeckSlab(decks, "GenCabinFloor", new Vector3(halfW * 2f, t, len),
                     new Vector3(0f, floorY, midZ));

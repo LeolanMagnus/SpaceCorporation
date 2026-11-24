@@ -153,6 +153,14 @@ public partial class Player : CharacterBody3D
         if (_isLocal)
             DebugInfoBus.RegisterInfoSource(SuitInfoSourceKey,
                 _suitInfoSource ??= () => SuitInfoTextSafe());
+
+        // F2.4 (план «обитаемые палубы», фаза 2): HUD-контекст местоположения
+        // «DeckCtx» (CABIN/HULL/STATION + «captured») — тот же образец, что
+        // «Suit»: только локальному игроку, снимается в _ExitTree по владельцу.
+        // Текст и его геометрия — Player.DeckHud.cs.
+        if (_isLocal)
+            DebugInfoBus.RegisterInfoSource(DeckContextSourceKey,
+                _deckCtxSource ??= () => DeckContextTextSafe());
     }
 
     /// <summary>Лямбда-источник «Suit» в шине: держим ссылку, чтобы снять её в
@@ -212,6 +220,7 @@ public partial class Player : CharacterBody3D
         // отложенном _ExitTree, уже после того как новый игрок перерегистрировался
         // под тем же ключом — слепое Remove стёрло бы свежий источник нового.
         DebugInfoBus.RemoveInfoSource(SuitInfoSourceKey, _suitInfoSource);
+        DebugInfoBus.RemoveInfoSource(DeckContextSourceKey, _deckCtxSource);
         if (_isLocal)
         {
             // Снимаем СВОИ кнопки по ручкам: при Offline→Host старый игрок удаляется
