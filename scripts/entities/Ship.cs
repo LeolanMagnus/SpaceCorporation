@@ -175,6 +175,10 @@ public partial class Ship : RigidBody3D
         // под ShipHull, сами меш-инстансы пересоздаются при каждой смене типа.
         RebuildHullAccessories(spec);
 
+        // F2.3 (фаза 2, «обитаемые палубы»): жилая каюта типов каталога с
+        // HabitableVolume строится кодом (курьер несёт палубу сценой).
+        BuildGeneratedDecks();
+
         // Посадочная точка — на крыше корпуса (иначе игрок провалится в трюм).
         var seat = GetNodeOrNull<Node3D>("ShipHull/AttachPoints/Seat");
         if (seat != null)
@@ -232,6 +236,22 @@ public partial class Ship : RigidBody3D
 
     /// <summary>Установить тип этой копии локально (спавн/применение реплики):
     /// записать тип + спецификацию, применить к телу/корпусу, пересобрать базу.</summary>
+    /// <summary>Тестовый шов (образец EvaTest*): сменить тип корабля без
+    /// гейта пилота — стенды F2.3 проверяют перестройку палуб. Только
+    /// оффлайн (нет реального пира): реплика не нужна.</summary>
+    public void ShipTestSetType(ShipType type)
+    {
+        if (NetworkManager.Instance is { HasRealPeer: true })
+        {
+            GD.PrintErr("ship: ShipTestSetType только для оффлайн-стендов");
+            return;
+        }
+        var spec = ShipStatCatalog.Find(type);
+        ApplyShipTypeSpec(spec, fromExportCeiling: false);
+        _baseFlight = spec.Base;
+        RebuildFlight();
+    }
+
     private void SetShipTypeLocal(ShipTypeSpec spec, bool fromExportCeiling = false)
     {
         ApplyShipTypeSpec(spec, fromExportCeiling);

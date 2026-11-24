@@ -88,12 +88,27 @@ public sealed class ShipTypeSpec
     /// Посадочные шасси (запрос: ориентир стыковки) есть у всех типов.</summary>
     public readonly float GearDrop;
 
+    /// <summary>F2.3 (план «обитаемые палубы», фаза 2): габарит жилой палубы
+    /// относительно центра корпуса, м (ширина, высота потолка, длина);
+    /// Vector3.Zero = каюты нет. Пол палубы — у днища корпуса, кормовой торец
+    /// каюты у кормового среза корпуса, шлюз врезан в кормовую стенку
+    /// (наружная дверь смотрит за корму, как у курьера в Ship.tscn).
+    /// Курьер задаёт каюту сцена, для Hauler/Freighter палубу строит код
+    /// (Ship.BuildGeneratedDecks).</summary>
+    public readonly Vector3 HabitableVolume;
+
+    /// <summary>Число палуб (F2.3). 1 = одна жилая палуба; >1 — с трапом на
+    /// верхнюю (не реализовано: shortcut: двухпалубных типов в каталоге нет,
+    /// генератор трапа — когда появится первый DecksCount=2 тип).</summary>
+    public readonly int DecksCount;
+
     public ShipTypeSpec(ShipType type, string displayName, float mass,
                         FlightParams @base, Vector3 hullSize, Color hullColor,
                         (Vector3 Offset, Vector3 Size, Color Color)[]? accessories = null,
                         WeaponType weapon = WeaponCatalog.DefaultWeapon,
                         ShipSizeClass sizeClass = ShipSizeClass.S,
-                        float gearDrop = 0.35f)
+                        float gearDrop = 0.35f,
+                        Vector3 habitableVolume = default, int decksCount = 1)
     {
         Type = type;
         DisplayName = displayName;
@@ -105,6 +120,8 @@ public sealed class ShipTypeSpec
         Weapon = weapon;
         SizeClass = sizeClass;
         GearDrop = gearDrop;
+        HabitableVolume = habitableVolume;
+        DecksCount = decksCount;
     }
 }
 
@@ -233,7 +250,11 @@ public static class ShipStatCatalog
             },
             // Типоразмер для посадки (П1): средний — M.
             sizeClass: ShipSizeClass.M,
-            gearDrop: 0.5f),
+            gearDrop: 0.5f,
+            // F2.3: кабина в носовой части корпуса (габарит палубы относительно
+            // центра корпуса). Ходовая рубка — одна палуба.
+            habitableVolume: new Vector3(3.0f, 2.0f, 2.4f),
+            decksCount: 1),
 
         new ShipTypeSpec(
             ShipType.ContainerFreighter, "Container Freighter (контейнеровоз)",
@@ -279,7 +300,12 @@ public static class ShipStatCatalog
             },
             // Типоразмер для посадки (П1): «чуть больше среднего» — L.
             sizeClass: ShipSizeClass.L,
-            gearDrop: 0.7f),
+            gearDrop: 0.7f,
+            // F2.3: жилая рубка у носа (под палубой контейнеров нет —
+            // аксессуары-контейнеры сидят выше крыши рубки лишь визуально,
+            // коллизия корпуса одна коробка).
+            habitableVolume: new Vector3(4.0f, 2.8f, 3.0f),
+            decksCount: 1),
     };
 
     /// <summary>Запись каталога по типу. Неизвестный байт (чужой билд) → молча
