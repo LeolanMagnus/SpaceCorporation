@@ -1,0 +1,81 @@
+### dotnet build
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+
+Сборка успешно завершена.
+
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+    Предупреждений: 2
+    Ошибок: 0
+
+Прошло времени 00:00:00.70
+### godot --headless res://tests/AirlockTest.tscn
+Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+
+ship#1: pilot -> 0, local pilot = False, auth = 1, frozen = False
+ship#2: pilot -> 0, local pilot = False, auth = 1, frozen = False
+WorldSpawner: мир заспавнен (корабли раньше игроков, §2.4)
+[net] spawn = offline @ peer 1
+[AIRLOCKTEST] start
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+PASS StartServer: NetworkManager.Instance доступен
+ship#2: pilot -> 1, local pilot = False, auth = 1, frozen = False
+[net] role: offline -> host, self = 1
+[net] save LastSeen[a46ad931] @ (-8,00,2,30,0,20) attached = True
+[net] spawn = a46ad931 @ peer 1
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+NetworkManager: host-сервер, self = 1, порт = 24567, макс. игроков = 8, каналов = 3
+NetworkManager: мир сервера готов (спавн объектов мира — шаг 4 плана)
+PASS StartServer: StartServer() в headless -> Ok (получено Ok)
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+PASS FindPlayer: в Ship.tscn есть инстанс Airlock
+PASS FindPlayer: пол шлюза и палуба курьера найдены
+ship#1: pilot -> 1, local pilot = False, auth = 1, frozen = False
+PASS FindPlayer: п.8.0: живой игрок отстёгнут от стартового кресла
+PASS P1Check: п.8.1: старт — снаружи шлюза
+PASS P1Check: п.8.1: старт — обе двери закрыты, шлюз герметичен
+PASS P1Check: п.8.1: hover-подсказка у наружной двери
+[HATCH] try inside=False ext=False int=False mode=Jetpack
+PASS P2OpenExt: п.8.2: F снаружи открыла наружную дверь
+PASS P2OpenExt: п.8.2: внутренняя по-прежнему закрыта
+net: role = host, self = 1, key = a46ad931, peers = [], players = 1, repl/player/s = 0 (всего снимков 0 по 0 кораблям), batch/s = 0, rec/s = 0, input/s = 0/0, wire pkts/s = 0 (tx 0/rx 0), KB/s = 0,0, eva/s = 1,35 KB, rtt = -, err = Ok
+[srv-metrics ship#1] dequeue=0 sticky=1 q=0 accepted=0 appliedTick=0
+[srv-metrics ship#2] dequeue=0 sticky=60 q=0 accepted=0 appliedTick=0
+PASS P3FlyIn: п.8.3: джетпак-перелёт: игрок ВНУТРИ шлюза (не телепорт)
+PASS P3FlyIn: п.8.3: внутри шлюза ещё джетпак (не ботинки)
+PASS P3Check: п.8.3b: внутри шлюза всё ещё джетпак (условие цикла)
+PASS P4Cycle: п.8.4a: hover внутри шлюза на джетпаке — шлюзование (на палубу)
+[HATCH] try inside=True ext=True int=False mode=Jetpack
+[net] EVA: ботинки включены (наклон 0°)
+[net] EVA: Шлюзование завершено: давление выровнено, внутренняя дверь открыта
+PASS P4Cycle: п.8.4: цикл: наружная закрыта
+PASS P4Cycle: п.8.4: цикл: внутренняя открыта
+PASS P4Cycle: п.8.4: цикл: игрок развёрнут ботинками на пол шлюза
+PASS P4Cycle: п.8.4: цикл: нормаль +Y — ноги к палубе
+[PROBE p5 tr t=0] pl=(0, 1.4161111, 2.5969923) mode=Boots body=Floor n=(0, 1, 0) gap=∞ vel=(0, -0.23333335, 0)
+[PROBE p5 tr t=40] pl=(0, 0.88015497, 1.5969925) mode=Boots body=Floor n=(0, 1, 0) gap=-0,520 vel=(0, 2.5, -4.999998)
+PASS P5WalkIn: п.8.5: шаг по полу шлюза вывел на палубу курьера
+[PROBE p8.5] rel=(0, 0.9218216, 1.5469925) gap=-0,478
+PASS P5WalkIn: п.8.5: offset от палубы не растёт (carry-перенос)
+PASS P5WalkIn: п.8.5: игрок ВНУТРИ корпуса, не в шлюзе
+[HATCH] try inside=False ext=False int=True mode=Boots
+PASS P6NoEat: п.8.6: F на палубе (не в шлюзе) — не действует, состояние цело
+PASS P6FlyBack: п.8.7: автовозврат джетпаком через открытый внутренний проём
+[PROBE p7in] pl=(0, 1.42, 2.45) inside=True mode=Jetpack ext=False int=True
+[net] EVA: ботинки включены (наклон 0°)
+[PROBE p7g] body=Floor mode=Boots
+PASS P7Inside: п.8.7: G внутри шлюза — ботинки цепляются за пол шлюза
+PASS P7Inside: п.8.7: hover внутри шлюза (ботинки) — шлюзование наружу доступно
+[HATCH] try inside=True ext=False int=True mode=Boots
+[net] EVA: Шлюзование (наружу): наружная дверь открыта
+PASS P7Reverse: п.8.7: обратный цикл: внутренняя закрыта
+PASS P7Reverse: п.8.7: обратный цикл: наружная открыта
+PASS P7Reverse: п.8.7: обратный цикл: игрок снова на джетпаке
+net: role = host, self = 1, key = a46ad931, peers = [], players = 1, repl/player/s = 0 (всего снимков 0 по 0 кораблям), batch/s = 0, rec/s = 0, input/s = 0/0, wire pkts/s = 0 (tx 0/rx 0), KB/s = 0,0, eva/s = 1,82 KB, rtt = -, err = Ok
+[srv-metrics ship#1] dequeue=0 sticky=1 q=0 accepted=0 appliedTick=0
+[srv-metrics ship#2] dequeue=0 sticky=121 q=0 accepted=0 appliedTick=0
+PASS P8FlyOut: п.8.8: игрок вылетел НАРУЖУ через открытую наружную дверь
+[PROBE p8.8] d0=3,14 d1=4,06 shipV=(0, 0, -1)
+PASS P8Check: п.8.8: корабль улетает, игрок отстаёт (разрыв растёт)
+RESULT checks=30 failures=0

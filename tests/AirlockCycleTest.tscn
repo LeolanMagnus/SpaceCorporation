@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/AirlockCycleTest.cs" id="1_test"]
+
+; Тест чистого правила цикла шлюза (habitable-deck-phase2-plan.md, F2.1).
+; AirlockCycle — чистая функция, физический шаг не нужен; корень — Node3D по
+; той же причине, что у остальных тестов: единый прогон через run-tests.sh.
+[node name="AirlockCycleTest" type="Node3D"]
+script = ExtResource("1_test")

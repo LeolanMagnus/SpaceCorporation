@@ -128,6 +128,25 @@ public partial class NetworkManager : Node
         var entry = FindDockRequest(shipNetId);
         int stationNetId = entry?.StationNetId ?? ship.Net.DockStationNetId;
         _dockRequests.Remove(shipNetId);
+        // F2.2 (docs/habitable-deck-phase2-plan.md): игрок, пристёгнутый к точке
+        // отстыковываемого корабля (палуба/шлюз), после undock улетел бы вместе
+        // с hull'ом — Reparent-иерархия тянет его за собой. Снимаем таких
+        // игроков серверным DetachServerSide (тот же путь, что RequestDetach:
+        // Detach + ApplyDetach всем пирам). Вызов ДО ResetDockSide/ApplyAuthority:
+        // игрок detachment не читает док-поля, но порядок фиксирует «сначала
+        // люди, потом железо».
+        foreach (Node n in GetTree().GetNodesInGroup("player"))
+        {
+            if (n is Player pl && GodotObject.IsInstanceValid(pl)
+                && pl.IsAttached && pl.AttachedTo != null
+                && pl.AttachedTo.OwnerNetId == shipNetId)
+            {
+                DebugInfoBus.Report($"dock: undock guard — detach игрока " +
+                                    $"{pl.Name} с точки #{pl.AttachedTo.NetId} " +
+                                    $"корабля #{shipNetId}");
+                pl.DetachServerSide();
+            }
+        }
         ResetDockSide(shipNetId, stationNetId);
         ship.ApplyAuthority(); // dockLocked=false → Freeze снимается (единств. точка записи)
         DebugInfoBus.Report($"dock: undock ship#{shipNetId} ({why})");

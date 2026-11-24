@@ -40,6 +40,13 @@ public partial class Player : CharacterBody3D
         bool inside = IsInsideAirlock(hatch);
         GD.Print($"[HATCH] try inside={inside} ext={hatch.ExternalOpen} int={hatch.InternalOpen} mode={_mode}");
 
+        // Сеть (F2.1): двери — источник истины на сервере, локально шлём
+        // НАМЕРЕНИЕ + исполняем свою часть (ботинки). Двери поменяются
+        // broadcast'ом ApplyDoorState у всех пиров. Оффлайн (стенды, одиночная
+        // игра) — прежний прямой путь ниже, без изменений.
+        if (NetworkManager.Instance is { HasRealPeer: true })
+            return HatchTryInteractNet(hatch, inside);
+
         // Снаружи у закрытого шлюза — открыть наружную дверь для входа.
         if (!inside && hatch.ExternalOpen == false && hatch.IsSealed)
         {
@@ -79,6 +86,49 @@ public partial class Player : CharacterBody3D
         // Нечего переключать (например, внутри кабины у закрытой внутренней
         // при закрытой наружной): F НЕ съедаем — пусть работает обычная
         // подсказка панели (контракт Stage7 C4).
+        return false;
+    }
+
+    /// <summary>Сетевая F-ветка (F2.1): намерение — серверу (он валидирует
+    /// правилом `AirlockCycle` + близостью и рассылает двери всем), своя часть
+    /// (ботинки) — сразу локально. Двери сами не двигаются — только
+    /// broadcast'ом. Откат CycleIn (нет опоры) — намерение CancelToSpace.</summary>
+    private bool HatchTryInteractNet(Airlock hatch, bool inside)
+    {
+        // Снаружи у закрытого шлюза — попросить открыть наружную.
+        if (!inside && hatch.ExternalOpen == false && hatch.IsSealed)
+        {
+            hatch.RequestHatch(HatchAction.OpenExternalFromOutside);
+            return true;
+        }
+
+        // Внутри на джетпаке при открытой наружной — цикл внутрь. Сервер
+        // закрывает наружную и открывает внутреннюю; разворот ботинками —
+        // локальный носитель. Не развернулись — просим откат наружу,
+        // иначе заперлись бы внутри с выключенным внутренним циклом.
+        if (inside && _mode == EvaMode.Jetpack && hatch.ExternalOpen && !hatch.InternalOpen)
+        {
+            hatch.RequestHatch(HatchAction.CycleIn);
+            if (!TryActivateBoots())
+            {
+                hatch.RequestHatch(HatchAction.CancelToSpace);
+                MissHint("Шлюзование: нет опоры для ботинок — наружная дверь снова открыта");
+                return true;
+            }
+            MissHint("Шлюзование завершено: давление выровнено, внутренняя дверь открыта");
+            return true;
+        }
+
+        // Внутри в ботинках при открытой внутренней — обратный выход в космос.
+        if (inside && _mode == EvaMode.Boots && hatch.InternalOpen && !hatch.ExternalOpen)
+        {
+            hatch.RequestHatch(HatchAction.CycleOut);
+            _mode = EvaMode.Jetpack; // как в ToggleBoots: снял ботинки → джетпак
+            DeactivateBoots(keepPosition: true);
+            MissHint("Шлюзование (наружу): наружная дверь открыта");
+            return true;
+        }
+
         return false;
     }
 

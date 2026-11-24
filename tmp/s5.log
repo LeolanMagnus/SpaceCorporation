@@ -1,0 +1,325 @@
+### dotnet build
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+
+Сборка успешно завершена.
+
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+    Предупреждений: 2
+    Ошибок: 0
+
+Прошло времени 00:00:00.81
+### godot --headless res://tests/Stage5Test.tscn
+Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+
+ship#1: pilot -> 0, local pilot = False, auth = 1, frozen = False
+ship#2: pilot -> 0, local pilot = False, auth = 1, frozen = False
+WorldSpawner: мир заспавнен (корабли раньше игроков, §2.4)
+[net] spawn = offline @ peer 1
+ERROR: Index idx = 10 is out of bounds (properties.size() = 10).
+   at: _get (modules/multiplayer/scene_replication_config.cpp:81)
+   C# backtrace (most recent call first):
+       [0] Godot.Variant Godot.NativeCalls.godot_icall_1_168(nint, nint, Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:1513)
+       [1] Godot.Variant Godot.GodotObject.Get(Godot.StringName) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/GodotObject.cs:435)
+       [2] void SpaceCorporation.Tests.Stage5Test.DumpReplicationConfig(string) (F:\petprojects\SpaceCorporation\tests\Stage5Test.Helpers.cs:525)
+       [3] void SpaceCorporation.Tests.Stage5Test._Ready() (F:\petprojects\SpaceCorporation\tests\Stage5Test.cs:63)
+       [4] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2660)
+       [5] bool SpaceCorporation.Tests.Stage5Test.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Tests.Stage5Test_ScriptMethods.generated.cs:370)
+       [6] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+CONFIG DUMP res://scenes/StationReplication.tres (10): StationState:StationNetId mode=0 spawn=1 | StationState:MaxHp mode=0 spawn=1 | StationState:NetPosition mode=0 spawn=1 | StationState:NetRotation mode=0 spawn=1 | StationState:DockApproved mode=2 spawn=1 | StationState:DockShipNetId mode=2 spawn=1 | StationState:DockStateValue mode=2 spawn=1 | StationState:Hp mode=2 spawn=1 | StationState:Shield mode=2 spawn=1 | StationState:MaxShield mode=2 spawn=1
+ERROR: Index idx = 15 is out of bounds (properties.size() = 15).
+   at: _get (modules/multiplayer/scene_replication_config.cpp:81)
+   C# backtrace (most recent call first):
+       [0] Godot.Variant Godot.NativeCalls.godot_icall_1_168(nint, nint, Godot.NativeInterop.godot_string_name) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/NativeCalls.cs:1513)
+       [1] Godot.Variant Godot.GodotObject.Get(Godot.StringName) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/GodotObject.cs:435)
+       [2] void SpaceCorporation.Tests.Stage5Test.DumpReplicationConfig(string) (F:\petprojects\SpaceCorporation\tests\Stage5Test.Helpers.cs:525)
+       [3] void SpaceCorporation.Tests.Stage5Test._Ready() (F:\petprojects\SpaceCorporation\tests\Stage5Test.cs:64)
+       [4] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2660)
+       [5] bool SpaceCorporation.Tests.Stage5Test.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Tests.Stage5Test_ScriptMethods.generated.cs:370)
+       [6] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+CONFIG DUMP res://scenes/ShipReplication.tres (15): NetState:NetPosition mode=0 spawn=1 | NetState:NetRotation mode=0 spawn=1 | NetState:NetLinearVelocity mode=0 spawn=0 | NetState:NetAngularVelocity mode=0 spawn=0 | NetState:SimTick mode=0 spawn=0 | NetState:ShipNetId mode=0 spawn=1 | NetState:AppliedTick mode=0 spawn=0 | NetState:AppliedMask mode=0 spawn=0 | NetState:DockStateValue mode=2 spawn=1 | NetState:DockStationNetId mode=2 spawn=1 | NetState:PilotAssist mode=2 spawn=1 | NetState:ShipTypeValue mode=2 spawn=1 | NetState:FactionValue mode=2 spawn=1 | NetState:CaptureParentNetId mode=2 spawn=1 | NetState:CaptureTick mode=2 spawn=1
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+PASS: NetworkManager.Instance доступен
+ship#2: pilot -> 1, local pilot = True, auth = 1, frozen = False
+[net] role: offline -> dedicated, self = 1
+NetworkManager: dedicated-сервер, self = 1, порт = 24567, макс. игроков = 8, каналов = 3
+NetworkManager: мир сервера готов (спавн объектов мира — шаг 4 плана)
+PASS: StartServer() в headless -> Ok (получено Ok)
+PASS: после StartServer роль = Dedicated (IsServer)
+PASS: п.1: InZone((0,0,80)) == true (внутри DockRange)
+PASS: п.1: InZone(DockRange+20) == false (снаружи DockRange=1000)
+PASS: п.1: InZone ровно на DockRange == true (<=)
+PASS: п.1: InZone чуть за DockRange == false
+PASS: п.1: AllowDock(7.9) == true
+PASS: п.1: AllowDock(8.1) == false
+PASS: п.1: AllowDock ровно DockSpeedLimit == true (<=)
+PASS: п.1: AlignError(идеальное) все нули && Within (yaw=0 pitch=0 roll=0 off=0)
+PASS: п.1: AlignError(yaw -10°): YawDeg≈-10 && !Within (получено -10)
+PASS: п.1: AlignError |тангаж| 4.99° Within, 5.01° нет (pitch=4,990/5,010, in=True/False)
+PASS: п.1: AlignError смещение 2.4 м Within, 2.6 м нет (off=2,40/2,60, in=True/False)
+PASS: п.1: AlignError крен |10°| && !Within (получено -10)
+PASS: п.1: AlignError высота за AlignAltTol -> !Within (alt=4,00)
+PASS: п.1: UprightPose(идеал) верх совпадает с палубой (cos=1,000)
+PASS: п.1: UprightPose(идеал) = идеал (нос -Z не меняется)
+PASS: п.1: UprightPose(перевёрнутый) выпрямлен, рыскание сохранено (up=1,000 nose·noseIn=1,000)
+PASS: п.1: UprightPose(тангаж 45°) -> upright, азимут носа сохранён
+PASS: п.1: UprightPose базис правый (det=1,000)
+PASS: п.1: IsLatchedUpright(бок 90°) == false
+PASS: п.1: IsLatchedUpright(upright) == true
+PASS: п.1: CaptureAccel(dx=+z, v=0) -> a.z > 0 (получено 50)
+PASS: п.1: |CaptureAccel| <= MaxSpringAccel (получено 50)
+PASS: п.1:CaptureAccel(dx=1000) закламлен в MaxSpringAccel (получено 50)
+PASS: п.1: демпфирование: a(dx=3,v=2)=28 < a(dx=3,v=0)=36 (без клампа)
+PASS: п.1: IsLatched на границах (расстояние == LatchDistance, угол == acos(0.9)) == true
+PASS: п.1: IsLatched чуть дальше LatchDistance == false
+PASS: п.1: IsLatched при угле чуть больше порога == false
+PASS: п.1: IsDocked на границах (|dx|==DockDistance, |v|==DockSpeedEps) == true
+PASS: п.1: IsDocked при |dx| > DockDistance == false
+PASS: п.1: IsDocked при |v| > DockSpeedEps == false
+PASS: п.1: AlignError(identity, -Z) ≈ 0 (получено 0)
+PASS: п.1: AlignError(identity, +X) ≈ π/2 (получено 1,5707964)
+PASS: п.1: IsCapturePhase true для Capturing/Latched/Docked, false для Approved
+PASS: п.1: IsPending true для Requested..Latched, false для None/Docked
+PASS: п.2: станция найдена в GameRoot
+PASS: п.2: DockApproved == false в старте
+PASS: п.2: DockingState == None (получено None)
+PASS: п.2: DockShipNetId == 0 (получено 0)
+PASS: п.2: byte-поля StationState нулевые (быт-значение = None)
+PASS: п.3: сервер: DockApproved == true
+PASS: п.3: DockStateValue == (byte)Approved == 2 (получено 2)
+PASS: п.3: обёртка DockingState == Approved (получено Approved)
+PASS: п.3: DockShipNetId == 7 (получено 7)
+[net] role(test-seam): dedicated -> client
+ERROR: Station#3: SetDockStateServerOnly(Capturing, 8) вызван на не-авторитете — док-состояние пишет только сервер (Этап 5, шаг 5.2).
+   at: void SpaceCorporation.Station.SetDockStateServerOnly(SpaceCorporation.DockState, int) (res://scripts/entities/Station.cs:123)
+   C# backtrace (most recent call first):
+       [0] void Godot.GD.PushError(string) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/GD.cs:366)
+       [1] void SpaceCorporation.Station.SetDockStateServerOnly(SpaceCorporation.DockState, int) (F:\petprojects\SpaceCorporation\scripts\entities\Station.cs:123)
+       [2] void SpaceCorporation.Tests.Stage5Test.CheckNonAuthReject() (F:\petprojects\SpaceCorporation\tests\Stage5Test.Helpers.cs:213)
+       [3] void SpaceCorporation.Tests.Stage5Test._PhysicsProcess(double) (F:\petprojects\SpaceCorporation\tests\Stage5Test.cs:100)
+       [4] bool Godot.Node.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Generated/GodotObjects/Node.cs:2648)
+       [5] bool SpaceCorporation.Tests.Stage5Test.InvokeGodotClassMethod(Godot.NativeInterop.godot_string_name&, Godot.NativeInterop.NativeVariantPtrArgs, Godot.NativeInterop.godot_variant&) (F:\petprojects\SpaceCorporation\.godot\mono\temp\obj\Debug\Godot.SourceGenerators\Godot.SourceGenerators.ScriptMethodsGenerator\SpaceCorporation.Tests.Stage5Test_ScriptMethods.generated.cs:370)
+       [6] Godot.NativeInterop.godot_bool Godot.Bridge.CSharpInstanceBridge.Call(nint, Godot.NativeInterop.godot_string_name*, Godot.NativeInterop.godot_variant**, int, Godot.NativeInterop.godot_variant_call_error*, Godot.NativeInterop.godot_variant*) (/root/godot/modules/mono/glue/GodotSharp/GodotSharp/Core/Bridge/CSharpInstanceBridge.cs:24)
+PASS: п.4: запись с не-авторитета отклонена (осталось Approved/7)
+[net] role(test-seam): client -> dedicated
+PASS: п.4: сервер снова пишет (None/0 снят корректно)
+PASS: п.5: res://scenes/StationReplication.tres загружается
+PASS: п.5: res://scenes/StationReplication.tres содержит StationState:DockApproved
+PASS: п.5: spawn == true для StationState:DockApproved
+PASS: п.5: replication_mode == OnChange(2) для StationState:DockApproved (получено 2)
+PASS: п.5: res://scenes/StationReplication.tres загружается
+PASS: п.5: res://scenes/StationReplication.tres содержит StationState:DockShipNetId
+PASS: п.5: spawn == true для StationState:DockShipNetId
+PASS: п.5: replication_mode == OnChange(2) для StationState:DockShipNetId (получено 2)
+PASS: п.5: res://scenes/StationReplication.tres загружается
+PASS: п.5: res://scenes/StationReplication.tres содержит StationState:DockStateValue
+PASS: п.5: spawn == true для StationState:DockStateValue
+PASS: п.5: replication_mode == OnChange(2) для StationState:DockStateValue (получено 2)
+PASS: п.5: res://scenes/ShipReplication.tres загружается
+PASS: п.5: res://scenes/ShipReplication.tres содержит NetState:DockStateValue
+PASS: п.5: spawn == true для NetState:DockStateValue
+PASS: п.5: replication_mode == OnChange(2) для NetState:DockStateValue (получено 2)
+PASS: п.5: res://scenes/ShipReplication.tres загружается
+PASS: п.5: res://scenes/ShipReplication.tres содержит NetState:DockStationNetId
+PASS: п.5: spawn == true для NetState:DockStationNetId
+PASS: п.5: replication_mode == OnChange(2) для NetState:DockStationNetId (получено 2)
+PASS: п.7: второй корабль заспавнен (ShipDockB)
+PASS: п.7: у второго корабля адрес из общего счётчика (не столкнулись)
+[net] dock: begin ship#1 peer 1 -> st#3
+PASS: п.7: BeginDock принят (reason='')
+PASS: п.7: запись реестра peer=1 st=#3 state=Requested (получено (1, 3, Requested))
+[net] dock: ship#1 фаза -> approved
+PASS: п.7: SetDockPhase(Approved) == true
+PASS: п.7: NetState корабля: ст# и фаза Approved
+PASS: п.7: StationState согласован (инвариант двух сторон держится)
+PASS: п.7: приём не поднял счётчик отказов
+[net] dock: abort ship#1 (test-p8)
+PASS: п.8: запись снята из реестра
+PASS: п.8: NetState обнулён (None / 0)
+PASS: п.8: StationState обнулён (None / 0 / lights off)
+PASS: п.8: повторный AbortDock — no-op
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> capturing
+PASS: п.9: ship#A захватил станцию (Capturing)
+Dock: ст#3 уже занята ship#1 — ship#4 отказ (station-busy)
+PASS: п.9: ship#B получил отказ station-busy (получено ok=False, 'station-busy')
+PASS: п.9: RejectedDockCount вырос на 1 (было 0, стало 1)
+PASS: п.9: реестр не тронул отказанный корабль
+[net] dock: abort ship#1 (test-cleanup)
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> approved
+[net] dock: ship#1 -> station#3 approved (peer 1)
+PASS: п.10: запрос пилота принят серверным гейтом (== true)
+PASS: п.10: в реестре Approved (получено (1, 3, Approved))
+PASS: п.10: огни горят (Approved), корабль в Approved
+PASS: п.10: счётчики: принята 1, отказов 0
+[net] dock: abort ship#1 (test-p10-done)
+ship#1: стыковку запрашивает не пилот (peer=1, pilot=999) — отказ (В17)
+PASS: п.11: запрос не-пилота отвергнут (== false)
+PASS: п.11: после отказа — чистая сделка (без записи в реестре)
+ship#4: стыковку запрашивает не пилот (peer=1, pilot=999) — отказ (В17)
+PASS: п.12: чужой/не-пилотный адрес в RPC отвергнут
+ship#1: режим взаимодействия (прицел-курсор свободен)
+PASS: п.12b: в Interaction путь F (без fromCommlink) по-прежнему закрыт
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> approved
+[net] dock: ship#1 -> station#3 approved (peer 1)
+PASS: п.12b: запрос из комм-меню в Interaction принят (Approved)
+PASS: п.12b: отмена без fromCommlink в Interaction по-прежнему закрыта
+[net] dock: abort ship#1 (отмена по радио (peer 1))
+PASS: п.12b: отмена из радиоменю в Interaction сработала (чисто, огни гаснут)
+ship#1: режим пилотирования (доворот на курсор)
+[net] role(test-seam): dedicated -> client
+ship#1: AcceptDockFrom вызван не на сервере — отказ (В14=B: клиент не может сам себя одобрить)
+PASS: п.13: вызов RPC-гейта на не-авторитете -> false
+PASS: п.13: не-авторитет не создал ни записи, ни огней
+[net] role(test-seam): client -> dedicated
+ship#1: стыковка отклонена: вне зоны (1120,0 м > 1000)
+PASS: п.14: вне зоны (1120 м) — отказ сервера
+PASS: п.14: DockState остаётся None; счётчик отказа вырос
+ship#1: стыковка отклонена: скорость 20,0 > 8
+PASS: п.15: в зоне, скорость 20 > 8 — отказ «скорость»
+PASS: п.15: после отказа по скорости — None, записи нет
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> approved
+[net] dock: ship#1 -> station#3 approved (peer 1)
+PASS: п.17: после телепорта в зону (|v|=0) запросApproved в записи сервера
+[net] dock: abort ship#1 (окно истекло)
+[net] dock: ship#1 window expired (301,0s)
+PASS: п.16: запись удалена из реестра (AbortDock)
+PASS: п.16: NetState корабля обнулён (None)
+PASS: п.16: огни станции погашены
+PASS: п.18: DockBeacon есть в сцене станции
+PASS: п.18: в покое огни выключены
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> approved
+[net] dock: ship#1 -> station#3 approved (peer 1)
+PASS: п.18: после одобрения огни горят (Visible == true)
+[net] dock: abort ship#1 (test-p18-cleanup)
+PASS: п.18: после отмены огни снова погашены
+PASS: п.18b: LandingPad инстансирован в сцене станции
+PASS: п.18b: DockPointGlobal станции = точка зависания площадки
+PASS: п.18b: вне зоны флаг «посадка» выключен
+[net] landing: ship#1 flag «посадка» ON (pad @ (0, 20, 400), v = 0,0)
+PASS: п.18b: вход в зону площадки -> флаг «посадка» ON
+[net] landing: ship#1 flag «посадка» OFF (zone count = 0)
+PASS: п.18b: выход из зоны -> флаг «посадка» OFF
+PASS: п.19: после реплики DockApproved=true маркер виден («клиенты видят огни»)
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> approved
+[net] dock: ship#1 -> station#3 approved (peer 1)
+[net] dock: abort ship#1 (test-p20)
+PASS: п.20: после AbortDock маркер погашен и DockApproved=false
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> approved
+[net] dock: ship#1 -> station#3 approved (peer 1)
+[net] dock: ship#1 фаза -> capturing
+[net] dock: ship#1 -> station#3 capture started (peer 1)
+PASS: п.21: Approved → Capturing повторным запросом (боевой путь второй F)
+PASS: п.21: фаза корабля Capturing до шагов пружины
+[net] dock: ship#1 фаза -> latched
+[net] dock: ship#1 latched (d = 2,5 м)
+[net] dock: ship#1 фаза -> docked
+[net] dock: ship#1 DOCKED at station#3
+PASS: п.21: расстояние до точки не растёт все 279 шагов (рост на шаге -1: 0,00->0,00)
+PASS: п.21: |v| не раскачивается после входа в док-окно (демпфирование)
+PASS: п.22: захват доведён до Docked за 279 шагов (получено Docked)
+PASS: п.22: финальная поза в доке: 0,00 м <= 0,5 (старт 55,0)
+PASS: п.26: всё внутри цилиндра станции — урона ноль (гейт В19 на dock-фазе)
+PASS: п.26: корабль жив после захвата (HP не капал)
+PASS: п.27: фаза Docked (после проверки пружины)
+PASS: п.23: сетевой слепок едет следом: NetPosition в 40,00 м от точки (старт 55,0)
+PASS: п.27: LinearVelocity обнулён на Docked (получено 0)
+PASS: п.27: у сервера-авторитета Freeze == true на Docked
+PASS: п.29: ApplyPilot-пересчёт (ApplyAuthority) не снял dock-замок
+[net] dock: abort ship#1 (test-cleanup-p29)
+PASS: п.29: AbortDock + пересчёт роли штатно снимают фазу и замок
+[net] landing: ship#1 flag «посадка» ON (pad @ (0, 20, 400), v = 0,0)
+PASS: п.28: таран в пределах док-зоны: 56,6 м <= 1000
+ship#1: урон 16 от станции #3 (|vn| = 20,0 м/с), Hp = 84/100, ударов = 1
+PASS: п.28: без сделки таран 20 м/с ранит: dmgCount 0->1, HP 100->84
+PASS: п.28: контакт без сделки не запустил dock-машину
+[net] landing: ship#1 flag «посадка» OFF (zone count = 0)
+ship#1: авторитет корабля = 2, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+PASS: п.24: стенд «клиент-пилот» собран (IsLocalPilot && !IsServerAuthority)
+[metrics ship#1] role=pilot predErr=0,000 hardRollbacks=0 maxHullDelta=0,000 interpBuf=41 interpDelay=0,100 snapPeriod=0,002
+PASS: п.24: в Capturing за 60 кадров откатов ноль (было 0, стало 0)
+PASS: п.25: hull следует за репликами батча: hull в 19,7 м от точки
+[metrics ship#1] role=pilot predErr=0,000 hardRollbacks=0 maxHullDelta=0,000 interpBuf=102 interpDelay=0,180 snapPeriod=0,027
+PASS: п.25: hull не поехал за локальным телом ((19.7, 26.55054, 400), телепорт был в (300, 26.55054, 400))
+PASS: п.25: hull вернулся в позу из батча: 19,7 м от точки
+[net] dock: begin ship#1 peer 2 -> st#3
+[net] dock: ship#1 фаза -> capturing
+PASS: п.30: стенд незавершённой сделки поднят (реестр+Approved)
+[net] dock: abort ship#1 (пилот 2 отключился)
+PASS: п.30: у корабля DockState -> None, связь со станцией снята
+PASS: п.30: у станции Approved false, DockState None, DockShipNetId 0
+[net] dock: begin ship#1 peer 2 -> st#3
+[net] dock: ship#1 фаза -> docked
+[net] dock: пир 2 ушёл, ship#1 остаётся Docked (реестр очищен, состояние сохранено)
+PASS: п.31: Docked пережил обрыв пира (состояние+Freeze сохранены)
+PASS: п.32: карта активных сделок после отключения пуста (активных: 0)
+PASS: п.33: Ship.tscn загружается
+ship#5: авторитет корабля = 999, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+ship#5: авторитет корабля = 999, а должен быть сервер (1) — сервер потерял истину (§3.5 п.8)
+PASS: п.33: у клиента-не-авторитета кнопка телепорта НЕ добавлена (счётчик не вырос)
+PASS: п.33: у сервера-авторитета кнопка телепорта зарегистрирована
+PASS: п.34: стенд собран — корабль вне зоны стыковки
+ship#1: стыковка отклонена: вне зоны (1100,0 м > 1000)
+PASS: п.34: до телепорта заявка отклонена (вне зоны)
+PASS: п.34: счётчик отказов вырос, записи в реестре нет
+ship#1 teleported to docking zone of Station#3 at (20, 26.55054, 400)
+PASS: п.34: телепорт нашёл станцию
+PASS: п.34: после телепорта InZone == true ((20, 26.55054, 400))
+PASS: п.34: |v| <= лимита после телепорта (0)
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> approved
+[net] dock: ship#1 -> station#3 approved (peer 1)
+PASS: п.34: заявка после телепорта принята
+PASS: п.34: сделка в реестре (активных 1)
+[net] dock: abort ship#1 (test-cleanup-p34)
+PASS: п.35: источник панели Ship#1 зарегистрирован
+PASS: п.35: источник панели Station#3 зарегистрирован (новый блок 5.13)
+PASS: п.35: до запроса в панели dock = None, dockStn = —
+PASS: п.35: станционный блок есть: station#N: dock = None, docker = —
+PASS: п.35: прежние ключи mode/frozen/HP на месте — assert'ы стадий 3-4 целы
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> docked
+PASS: п.35: после фиксации в панели dock = Docked, dockStn = <id станции>
+PASS: п.35: станционный блок: dock = Docked, docker = <id корабля>
+[net] dock: abort ship#1 (test-cleanup-p35)
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> docked
+[net] dock: undock ship#1 (отстыковка по радио (peer 1))
+PASS: U1: TestUndockForTest(пилот) вернул true (фаза снята)
+PASS: U1: у корабля DockState -> None, DockStationNetId -> 0
+PASS: U1: станция освобождена: dock None, docker 0, Approved false
+PASS: U1: реестр сделок пуст после отстыковки (активных 0)
+PASS: U1: ApplyAuthority внутри UndockNow снял dock-замок (Freeze false)
+PASS: U1: корпус вытолкнут вдоль нормали палубы (подъём 1,00 м >= 0,75)
+PASS: U1: скорость = выталкивание (3,00 м/с <= 3)
+PASS: U4: после отстыковки контактов с бывшей станцией нет (урон не капает)
+[net] landing: ship#1 flag «посадка» ON (pad @ (0, 20, 400), v = 3,0)
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> docked
+ship#1: отстыковку прислал не пилот (peer=999) — отказ (В17)
+PASS: U2: отстыковку прислал не пилот — отказ (В17), фаза цела
+[net] dock: ship#1 фаза -> capturing
+PASS: U3: не-Docked (Capturing) — Undock отказал (отмена = AbortDock, не он)
+[net] dock: abort ship#1 (test-u6-noop)
+PASS: U6: стенд сироты: записи в реестре нет
+[net] dock: undock ship#1 (отстыковка по радио (peer 2))
+PASS: U6: «сиротский Docked» отстыкован новым пилотом (фаза None, замок снят)
+PASS: U6: сирота освободил станцию (dock None, docker 0)
+PASS: U5: повторный Undock — no-op (фаза уже None, позиция не тронута)
+[net] dock: begin ship#1 peer 1 -> st#3
+[net] dock: ship#1 фаза -> docked
+[net] spawn = a46ad931 @ peer 1
+PASS: U7: игрок в сцене найден
+U7-DBG: hatch по NodePath нет; Hatch по обходу: /root/Stage5Test/Main/GameRoot/Ship/Decks/Airlock/DoorInternal(Owner=1,NetId=1) 
+FAIL: U7: у Ship есть HatchPoint шлюза с корректным OwnerNetId
+ship#2: pilot -> 1, local pilot = True, auth = 1, frozen = False
+==== Stage5Test: проверок=177, провалов=1 ====
+==== STAGE5TEST FAILED ====
+[net] landing: ship#1 flag «посадка» OFF (zone count = 0)

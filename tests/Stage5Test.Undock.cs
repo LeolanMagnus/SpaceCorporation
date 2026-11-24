@@ -144,4 +144,91 @@ public partial class Stage5Test
         _shipA.Freeze = false;
         _station.SetDockStateServerOnly(DockState.None, 0);
     }
+
+    // ─────────────── U7 (F2.2): undock с игроком на чужом шлюзе ───────────────
+
+    private Player? _u7Player;
+    private int _u7WaitFrames;
+
+    private void CheckUndockDetachesPlayerOnHatch()
+    {
+        var nm = NetworkManager.Instance!;
+        if (!BuildDockedStand()) return;
+        int shipId = _shipA.Net!.ShipNetId;
+        _shipA.TestSetPilotForTest(1);
+
+        foreach (Node n in GetTree().GetNodesInGroup("player"))
+            if (n is Player p && GodotObject.IsInstanceValid(p)) { _u7Player = p; break; }
+        if (_u7Player == null)
+        {
+            // Stage5Test крутится в dedicated (offline-игрок снят на StartServer).
+            // Guard F2.2 — серверная логика, игрок с авторитетом 1 для неё достаточен:
+            // серверный спавн тем же путём, что HandleRequestSpawn.
+            nm.SpawnPlayerForPeer(1, nm.PlayerKey); // спавн через MultiplayerSpawner — асинхронный
+        }
+    }
+
+    private bool CheckUndockGuardAwaitPlayer()
+    {
+        int shipId = _shipA.Net!.ShipNetId;
+        if (_u7Player == null || !GodotObject.IsInstanceValid(_u7Player))
+        {
+            foreach (Node n in GetTree().GetNodesInGroup("player"))
+                if (n is Player p && GodotObject.IsInstanceValid(p)) { _u7Player = p; break; }
+        }
+        if (_u7Player == null && ++_u7WaitFrames < 120) return false;
+        Check(_u7Player != null, "U7: игрок в сцене найден");
+        if (_u7Player == null) { _shipA.Freeze = false; return true; }
+        Player pl = _u7Player;
+
+        AttachPoint? hatch = null;
+        foreach (Node n in GetTree().GetNodesInGroup(AttachPoint.GroupName))
+            if (n is AttachPoint ap && ap.OwnerNetId == shipId
+                && ap.Kind == AttachPoint.KindOf.Hatch)
+            { hatch = ap; break; }
+        if (hatch == null)
+            GD.Print($"U7-DBG: Hatch-точка корабля #{shipId} в реестре точек не найдена");
+        Check(hatch != null && hatch.OwnerNetId == shipId && hatch.Kind == AttachPoint.KindOf.Hatch,
+              "U7: у Ship есть HatchPoint шлюза с корректным OwnerNetId");
+        if (hatch == null) { _shipA.Freeze = false; return true; }
+
+        // Полным серверным путём (AttachServerSide, как RequestAttach от владельца):
+        // игрок стоит на шлюзе пристыкованного корабля.
+        pl.AttachServerSide(shipId, hatch.NetId);
+        if (!pl.IsAttached || pl.AttachedTo != hatch)
+        {
+            Check(false, "U7: игрок пристёгнут к HatchPoint чужого (пристыкованного) корабля");
+            _shipA.Freeze = false;
+            return true;
+        }
+        Check(true, "U7: игрок пристёгнут к HatchPoint чужого (пристыкованного) корабля");
+        Node parentBefore = pl.GetParent();
+
+        bool done = _shipA.TestUndockForTest(1);
+        Check(done, "U7: отстыковка выполнена (пилот=хост)");
+        Check(!pl.IsAttached && pl.AttachedTo == null,
+              "U7: guard F2.2 отстегнул игрока с точки уходящего hull");
+        Check(pl.GetParent() != parentBefore,
+              "U7: игрок больше НЕ потомок hull-дерева улетевшего корабля");
+
+        // Ни у кого в дереве улетевшего hull игрока-потомка нет (снимок дерева).
+        bool orphanInHull = false;
+        void Walk(Node n)
+        {
+            foreach (Node c in n.GetChildren())
+            {
+                if (c is Player) orphanInHull = true;
+                Walk(c);
+            }
+        }
+        Walk(_shipA);
+        Check(!orphanInHull, "U7: в дереве отстыкованного корабля игрока-потомка нет");
+
+        // Возврат сцены в базу.
+        pl.Detach();
+        _shipA.TestSetVelocity(Vector3.Zero);
+        _shipA.Freeze = false;
+        _station.SetDockStateServerOnly(DockState.None, 0);
+        return true;
+    }
 }

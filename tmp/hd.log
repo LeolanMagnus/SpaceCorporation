@@ -1,0 +1,55 @@
+### dotnet build
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+
+Сборка успешно завершена.
+
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+    Предупреждений: 2
+    Ошибок: 0
+
+Прошло времени 00:00:00.70
+### godot --headless res://tests/HabDeckTest.tscn
+Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+
+[HABDECK] start
+PASS Clip1: п.0.1: маска капсулы включает Ship
+PASS Clip1: п.0.1: база-маска = Station|Target|Ship
+PASS Clip1: п.0.1: в свободном режиме исключений нет
+PASS Clip2: п.0.2: посадка в кресле удалась (режим Seat)
+PASS Clip2: п.0.2: в кресле исключения на корабль выставлены
+PASS Clip2: п.0.2: корпус не вытолкнул капсулу из кресла
+PASS Clip2: п.0.2: после Detach исключения сняты
+[PROBE clip3] body=DeckHull pos=(0, 1.45, -0.2510562)
+PASS Clip3: п.0.3: ботинки липнут к палубе своего корабля
+PASS Clip3: п.0.3: носитель-корабль найден, исключения выставлены
+PASS Clip3: п.0.3: липкость держит капсулу над палубой (не провалилась)
+[net] EVA: Ботинки: поверхность исчезла — джетпак
+PASS Clip3: п.0.3: снятие ботинок — исключения сняты
+PASS Clip4: п.0.4: обшивка корабля остановила капсулу (упор ~-1.3)
+[PROBE clip4] pos=(-1.3000437, 0.55, 0) vel=(0, -1.1222339E-06, 0) clip=0
+[PROBE clip5 s30] x=12,9389925 vel=(9.605766, 0, 0)
+[PROBE clip5 s60] x=13,199712 vel=(0, 0, 0)
+[PROBE clip5 s90] x=13,199712 vel=(0, 0, 0)
+[PROBE clip5 s120] x=13,199712 vel=(0, 0, 0)
+[PROBE clip5 s150] x=13,199712 vel=(0, 0, 0)
+[PROBE clip5 s180] x=13,199712 vel=(0, 0, 0)
+[PROBE clip5 s210] x=13,199712 vel=(0, 0, 0)
+[PROBE clip5 s240] x=13,199712 vel=(0, 0, 0)
+PASS Clip5: п.0.4: стена слоя Ship остановила капсулу (упор ~13.2)
+[PROBE clip5] p0=(9, 0.55, 0) pos=(13.199712, 0.55, 0) vel=(0, 0, 0)
+PASS Clip6Enter: п.4.1: старт — снаружи, двери закрыты
+PASS Clip6Enter: п.4.1a: hover-подсказка у наружной двери
+[HATCH] try inside=False ext=False int=False mode=Jetpack
+[net] EVA: Шлюзование: наружная дверь открыта — влетай внутрь
+PASS Clip6Enter: п.4.2: F снаружи открыла наружную дверь
+PASS Clip6Enter: п.4.3a: hover-подсказка внутри шлюза на джетпаке
+[HATCH] try inside=True ext=True int=False mode=Jetpack
+[net] EVA: ботинки включены (наклон 0°)
+[net] EVA: Шлюзование завершено: давление выровнено, внутренняя дверь открыта
+PASS Clip6Enter: п.4.3: цикл: наружная закрыта, внутренняя открыта
+PASS Clip6Enter: п.4.4: цикл: игрок в ботинках, сцеплен с полом шлюза
+[PROBE habdeck4.4] body=DeckInterior mode=Boots
+PASS Clip6Enter: п.4.5: цикл: пол шлюза дал нормаль +Y (ноги к палубе)
+RESULT checks=20 failures=0

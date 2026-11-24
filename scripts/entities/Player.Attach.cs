@@ -272,8 +272,10 @@ public partial class Player : CharacterBody3D
             Rpc(nameof(ApplyAttach), ownerNetId, pointNetId);
     }
 
-    /// <summary>Серверная (и offline) сердцевина отстёжки.</summary>
-    private void DetachServerSide()
+    /// <summary>Серверная (и offline) сердцевина отстёжки. Публична для
+    /// guard'а undock (F2.2, NetworkManager.UndockNow): сервер снимает игроков
+    /// с точек уходящего hull'а тем же путём, что RequestDetach.</summary>
+    public void DetachServerSide()
     {
         // §3.5 п.8: если этот игрок был пилотом корабля, из которого он отстёгивается,
         // пилот возвращается серверу (автопилот, peerId = 1). Пилот определяется

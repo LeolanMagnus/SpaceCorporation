@@ -1,0 +1,48 @@
+### dotnet build
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+
+Сборка успешно завершена.
+
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+    Предупреждений: 2
+    Ошибок: 0
+
+Прошло времени 00:00:00.69
+### сервер: --headless -- --server --port 24567  --latency 100 --autopilot
+### клиент #1: --headless -- --join 127.0.0.1 --port 24567  --latency 100 --autopilot --key client1
+### клиент #2: --headless -- --join 127.0.0.1 --port 24567  --latency 100 --autopilot --key client2
+================ СЕРВЕР ================
+NetworkManager: PeerConnected id = 1739394918, пиров = 1
+NetworkManager: PeerConnected id = 463554010, пиров = 2
+[net] spawn = client2 @ peer 1739394918
+[net] spawn = client1 @ peer 463554010
+net: role = dedicated, self = 1, key = a46ad931, peers = [1739394918,463554010], players = 2, repl/player/s = 0 (всего снимков 0 по 0 кораблям), batch/s = 2, rec/s = 4, input/s = 0/0, wire pkts/s = 87 (tx 66/rx 21), KB/s = 6,1, eva/s = 0,00 KB, rtt = 1739394918=26ms,463554010=22ms, err = Ok
+net: role = dedicated, self = 1, key = a46ad931, peers = [1739394918,463554010], players = 2, repl/player/s = 0 (всего снимков 0 по 0 кораблям), batch/s = 40, rec/s = 80, input/s = 0/47, wire pkts/s = 110 (tx 51/rx 59), KB/s = 5,4, eva/s = 0,00 KB, rtt = 1739394918=21ms,463554010=19ms, err = Ok
+net: role = dedicated, self = 1, key = a46ad931, peers = [1739394918,463554010], players = 2, repl/player/s = 0 (всего снимков 0 по 0 кораблям), batch/s = 40, rec/s = 80, input/s = 0/15, wire pkts/s = 71 (tx 48/rx 23), KB/s = 3,8, eva/s = 0,00 KB, rtt = 1739394918=19ms,463554010=17ms, err = Ok
+net: role = dedicated, self = 1, key = a46ad931, peers = [1739394918,463554010], players = 2, repl/player/s = 0 (всего снимков 0 по 0 кораблям), batch/s = 40, rec/s = 80, input/s = 0/28, wire pkts/s = 83 (tx 48/rx 35), KB/s = 4,3, eva/s = 0,00 KB, rtt = 1739394918=17ms,463554010=15ms, err = Ok
+================ КЛИЕНТ #1 ================
+NetworkManager: ConnectedToServer (self = 463554010) — запрошу спавн (шаг 6 плана)
+net: role = client, self = 463554010, key = client1, peers = [1,1739394918], players = 1, repl/player/s = 4 (всего снимков 8 по 2 кораблям), batch/s = 12, rec/s = 24, input/s = 34/0, wire pkts/s = 82 (tx 36/rx 46), KB/s = 4,9, eva/s = 0,00 KB, rtt = 1=37ms,1=37ms, err = Ok
+[metrics ship#1] role=observer predErr=0,000 hardRollbacks=0 maxHullDelta=0,354 interpBuf=3 interpDelay=0,600 snapPeriod=0,227
+[metrics ship#2] role=pilot predErr=1,343 hardRollbacks=1 maxHullDelta=0,000 interpBuf=0 interpDelay=0,100 snapPeriod=-1,000
+net: role = client, self = 463554010, key = client1, peers = [1,1739394918], players = 1, repl/player/s = 4 (всего снимков 8 по 2 кораблям), batch/s = 20, rec/s = 40, input/s = 60/0, wire pkts/s = 33 (tx 8/rx 25), KB/s = 1,7, eva/s = 0,00 KB, rtt = 1=31ms,1=31ms, err = Ok
+[metrics ship#1] role=observer predErr=0,000 hardRollbacks=0 maxHullDelta=0,038 interpBuf=6 interpDelay=0,600 snapPeriod=0,248
+[metrics ship#2] role=pilot predErr=0,146 hardRollbacks=3 maxHullDelta=0,000 interpBuf=0 interpDelay=0,100 snapPeriod=-1,000
+net: role = client, self = 463554010, key = client1, peers = [1,1739394918], players = 1, repl/player/s = 4 (всего снимков 8 по 2 кораблям), batch/s = 20, rec/s = 40, input/s = 60/0, wire pkts/s = 39 (tx 15/rx 24), KB/s = 2,0, eva/s = 0,00 KB, rtt = 1=26ms,1=26ms, err = Ok
+[metrics ship#1] role=observer predErr=0,000 hardRollbacks=0 maxHullDelta=0,298 interpBuf=6 interpDelay=0,600 snapPeriod=0,248
+[metrics ship#2] role=pilot predErr=2,466 hardRollbacks=7 maxHullDelta=0,000 interpBuf=0 interpDelay=0,100 snapPeriod=-1,000
+================ КЛИЕНТ #2 ================
+NetworkManager: ConnectedToServer (self = 1739394918) — запрошу спавн (шаг 6 плана)
+net: role = client, self = 1739394918, key = client2, peers = [1,463554010], players = 1, repl/player/s = 4 (всего снимков 8 по 2 кораблям), batch/s = 11, rec/s = 22, input/s = 36/0, wire pkts/s = 83 (tx 36/rx 47), KB/s = 5,1, eva/s = 0,00 KB, rtt = 1=34ms,1=34ms, err = Ok
+[metrics ship#1] role=pilot predErr=1,549 hardRollbacks=1 maxHullDelta=0,000 interpBuf=0 interpDelay=0,100 snapPeriod=-1,000
+[metrics ship#2] role=observer predErr=0,000 hardRollbacks=0 maxHullDelta=0,354 interpBuf=3 interpDelay=0,600 snapPeriod=0,228
+net: role = client, self = 1739394918, key = client2, peers = [1,463554010], players = 1, repl/player/s = 4 (всего снимков 8 по 2 кораблям), batch/s = 20, rec/s = 40, input/s = 59/0, wire pkts/s = 33 (tx 8/rx 25), KB/s = 1,7, eva/s = 0,00 KB, rtt = 1=28ms,1=28ms, err = Ok
+[metrics ship#1] role=pilot predErr=0,271 hardRollbacks=3 maxHullDelta=0,000 interpBuf=0 interpDelay=0,100 snapPeriod=-1,000
+[metrics ship#2] role=observer predErr=0,000 hardRollbacks=0 maxHullDelta=0,038 interpBuf=6 interpDelay=0,600 snapPeriod=0,248
+net: role = client, self = 1739394918, key = client2, peers = [1,463554010], players = 1, repl/player/s = 4 (всего снимков 8 по 2 кораблям), batch/s = 20, rec/s = 40, input/s = 60/0, wire pkts/s = 39 (tx 15/rx 24), KB/s = 2,0, eva/s = 0,00 KB, rtt = 1=24ms,1=24ms, err = Ok
+[metrics ship#1] role=pilot predErr=1,289 hardRollbacks=7 maxHullDelta=0,000 interpBuf=0 interpDelay=0,100 snapPeriod=-1,000
+[metrics ship#2] role=observer predErr=0,000 hardRollbacks=0 maxHullDelta=0,124 interpBuf=6 interpDelay=0,600 snapPeriod=0,248
+### OK: сервер принял пира(ов)
+### демо остановлено (логи: /tmp/tmp.8k6qC07JcZ)

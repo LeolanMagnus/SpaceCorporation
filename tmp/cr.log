@@ -1,0 +1,58 @@
+### dotnet build
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+
+Сборка успешно завершена.
+
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+F:\petprojects\SpaceCorporation\SpaceCorporation.csproj : warning NU1900: Произошла ошибка при получении данных уязвимости пакета: Не удалось загрузить индекс службы для источника https://api.nuget.org/v3/index.json.
+    Предупреждений: 2
+    Ошибок: 0
+
+Прошло времени 00:00:00.70
+### godot --headless res://tests/CapRideTest.tscn
+Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+
+ship#1: pilot -> 0, local pilot = False, auth = 1, frozen = False
+ship#2: pilot -> 0, local pilot = False, auth = 1, frozen = False
+WorldSpawner: мир заспавнен (корабли раньше игроков, §2.4)
+[net] spawn = offline @ peer 1
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+  PASS: NetworkManager.Instance доступен
+ship#2: pilot -> 1, local pilot = False, auth = 1, frozen = False
+[net] role: offline -> host, self = 1
+[net] save LastSeen[a46ad931] @ (-8,00,2,30,0,20) attached = True
+[net] spawn = a46ad931 @ peer 1
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+NetworkManager: host-сервер, self = 1, порт = 24567, макс. игроков = 8, каналов = 3
+NetworkManager: мир сервера готов (спавн объектов мира — шаг 4 плана)
+  PASS: StartServer() в headless -> Ok (получено Ok)
+  PASS: после StartServer авторитет включён
+ship#1: pilot -> 1, local pilot = True, auth = 1, frozen = False
+  PASS: живой игрок найден в группе player
+  PASS: CapBig (ContainerFreighter) заспавнен
+ship#1: pilot -> 1, local pilot = False, auth = 1, frozen = False
+  PASS: Cap1: живой игрок отстёгнут от стартового кресла
+  PASS: игрок внутри пузыря большого (32,6 м)
+  PASS: большой реально ушёл вперёд: 88,2 м от точки игрока
+  PASS: Cap1: игрок НЕ пристёгнут к захвату корабля
+  PASS: Cap1: режим не сменился (получено Jetpack)
+  PASS: Cap1: поза игрока НЕ унеслась родителем (снос 0,00 м < 2 м)
+  PASS: Cap1: большой в итоге за пузырём от игрока (свободный дрейф)
+  PASS: CapSmall (Courier) заспавнен в пузыре
+  PASS: масса большого/малого = 8,33 ≥ 3
+[net] capture: ship#5 ← #4 (|v_rel| = 0,0 м/с)
+  PASS: Cap2: малый захвачен большим (родитель=#4, большой=#4)
+  PASS: Cap2: посадка в кресло курьера удалась
+  PASS: Cap2: захват удержан после 2 с торможения большого
+  PASS: Cap2: малый держит дистанцию (|Δd| = 0,00 м)
+  PASS: Cap2: пара реально проехала с игроком (53,1 м)
+  PASS: Cap2: игрок всё ещё в кресле курьера
+  PASS: Cap2: позиция игрока следует за курьером (offset 1,41 м < 2 м)
+ship#5: pilot -> 1, local pilot = False, auth = 1, frozen = False
+  PASS: Cap3: отстёжка из кресла (IsAttached=False)
+  PASS: Cap3: ботинки прилипли к палубе курьера
+  PASS: Cap3: контакт ботинок с палубой удержан (не выбило)
+  PASS: Cap3: игрок едет на палубе следом за курьером (снос в кадре палубы 0,00 м < 1 м)
+  PASS: Cap3: захват носителя всё ещё активен
+CapRideTest: checks=26 failures=0 ALL OK
