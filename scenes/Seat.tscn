@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" uid="uid://om57jk7hwrnu" path="res://scripts/entities/AttachPoint.cs" id="1_attach"]
+
+[node name="Seat" type="Node3D"]
+script = ExtResource("1_attach")
+IsDefaultForPlayer = true
+PlayerOffset = Vector3(0, 0.9, 0)

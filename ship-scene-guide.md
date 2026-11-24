@@ -65,16 +65,30 @@
 | `CollisionShape3D` | `CollisionShape3D` (Box) | Физика корпуса. Слой 1, маска 3 (Station\|Target) | Размер пишет код из каталога; в сцене — эталонный бокс курьера. Для нового типа — бокс новых габаритов |
 | `ShipHull/` | `Node3D` | Оболочка картинки | Только визуально-нефизические дети |
 | `ShipHull/<Model>` | инстанс GLB | Art-модель | `visible = false` в сцене; код сам включает для своего типа (`Ship.cs`, блок про `CourierModel`) |
-| `ShipHull/AttachPoints/Seat` | `Node3D` + `AttachPoint.cs` | Кресло пилота | `IsDefaultForPlayer = true`, `PlayerOffset` — куда садится игрок; позиция — там, где реально стоит кресло в каюте |
-| `ControlPanel` | `Area3D` + `ControlPanel.cs` | Панель «F — сесть за штурвал» | Слой 512 (`ControlPanel`), маска 0; `SeatPath` → на `Seat`. Область ~0.45 м куб у кресла |
+| `ShipHull/AttachPoints/Seat` | инстанс `scenes/Seat.tscn` | Кресло пилота | `IsDefaultForPlayer = true`, `PlayerOffset` — куда садится игрок; позиция — там, где реально стоит кресло в каюте |
+| `ControlPanel` | инстанс `scenes/ControlPanel.tscn` | Панель «F — сесть за штурвал» | Слой 512 (`ControlPanel`), маска 0; `SeatPath` → на `Seat`. Область ~0.45 м куб у кресла |
 | `Decks/DeckHull` | `StaticBody3D` | Палуба корпуса (по ней ходят ботинки) | Слой 256 (`Deck`), маска 0; бокс = габарит корпуса |
 | `Decks/DeckInterior` | `StaticBody3D` | Пол каюты, чуть ниже центра | Слой 256; верх грани = уровень пола, по которому ходит игрок |
 | `Decks/CabinWalls/...` | `StaticBody3D` | Стены каюты (герметичный объём) | Слой 256. Стены обязательны: hover-панель и кресло должны быть внутри каюты, снаружи они перекрыты стеной — это фича, не баг |
-| `Decks/Airlock` | инстанс `scenes/Airlock.tscn` | Шлюз для входа снаружи | Ставится в кормовой/бортовой проём; внутренняя дверь — в каюту, внешняя — наружу |
+| `Decks/Airlock` | инстанс `scenes/Airlock.tscn` | Шлюз для входа снаружи (двери внутри — инстансы `scenes/Door.tscn`) | Ставится в кормовой/бортовой проём; внутренняя дверь — в каюту, внешняя — наружу |
 | `Weapon` | инстанс `scenes/WeaponTurret.tscn` | Турель | Позиция снаружи корпуса; у безоружных кораблей — убрать |
 | `NetState` | `Node` + `net/NetState.cs` | Сеть | Копировать как есть |
 | `Synchronizer` | `MultiplayerSynchronizer` | Репликация трансформов | `replication_config = scenes/ShipReplication.tres` |
 | `ShipHealthState` + `ShipHealthSync` | `Node` + `.tres` | HP корабля | Копировать как есть (`ShipHealthReplication.tres`) |
+
+### Интерактивные объекты — готовые сцены-«кирпичи»
+
+Все интерактивные объекты вынесены в самостоятельные `.tscn` — их можно просто
+инстансить (`instance=ExtResource(...)`) в любую сцену корабля/станции:
+
+| Сцена | Состав | Подключение к носителю |
+|---|---|---|
+| `scenes/Seat.tscn` | `AttachPoint` Kind.Seat | любой предок с `NetState` (корабль) или `StationState` (станция) выше по дереву |
+| `scenes/ControlPanel.tscn` | `Area3D`-панель + коллизия 0.45 м | проставить `SeatPath` на `Seat`-инстанс этого корабля |
+| `scenes/Airlock.tscn` | каркас + 2 двери + `HatchPoint` (Kind.Hatch) | у переборки; у второго шлюза на том же теле сменить `NetId` точки (уникален в пределах носителя) |
+| `scenes/Door.tscn` | одно полотно двери (слой Deck) | в любую палубу; `SlideDir`/`SlideDistance` — в инспекторе |
+| `scenes/WeaponTurret.tscn` | турель с `Muzzle` | прямого ребёнка корабля зовут `Weapon` — код сдвигает её на нос при смене типа |
+| `scenes/LandingPad.tscn` | площадка + точка крепления | уже инстансится в `Station.tscn`; работает в любом носителе |
 
 Про слои: полные таблицы — `scripts/core/CollisionLayers.cs`
 (1 Ship, 2 Station, 9 Deck/256, 10 ControlPanel/512; EVA-луч видит

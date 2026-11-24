@@ -1,21 +1,18 @@
 [gd_scene format=3 uid="uid://b4nhmt5oasyr1"]
 
 [ext_resource type="Script" uid="uid://c4agxptd4h3ct" path="res://scripts/entities/Ship.cs" id="1_ship"]
-[ext_resource type="Script" uid="uid://om57jk7hwrnu" path="res://scripts/entities/AttachPoint.cs" id="2_attach"]
 [ext_resource type="Script" uid="uid://bm332njgtxulv" path="res://scripts/net/NetState.cs" id="3_netstate"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/ShipReplication.tres" id="4_replcfg"]
 [ext_resource type="Script" uid="uid://6dd4d87tobcw" path="res://scripts/entities/ShipHealthState.cs" id="5_health"]
 [ext_resource type="SceneReplicationConfig" path="res://scenes/ShipHealthReplication.tres" id="6_healthcfg"]
-[ext_resource type="Script" uid="uid://dlnn2kk7nl4nv" path="res://scripts/core/ControlPanel.cs" id="7_panel"]
 [ext_resource type="PackedScene" uid="uid://cwpturret0aim" path="res://scenes/WeaponTurret.tscn" id="8_weapon"]
 [ext_resource type="PackedScene" path="res://scenes/Airlock.tscn" id="9_airlock"]
+[ext_resource type="PackedScene" path="res://scenes/Seat.tscn" id="11_seat"]
+[ext_resource type="PackedScene" path="res://scenes/ControlPanel.tscn" id="12_panelscene"]
 [ext_resource type="PackedScene" uid="uid://b5llvcfcwn4ho" path="res://assets/models/courier.glb" id="10_model"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hull"]
 size = Vector3(2, 1, 4)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_panel"]
-size = Vector3(0.45, 0.45, 0.45)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_deckhull"]
 size = Vector3(2, 1, 4)
@@ -47,24 +44,15 @@ visible = false
 
 [node name="AttachPoints" type="Node3D" parent="ShipHull" unique_id=1559101784]
 
-[node name="Seat" type="Node3D" parent="ShipHull/AttachPoints" unique_id=1342600605]
+[node name="Seat" parent="ShipHull/AttachPoints" unique_id=1342600605 instance=ExtResource("11_seat")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0.2)
-script = ExtResource("2_attach")
-IsDefaultForPlayer = true
-PlayerOffset = Vector3(0, 0.9, 0)
 
 [node name="Weapon" parent="." unique_id=1098832947 instance=ExtResource("8_weapon")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1.6)
 
-[node name="ControlPanel" type="Area3D" parent="." unique_id=147663745]
+[node name="ControlPanel" parent="." unique_id=147663745 instance=ExtResource("12_panelscene")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.90412223, -1.2112186)
-collision_layer = 512
-collision_mask = 0
-script = ExtResource("7_panel")
 SeatPath = NodePath("../ShipHull/AttachPoints/Seat")
-
-[node name="Shape" type="CollisionShape3D" parent="ControlPanel" unique_id=1593738165]
-shape = SubResource("BoxShape3D_panel")
 
 [node name="NetState" type="Node" parent="." unique_id=2131245462]
 script = ExtResource("3_netstate")

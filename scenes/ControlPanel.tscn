@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" uid="uid://dlnn2kk7nl4nv" path="res://scripts/core/ControlPanel.cs" id="1_panel"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_panel"]
+size = Vector3(0.45, 0.45, 0.45)
+
+[node name="ControlPanel" type="Area3D"]
+collision_layer = 512
+collision_mask = 0
+script = ExtResource("1_panel")
+
+[node name="Shape" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_panel")
