@@ -144,3 +144,15 @@ shape = SubResource("BoxShape3D_wallside")
 
 [node name="Airlock" parent="Decks" unique_id=219975767 instance=ExtResource("9_airlock")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.4, 2.15)
+
+# F2.5 (фаза 2): правый боковой шлюз — зеркальный инстанс Airlock.tscn
+# (поворот 180° вокруг Y: внутренние/наружные двери и SlideDir зеркалятся).
+# NetId точки крепления переопределён на 2: реестр AttachPoint адресует точки
+# парой (OwnerNetId, NetId), дублировать NetId=1 нельзя. Сетевой вход в этот
+# шлюз — пока только через его HatchPoint (F у левого, `HatchL`; путь RPC
+# `HatchR` добавляется вместе с выбором шлюза — фаза 2, вне объёма F2.5).
+[node name="AirlockR" parent="Decks" unique_id=1198437035 instance=ExtResource("9_airlock")]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, -0.4, -2.15)
+
+[node name="HatchPoint" parent="Decks/AirlockR" index="6"]
+NetId = 2
